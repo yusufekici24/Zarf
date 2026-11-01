@@ -290,7 +290,7 @@ impl MailService {
         self.queue.push(None, false, desc, Box::new(job));
     }
 
-    fn submit_keyed(&self, key: String, front: bool, desc: String, job: impl FnOnce(&mut Worker) -> MailResult<()> + Send + 'static) {
+    pub(crate) fn submit_keyed(&self, key: String, front: bool, desc: String, job: impl FnOnce(&mut Worker) -> MailResult<()> + Send + 'static) {
         self.queue.push(Some(key), front, desc, Box::new(job));
     }
 
@@ -375,7 +375,8 @@ impl MailService {
     /// Anlık bildirim iş parçacıklarını başlatır: Exchange akış aboneliği, IMAP IDLE (Outlook
     /// gibi yeni posta sunucuya düştüğü anda gelir; zamanlayıcı yalnızca yedek denetimdir).
     pub fn ensure_push(&self) {
-        for a in self.db.accounts().into_iter().filter(|a| (a.is_exchange() || !a.imap_host.trim().is_empty()) && a.auth_state != "failed") {
+        // Akış aboneliği yalnızca kendi kutumuz için açılabilir: paylaşılan kutular zamanlayıcıyla denetlenir
+        for a in self.db.accounts().into_iter().filter(|a| (a.is_exchange() || !a.imap_host.trim().is_empty()) && a.shared_of.is_none() && a.auth_state != "failed") {
             let id = a.id;
             let exchange = a.is_exchange();
             if !self.push_threads.lock().unwrap_or_else(|e| e.into_inner()).insert(id) {

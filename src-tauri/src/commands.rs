@@ -156,6 +156,9 @@ pub fn save_account(state: State<AppState>, account: Account, password: Option<S
     let is_new = a.id <= 0;
     let id = state.db.save_account(&a).map_err(err)?;
     mail::ews::pool_clear(id);
+    if !is_new && a.auth_state == "ok" {
+        state.db.update_shared_credentials(id, &a.password, &a.oauth_token);
+    }
     if is_new {
         if state.db.accounts().len() == 1 {
             state.db.remove_welcome();
@@ -175,9 +178,41 @@ pub fn retry_account(state: State<AppState>, id: i64) {
 #[tauri::command(async)]
 pub fn delete_account(state: State<AppState>, id: i64) -> R<()> {
     if let Some(a) = state.db.account(id) {
-        crate::secret::remove(&a.password);
+        // Paylaşılan kutunun parolası ana hesabındır, silinmez
+        if a.shared_of.is_none() {
+            crate::secret::remove(&a.password);
+        }
+    }
+    // Ana hesapla birlikte onun kimliğiyle açılan paylaşılan kutular da kalkar
+    for shared in state.db.accounts().into_iter().filter(|a| a.shared_of == Some(id)) {
+        state.db.delete_account(shared.id).map_err(err)?;
     }
     state.db.delete_account(id).map_err(err)
+}
+
+/// Paylaşılan posta kutusu: erişim yetkimiz olan başka bir kutu, kendi kimliğimizle ayrı hesap
+/// gibi eklenir; parola yeniden girilmez, ana hesapla ortaktır.
+#[tauri::command(async)]
+pub fn add_shared_mailbox(state: State<AppState>, base_id: i64, email: String, name: String) -> R<i64> {
+    let base = state.db.account(base_id).filter(|a| a.is_exchange()).ok_or_else(|| t!("error.no_account"))?;
+    let email = email.trim().to_lowercase();
+    if mail::bare_addresses(&email).len() != 1 {
+        return Err(t!("shared.bad_email"));
+    }
+    if state.db.accounts().iter().any(|a| a.email.eq_ignore_ascii_case(&email)) {
+        return Err(t!("shared.exists", email));
+    }
+    let mut a = base.clone();
+    a.id = 0;
+    a.username = base.login().to_string();
+    a.name = if name.trim().is_empty() { email.clone() } else { name.trim().to_string() };
+    a.display_name = a.name.clone();
+    a.email = email;
+    a.signature = String::new();
+    a.shared_of = Some(base.id);
+    let id = state.db.save_account(&a).map_err(err)?;
+    state.mail.sync_account(id);
+    Ok(id)
 }
 
 #[derive(Serialize)]
@@ -1307,6 +1342,11 @@ pub fn delete_contacts(state: State<AppState>, ids: Vec<i64>) {
     }
 }
 
+/// Yeni görev, not ve grupların eşitleneceği Exchange hesabı (kullanıcının kendi kutusu)
+fn pim_account(db: &Db) -> Option<i64> {
+    db.accounts().into_iter().find(|a| a.is_exchange() && a.shared_of.is_none() && a.auth_state != "failed").map(|a| a.id)
+}
+
 #[tauri::command(async)]
 pub fn list_groups(state: State<AppState>) -> Vec<ContactGroup> {
     state.db.groups()
@@ -1314,11 +1354,30 @@ pub fn list_groups(state: State<AppState>) -> Vec<ContactGroup> {
 
 #[tauri::command(async)]
 pub fn save_group(state: State<AppState>, group: ContactGroup) -> R<i64> {
-    state.db.save_group(&group).map_err(err)
+    let mut group = group;
+    match state.db.group(group.id) {
+        Some(old) => {
+            group.account_id = old.account_id;
+            group.remote_id = old.remote_id;
+        }
+        None => group.account_id = pim_account(&state.db),
+    }
+    group.dirty = group.account_id.is_some();
+    let id = state.db.save_group(&group).map_err(err)?;
+    if group.dirty {
+        state.mail.push_group(id);
+    }
+    Ok(id)
 }
 
 #[tauri::command(async)]
 pub fn delete_group(state: State<AppState>, id: i64) {
+    if let Some(g) = state.db.group(id) {
+        if let (Some(account), Some(rid)) = (g.account_id, g.remote_id) {
+            state.db.add_tombstone("groups", account, &rid);
+            state.mail.flush_deleted("groups", account);
+        }
+    }
     state.db.delete_group(id);
 }
 
@@ -1710,7 +1769,22 @@ pub fn get_task(state: State<AppState>, id: i64) -> Option<Task> {
 
 #[tauri::command(async)]
 pub fn save_task(state: State<AppState>, task: Task) -> R<i64> {
+    let mut task = task;
+    // Takip bayraklı iletilerin görevleri iletiye bağlıdır, sunucuya yazılmaz
+    if task.message_id.is_none() {
+        match state.db.task(task.id) {
+            Some(old) => {
+                task.account_id = old.account_id;
+                task.remote_id = old.remote_id;
+            }
+            None => task.account_id = pim_account(&state.db),
+        }
+        task.dirty = task.account_id.is_some();
+    }
     let id = state.db.save_task(&task).map_err(err)?;
+    if task.dirty {
+        state.mail.push_task(id);
+    }
     if let Some(mid) = task.message_id {
         if task.status == "completed" {
             state.mail.set_flagged(&[mid], false);
@@ -1725,6 +1799,10 @@ pub fn delete_tasks(state: State<AppState>, ids: Vec<i64>) {
         if let Some(t) = state.db.task(id) {
             if let Some(mid) = t.message_id {
                 state.mail.set_flagged(&[mid], false);
+            }
+            if let (Some(account), Some(rid)) = (t.account_id, t.remote_id) {
+                state.db.add_tombstone("tasks", account, &rid);
+                state.mail.flush_deleted("tasks", account);
             }
         }
         state.db.delete_task(id);
@@ -1746,11 +1824,30 @@ pub fn list_notes(state: State<AppState>) -> Vec<Note> {
 
 #[tauri::command(async)]
 pub fn save_note(state: State<AppState>, note: Note) -> R<i64> {
-    state.db.save_note(&note).map_err(err)
+    let mut note = note;
+    match state.db.note(note.id) {
+        Some(old) => {
+            note.account_id = old.account_id;
+            note.remote_id = old.remote_id;
+        }
+        None => note.account_id = pim_account(&state.db),
+    }
+    note.dirty = note.account_id.is_some();
+    let id = state.db.save_note(&note).map_err(err)?;
+    if note.dirty {
+        state.mail.push_note(id);
+    }
+    Ok(id)
 }
 
 #[tauri::command(async)]
 pub fn delete_note(state: State<AppState>, id: i64) {
+    if let Some(n) = state.db.note(id) {
+        if let (Some(account), Some(rid)) = (n.account_id, n.remote_id) {
+            state.db.add_tombstone("notes", account, &rid);
+            state.mail.flush_deleted("notes", account);
+        }
+    }
     state.db.delete_note(id);
 }
 

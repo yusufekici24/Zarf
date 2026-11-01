@@ -12,6 +12,7 @@ pub mod ical;
 pub mod mail;
 pub mod msgfile;
 pub mod oauth;
+pub mod pim_sync;
 pub mod recurrence;
 pub mod rules;
 pub mod sync;
@@ -443,6 +444,7 @@ pub fn run() {
             commands::import_external_message,
             commands::send_read_receipt,
             commands::compose_prefill,
+            commands::add_shared_mailbox,
             commands::create_backup,
             commands::backup_is_encrypted,
             commands::prepare_restore,

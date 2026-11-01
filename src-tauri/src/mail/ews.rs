@@ -4,7 +4,7 @@
 use super::http::{Auth, Client};
 use super::xml::{self, esc, Element};
 use super::{MailError, MailResult};
-use crate::db::{Account, Contact, Event};
+use crate::db::{Account, Contact, ContactGroup, Event, Note, Task};
 use base64::Engine;
 
 const SOAP_HEAD: &str = r#"<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types" xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"><soap:Header><t:RequestServerVersion Version="Exchange2013"/></soap:Header><soap:Body>"#;
@@ -14,6 +14,8 @@ pub struct Ews {
     pub url: String,
     http: Client,
     uses_password: bool,
+    /// Paylaşılan posta kutusu: kendi kimliğimizle başka bir kutu açılır
+    mailbox: Option<String>,
 }
 
 // ---------------------------------------------------------------------- bağlantı havuzu
@@ -212,8 +214,10 @@ fn item_ids(ids: &[String]) -> String {
     ids.iter().map(|i| format!(r#"<t:ItemId Id="{}"/>"#, esc(i))).collect()
 }
 
+/// Ayrılmış klasör adları (kimlik yerine kullanılabilir)
+const DIST: &[&str] = &["inbox", "sentitems", "drafts", "deleteditems", "junkemail", "outbox", "calendar", "contacts", "msgfolderroot", "tasks", "notes", "archivemsgfolderroot"];
+
 fn folder_ref(id: &str) -> String {
-    const DIST: &[&str] = &["inbox", "sentitems", "drafts", "deleteditems", "junkemail", "outbox", "calendar", "contacts", "msgfolderroot", "tasks", "notes", "archivemsgfolderroot"];
     if DIST.contains(&id) {
         format!(r#"<t:DistinguishedFolderId Id="{id}"/>"#)
     } else {
@@ -239,14 +243,25 @@ impl Ews {
             "basic" => (Auth::Basic { user, password: acc.password_plain() }, true),
             _ => (Auth::Auto { user, password: acc.password_plain(), kerberos: false }, true),
         };
-        Ok(Ews { url: acc.ews_url.clone(), http: Client::new(auth), uses_password })
+        let mailbox = acc.shared_of.map(|_| acc.email.clone());
+        Ok(Ews { url: acc.ews_url.clone(), http: Client::new(auth), uses_password, mailbox })
+    }
+
+    /// Klasör başvurusu: paylaşılan kutuda ayrılmış klasörler o kutuya yönlendirilir
+    fn folder(&self, id: &str) -> String {
+        match &self.mailbox {
+            Some(m) if DIST.contains(&id) => {
+                format!(r#"<t:DistinguishedFolderId Id="{id}"><t:Mailbox><t:EmailAddress>{}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>"#, esc(m))
+            }
+            _ => folder_ref(id),
+        }
     }
 
     /// Hesap kaydı olmadan (otomatik kurulum sırasında) istemci oluşturur.
     pub fn with_auth(url: &str, auth: Auth, uses_password: bool) -> Ews {
         let mut http = Client::new(auth);
         http.timeout = std::time::Duration::from_secs(15);
-        Ews { url: url.to_string(), http, uses_password }
+        Ews { url: url.to_string(), http, uses_password, mailbox: None }
     }
 
     /// SOAP isteği gönderir; yanıt gövdesini (Body) döndürür.
@@ -285,7 +300,7 @@ impl Ews {
     // ------------------------------------------------------------------ klasörler
     pub fn list_folders(&mut self) -> MailResult<Vec<EwsFolder>> {
         let dist = ["inbox", "sentitems", "drafts", "deleteditems", "junkemail", "msgfolderroot"];
-        let ids: String = dist.iter().map(|d| format!(r#"<t:DistinguishedFolderId Id="{d}"/>"#)).collect();
+        let ids: String = dist.iter().map(|d| self.folder(d)).collect();
         let doc = self.call(&format!(r#"<m:GetFolder><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape></m:FolderShape><m:FolderIds>{ids}</m:FolderIds></m:GetFolder>"#))?;
         let mut roles = std::collections::HashMap::new();
         let mut root_id = String::new();
@@ -305,7 +320,8 @@ impl Ews {
                 }
             };
         }
-        let doc = self.call(r#"<m:FindFolder Traversal="Deep"><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="folder:DisplayName"/><t:FieldURI FieldURI="folder:ParentFolderId"/><t:FieldURI FieldURI="folder:FolderClass"/></t:AdditionalProperties></m:FolderShape><m:ParentFolderIds><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderIds></m:FindFolder>"#)?;
+        let root = self.folder("msgfolderroot");
+        let doc = self.call(&format!(r#"<m:FindFolder Traversal="Deep"><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="folder:DisplayName"/><t:FieldURI FieldURI="folder:ParentFolderId"/><t:FieldURI FieldURI="folder:FolderClass"/></t:AdditionalProperties></m:FolderShape><m:ParentFolderIds>{root}</m:ParentFolderIds></m:FindFolder>"#))?;
         let mut folders_el = Vec::new();
         doc.find_all("Folder", &mut folders_el);
         let mut out = Vec::new();
@@ -543,7 +559,8 @@ impl Ews {
         let b64 = base64::engine::general_purpose::STANDARD.encode(mime);
         // PR_MESSAGE_FLAGS = okundu: MIME ile oluşturulan iletide "gönderilmedi" bayrağı
         // kalırsa Gönderilmiş Öğeler'deki kopya Outlook'ta da taslak görünüyordu
-        self.call(&format!(r#"<m:CreateItem MessageDisposition="SendAndSaveCopy"><m:SavedItemFolderId><t:DistinguishedFolderId Id="sentitems"/></m:SavedItemFolderId><m:Items><t:Message><t:MimeContent CharacterSet="UTF-8">{b64}</t:MimeContent><t:ExtendedProperty><t:ExtendedFieldURI PropertyTag="0x0E07" PropertyType="Integer"/><t:Value>1</t:Value></t:ExtendedProperty></t:Message></m:Items></m:CreateItem>"#))?;
+        let sent = self.folder("sentitems");
+        self.call(&format!(r#"<m:CreateItem MessageDisposition="SendAndSaveCopy"><m:SavedItemFolderId>{sent}</m:SavedItemFolderId><m:Items><t:Message><t:MimeContent CharacterSet="UTF-8">{b64}</t:MimeContent><t:ExtendedProperty><t:ExtendedFieldURI PropertyTag="0x0E07" PropertyType="Integer"/><t:Value>1</t:Value></t:ExtendedProperty></t:Message></m:Items></m:CreateItem>"#))?;
         Ok(())
     }
 
@@ -968,7 +985,8 @@ impl Ews {
 
     // ------------------------------------------------------------------ takvim
     pub fn calendar_view(&mut self, start: f64, end: f64) -> MailResult<Vec<Event>> {
-        self.calendar_view_of(None, start, end)
+        let mailbox = self.mailbox.clone();
+        self.calendar_view_of(mailbox.as_deref(), start, end)
     }
 
     /// Takvim görünümü; `mailbox` verilirse başkasının (ekip, oda, paylaşılan) takvimi
@@ -1062,7 +1080,8 @@ impl Ews {
 
     pub fn create_event(&mut self, e: &Event) -> MailResult<String> {
         let send = if !Self::has_invitees(e) { "SendToNone" } else { "SendToAllAndSaveCopy" };
-        let doc = self.call(&format!(r#"<m:CreateItem SendMeetingInvitations="{send}"><m:SavedItemFolderId><t:DistinguishedFolderId Id="calendar"/></m:SavedItemFolderId><m:Items><t:CalendarItem>{}</t:CalendarItem></m:Items></m:CreateItem>"#, Self::event_xml(e, true)))?;
+        let calendar = self.folder("calendar");
+        let doc = self.call(&format!(r#"<m:CreateItem SendMeetingInvitations="{send}"><m:SavedItemFolderId>{calendar}</m:SavedItemFolderId><m:Items><t:CalendarItem>{}</t:CalendarItem></m:Items></m:CreateItem>"#, Self::event_xml(e, true)))?;
         Ok(doc.find("ItemId").and_then(|i| i.attr("Id")).unwrap_or("").to_string())
     }
 
@@ -1146,7 +1165,8 @@ impl Ews {
 
     // ------------------------------------------------------------------ kişiler
     pub fn contacts(&mut self) -> MailResult<Vec<Contact>> {
-        let doc = self.call(r#"<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>AllProperties</t:BaseShape></m:ItemShape><m:IndexedPageItemView MaxEntriesReturned="5000" Offset="0" BasePoint="Beginning"/><m:ParentFolderIds><t:DistinguishedFolderId Id="contacts"/></m:ParentFolderIds></m:FindItem>"#)?;
+        let folder = self.folder("contacts");
+        let doc = self.call(&format!(r#"<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>AllProperties</t:BaseShape></m:ItemShape><m:IndexedPageItemView MaxEntriesReturned="5000" Offset="0" BasePoint="Beginning"/><m:ParentFolderIds>{folder}</m:ParentFolderIds></m:FindItem>"#))?;
         let mut items = Vec::new();
         doc.find_all("Contact", &mut items);
         Ok(items
@@ -1174,6 +1194,124 @@ impl Ews {
                 }
             })
             .collect())
+    }
+
+    // ------------------------------------------------------------------ görevler, notlar, gruplar
+    /// Klasördeki öğelerin tam hali. FindItem gövde ve üye listesi döndürmediği için kimlikler
+    /// alınıp GetItem ile parça parça okunur. `kinds`: okunacak öğe türleri.
+    fn read_folder(&mut self, folder: &str, kinds: &[&str]) -> MailResult<Vec<Element>> {
+        let parent = self.folder(folder);
+        let doc = self.call(&format!(r#"<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape></m:ItemShape><m:IndexedPageItemView MaxEntriesReturned="5000" Offset="0" BasePoint="Beginning"/><m:ParentFolderIds>{parent}</m:ParentFolderIds></m:FindItem>"#))?;
+        let mut items = Vec::new();
+        for k in kinds {
+            doc.find_all(k, &mut items);
+        }
+        let ids: Vec<String> = items.iter().filter_map(|i| remote_id(i)).collect();
+        let mut docs = Vec::new();
+        for part in ids.chunks(100) {
+            docs.push(self.call(&format!(r#"<m:GetItem><m:ItemShape><t:BaseShape>AllProperties</t:BaseShape><t:BodyType>Text</t:BodyType></m:ItemShape><m:ItemIds>{}</m:ItemIds></m:GetItem>"#, item_ids(part)))?);
+        }
+        Ok(docs)
+    }
+
+    fn create_item(&mut self, folder: &str, item: &str) -> MailResult<String> {
+        let parent = self.folder(folder);
+        let doc = self.call(&format!(r#"<m:CreateItem MessageDisposition="SaveOnly"><m:SavedItemFolderId>{parent}</m:SavedItemFolderId><m:Items>{item}</m:Items></m:CreateItem>"#))?;
+        doc.find("ItemId").and_then(|i| i.attr("Id")).map(String::from).ok_or_else(|| MailError("Exchange: ItemId".into()))
+    }
+
+    fn update_item(&mut self, id: &str, updates: &str) -> MailResult<()> {
+        self.call(&format!(r#"<m:UpdateItem MessageDisposition="SaveOnly" ConflictResolution="AlwaysOverwrite"><m:ItemChanges><t:ItemChange><t:ItemId Id="{}"/><t:Updates>{updates}</t:Updates></t:ItemChange></m:ItemChanges></m:UpdateItem>"#, esc(id)))?;
+        Ok(())
+    }
+
+    pub fn tasks(&mut self) -> MailResult<Vec<Task>> {
+        let docs = self.read_folder("tasks", &["Task"])?;
+        let mut out = Vec::new();
+        for doc in &docs {
+            let mut items = Vec::new();
+            doc.find_all("Task", &mut items);
+            out.extend(items.into_iter().map(task_from_xml));
+        }
+        Ok(out)
+    }
+
+    pub fn create_task(&mut self, t: &Task) -> MailResult<String> {
+        self.create_item("tasks", &format!("<t:Task>{}</t:Task>", task_fields(t)))
+    }
+
+    pub fn update_task(&mut self, id: &str, t: &Task) -> MailResult<()> {
+        let set = |uri: &str, value: String| format!(r#"<t:SetItemField><t:FieldURI FieldURI="{uri}"/><t:Task>{value}</t:Task></t:SetItemField>"#);
+        let clear = |uri: &str| format!(r#"<t:DeleteItemField><t:FieldURI FieldURI="{uri}"/></t:DeleteItemField>"#);
+        let date = |uri: &str, tag: &str, v: Option<f64>| match v {
+            Some(d) => set(uri, format!("<t:{tag}>{}</t:{tag}>", ts_to_ews(d))),
+            None => clear(uri),
+        };
+        let mut u = set("item:Subject", format!("<t:Subject>{}</t:Subject>", esc(&t.title)));
+        u += &set("item:Body", format!(r#"<t:Body BodyType="Text">{}</t:Body>"#, esc(&t.notes)));
+        u += &set("item:Importance", format!("<t:Importance>{}</t:Importance>", task_importance(t)));
+        u += &if t.category.is_empty() { clear("item:Categories") } else { set("item:Categories", format!("<t:Categories><t:String>{}</t:String></t:Categories>", esc(&t.category))) };
+        u += &date("task:DueDate", "DueDate", t.due_date);
+        u += &date("task:StartDate", "StartDate", t.start_date);
+        u += &set("task:PercentComplete", format!("<t:PercentComplete>{}</t:PercentComplete>", task_percent(t)));
+        u += &set("task:Status", format!("<t:Status>{}</t:Status>", task_status_out(&t.status)));
+        self.update_item(id, &u)
+    }
+
+    pub fn notes(&mut self) -> MailResult<Vec<Note>> {
+        // Yapışkan notlar (IPM.StickyNote) ileti olarak döner
+        let docs = self.read_folder("notes", &["Message", "Item"])?;
+        let mut out = Vec::new();
+        for doc in &docs {
+            let mut items = Vec::new();
+            doc.find_all("Message", &mut items);
+            doc.find_all("Item", &mut items);
+            out.extend(items.into_iter().map(note_from_xml));
+        }
+        Ok(out)
+    }
+
+    pub fn create_note(&mut self, body: &str) -> MailResult<String> {
+        self.create_item(
+            "notes",
+            &format!(r#"<t:Message><t:ItemClass>IPM.StickyNote</t:ItemClass><t:Subject>{}</t:Subject><t:Body BodyType="Text">{}</t:Body></t:Message>"#, esc(&note_subject(body)), esc(body)),
+        )
+    }
+
+    pub fn update_note(&mut self, id: &str, body: &str) -> MailResult<()> {
+        let u = format!(
+            r#"<t:SetItemField><t:FieldURI FieldURI="item:Subject"/><t:Message><t:Subject>{}</t:Subject></t:Message></t:SetItemField><t:SetItemField><t:FieldURI FieldURI="item:Body"/><t:Message><t:Body BodyType="Text">{}</t:Body></t:Message></t:SetItemField>"#,
+            esc(&note_subject(body)),
+            esc(body)
+        );
+        self.update_item(id, &u)
+    }
+
+    pub fn contact_groups(&mut self) -> MailResult<Vec<ContactGroup>> {
+        let docs = self.read_folder("contacts", &["DistributionList"])?;
+        let mut out = Vec::new();
+        for doc in &docs {
+            let mut items = Vec::new();
+            doc.find_all("DistributionList", &mut items);
+            out.extend(items.into_iter().map(group_from_xml));
+        }
+        Ok(out)
+    }
+
+    pub fn create_group(&mut self, g: &ContactGroup) -> MailResult<String> {
+        self.create_item(
+            "contacts",
+            &format!("<t:DistributionList><t:DisplayName>{}</t:DisplayName>{}</t:DistributionList>", esc(&g.name), members_xml(&g.members)),
+        )
+    }
+
+    pub fn update_group(&mut self, id: &str, g: &ContactGroup) -> MailResult<()> {
+        let u = format!(
+            r#"<t:SetItemField><t:FieldURI FieldURI="contacts:DisplayName"/><t:DistributionList><t:DisplayName>{}</t:DisplayName></t:DistributionList></t:SetItemField><t:SetItemField><t:FieldURI FieldURI="distributionlist:Members"/><t:DistributionList>{}</t:DistributionList></t:SetItemField>"#,
+            esc(&g.name),
+            members_xml(&g.members)
+        );
+        self.update_item(id, &u)
     }
 
     // ------------------------------------------------------------------ ofis dışı
@@ -1234,6 +1372,138 @@ impl Ews {
     pub fn test(&mut self) -> MailResult<usize> {
         Ok(self.list_folders()?.len())
     }
+}
+
+fn remote_id(item: &Element) -> Option<String> {
+    item.child("ItemId").and_then(|i| i.attr("Id")).map(String::from)
+}
+
+fn task_status_out(status: &str) -> &'static str {
+    match status {
+        "in_progress" => "InProgress",
+        "completed" => "Completed",
+        "waiting" => "WaitingOnOthers",
+        "deferred" => "Deferred",
+        _ => "NotStarted",
+    }
+}
+
+fn task_importance(t: &Task) -> &'static str {
+    match t.priority {
+        2 => "High",
+        0 => "Low",
+        _ => "Normal",
+    }
+}
+
+/// Exchange yüzde ile durumu birlikte denetler: uyumsuz çift reddedilir
+fn task_percent(t: &Task) -> i64 {
+    match t.status.as_str() {
+        "completed" => 100,
+        "not_started" => 0,
+        _ => t.percent.clamp(0, 99),
+    }
+}
+
+/// Alanlar EWS şemasındaki sırayla yazılır
+fn task_fields(t: &Task) -> String {
+    let mut x = format!(r#"<t:Subject>{}</t:Subject><t:Body BodyType="Text">{}</t:Body>"#, esc(&t.title), esc(&t.notes));
+    if !t.category.is_empty() {
+        x += &format!("<t:Categories><t:String>{}</t:String></t:Categories>", esc(&t.category));
+    }
+    x += &format!("<t:Importance>{}</t:Importance>", task_importance(t));
+    if let Some(r) = t.reminder {
+        x += &format!("<t:ReminderDueBy>{}</t:ReminderDueBy><t:ReminderIsSet>true</t:ReminderIsSet>", ts_to_ews(r));
+    }
+    if let Some(d) = t.due_date {
+        x += &format!("<t:DueDate>{}</t:DueDate>", ts_to_ews(d));
+    }
+    x += &format!("<t:PercentComplete>{}</t:PercentComplete>", task_percent(t));
+    if let Some(d) = t.start_date {
+        x += &format!("<t:StartDate>{}</t:StartDate>", ts_to_ews(d));
+    }
+    x + &format!("<t:Status>{}</t:Status>", task_status_out(&t.status))
+}
+
+fn task_from_xml(it: &Element) -> Task {
+    let ts = |name: &str| ews_to_ts(&it.text_of(name));
+    let status = match it.text_of("Status").as_str() {
+        "InProgress" => "in_progress",
+        "Completed" => "completed",
+        "WaitingOnOthers" => "waiting",
+        "Deferred" => "deferred",
+        _ => "not_started",
+    };
+    Task {
+        title: it.text_of("Subject"),
+        notes: it.text_of("Body").replace("\r\n", "\n").trim_end().to_string(),
+        start_date: ts("StartDate"),
+        due_date: ts("DueDate"),
+        reminder: if it.text_of("ReminderIsSet") == "true" { ts("ReminderDueBy") } else { None },
+        priority: match it.text_of("Importance").as_str() {
+            "High" => 2,
+            "Low" => 0,
+            _ => 1,
+        },
+        status: status.to_string(),
+        percent: it.text_of("PercentComplete").trim().parse::<f64>().unwrap_or(0.0) as i64,
+        category: it.child("Categories").and_then(|c| c.children.first()).map(|c| c.text.trim().to_string()).unwrap_or_default(),
+        completed_at: ts("CompleteDate"),
+        remote_id: remote_id(it),
+        ..Default::default()
+    }
+}
+
+/// Notun konusu: ilk satırın kopyası (Outlook'taki not listesi bunu gösterir)
+fn note_subject(body: &str) -> String {
+    body.lines().next().unwrap_or("").chars().take(255).collect()
+}
+
+fn note_from_xml(it: &Element) -> Note {
+    let body = it.text_of("Body");
+    let body = if body.trim().is_empty() { it.text_of("Subject") } else { body };
+    Note {
+        body: body.replace("\r\n", "\n").trim_end().to_string(),
+        modified: ews_to_ts(&it.text_of("LastModifiedTime")).unwrap_or(0.0),
+        remote_id: remote_id(it),
+        ..Default::default()
+    }
+}
+
+fn members_xml(members: &str) -> String {
+    let list: String = super::split_addresses(members)
+        .iter()
+        .map(|a| {
+            let (name, email) = super::split_name_addr(a);
+            let name = if name.is_empty() { email.clone() } else { name };
+            format!(
+                "<t:Member><t:Mailbox><t:Name>{}</t:Name><t:EmailAddress>{}</t:EmailAddress><t:RoutingType>SMTP</t:RoutingType><t:MailboxType>OneOff</t:MailboxType></t:Mailbox></t:Member>",
+                esc(&name),
+                esc(&email)
+            )
+        })
+        .collect();
+    format!("<t:Members>{list}</t:Members>")
+}
+
+fn group_from_xml(it: &Element) -> ContactGroup {
+    let mut boxes = Vec::new();
+    it.find_all("Mailbox", &mut boxes);
+    let members: Vec<String> = boxes
+        .iter()
+        .filter_map(|b| {
+            let email = b.text_of("EmailAddress");
+            let name = b.text_of("Name");
+            if email.trim().is_empty() {
+                None
+            } else if name.is_empty() || name == email {
+                Some(email)
+            } else {
+                Some(format!("{name} <{email}>"))
+            }
+        })
+        .collect();
+    ContactGroup { name: it.text_of("DisplayName"), members: members.join(", "), remote_id: remote_id(it), ..Default::default() }
 }
 
 fn collect_response_messages<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
@@ -1322,6 +1592,61 @@ fn recurrence_xml(e: &Event) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_xml_roundtrip() {
+        let xml = r#"<Task><ItemId Id="abc"/><Subject>Rapor</Subject><Body>Satır 1&#13;
+Satır 2</Body><Categories><String>İş</String></Categories><Importance>High</Importance><ReminderIsSet>false</ReminderIsSet><DueDate>2026-03-15T09:00:00Z</DueDate><PercentComplete>50</PercentComplete><Status>InProgress</Status></Task>"#;
+        let t = task_from_xml(&xml::parse(xml.as_bytes()).unwrap());
+        assert_eq!(t.title, "Rapor");
+        assert_eq!(t.notes, "Satır 1\nSatır 2");
+        assert_eq!((t.priority, t.percent, t.status.as_str()), (2, 50, "in_progress"));
+        assert_eq!(t.category, "İş");
+        assert_eq!(t.remote_id.as_deref(), Some("abc"));
+        assert!(t.due_date.is_some() && t.reminder.is_none());
+        let out = task_fields(&t);
+        assert!(out.find("<t:Categories>").unwrap() < out.find("<t:Importance>").unwrap());
+        assert!(out.find("<t:DueDate>").unwrap() < out.find("<t:PercentComplete>").unwrap());
+        assert!(out.contains("<t:Status>InProgress</t:Status>") && out.contains("<t:PercentComplete>50</t:PercentComplete>"));
+    }
+
+    #[test]
+    fn task_percent_follows_status() {
+        let mut t = Task { status: "completed".into(), percent: 10, ..Default::default() };
+        assert_eq!(task_percent(&t), 100);
+        t.status = "not_started".into();
+        assert_eq!(task_percent(&t), 0);
+        t.status = "in_progress".into();
+        t.percent = 100;
+        assert_eq!(task_percent(&t), 99);
+    }
+
+    #[test]
+    fn group_members_roundtrip() {
+        let x = members_xml("Ali Veli <ali@x.com>, veli@y.com");
+        assert!(x.contains("<t:Name>Ali Veli</t:Name><t:EmailAddress>ali@x.com</t:EmailAddress>"));
+        assert!(x.contains("<t:Name>veli@y.com</t:Name><t:EmailAddress>veli@y.com</t:EmailAddress>"));
+        let xml = r#"<DistributionList><ItemId Id="g1"/><DisplayName>Ekip</DisplayName><Members><Member><Mailbox><Name>Ali Veli</Name><EmailAddress>ali@x.com</EmailAddress></Mailbox></Member><Member><Mailbox><Name>veli@y.com</Name><EmailAddress>veli@y.com</EmailAddress></Mailbox></Member></Members></DistributionList>"#;
+        let g = group_from_xml(&xml::parse(xml.as_bytes()).unwrap());
+        assert_eq!(g.name, "Ekip");
+        assert_eq!(g.members, "Ali Veli <ali@x.com>, veli@y.com");
+    }
+
+    #[test]
+    fn note_uses_first_line_as_subject() {
+        assert_eq!(note_subject("Alışveriş\nsüt\nekmek"), "Alışveriş");
+        let n = note_from_xml(&xml::parse(r#"<Message><ItemId Id="n1"/><Subject>Konu</Subject><Body> </Body></Message>"#.as_bytes()).unwrap());
+        assert_eq!(n.body, "Konu");
+    }
+
+    #[test]
+    fn shared_mailbox_routes_distinguished_folders() {
+        let mut e = Ews::with_auth("https://x/ews", Auth::Negotiate, false);
+        assert_eq!(e.folder("inbox"), r#"<t:DistinguishedFolderId Id="inbox"/>"#);
+        e.mailbox = Some("ortak@x.com".into());
+        assert!(e.folder("inbox").contains("<t:EmailAddress>ortak@x.com</t:EmailAddress>"));
+        assert_eq!(e.folder("AAMk="), r#"<t:FolderId Id="AAMk="/>"#);
+    }
 
     #[test]
     fn calendar_parse_and_recurrence() {

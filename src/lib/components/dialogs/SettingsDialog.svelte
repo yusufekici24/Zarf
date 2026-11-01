@@ -145,6 +145,31 @@
     wizard = { open: true, id: r?.id ?? 0, account: 0, name, enabled: r?.enabled ?? true, from, local: true, rule: r };
   }
   const exchangeAccounts = $derived(app.accounts.filter((a) => a.kind === "exchange"));
+  /** Kendi kimliğimizle açılan Exchange hesapları: paylaşılan kutular bunlardan birine bağlanır */
+  const baseAccounts = $derived(exchangeAccounts.filter((a) => a.shared_of == null));
+
+  // Paylaşılan posta kutusu ekleme
+  let sharedOpen = $state(false);
+  let sharedBase = $state<number | null>(null);
+  let sharedEmail = $state("");
+  let sharedName = $state("");
+  function openShared() {
+    sharedBase = baseAccounts[0]?.id ?? null;
+    sharedEmail = "";
+    sharedName = "";
+    sharedOpen = true;
+  }
+  async function addShared() {
+    if (sharedBase == null) return;
+    try {
+      await api.addSharedMailbox(sharedBase, sharedEmail, sharedName);
+      await app.loadAccounts();
+      sharedOpen = false;
+      toast.success(t("shared.added", sharedEmail.trim()));
+    } catch (e) {
+      app.error(e);
+    }
+  }
   function newRule() {
     const ex = exchangeAccounts[0];
     if (ex) openWizard(0, ex.id);
@@ -493,7 +518,7 @@
             <div class="flex items-center gap-3 p-3">
               <div class="flex-1">
                 <div class="font-medium">{a.name}</div>
-                <div class="text-muted-foreground text-xs">{a.email} · {a.kind === "exchange" ? "Exchange" : a.imap_host} · {t(`account.auth_${a.auth_method || "password"}`)}</div>
+                <div class="text-muted-foreground text-xs">{a.email} · {a.kind === "exchange" ? "Exchange" : a.imap_host} · {a.shared_of != null ? t("shared.badge") : t(`account.auth_${a.auth_method || "password"}`)}</div>
                 {#if a.auth_state === "failed"}<div class="text-xs text-amber-700 dark:text-amber-300">{t("account.paused_short")}</div>{/if}
               </div>
               {#if a.auth_state === "failed"}
@@ -507,6 +532,25 @@
             <div class="text-muted-foreground p-6 text-center">{t("account.none")}</div>
           {/each}
         </div>
+        {#if baseAccounts.length}
+          {#if sharedOpen}
+            <div class="grid gap-2 rounded-md border p-3">
+              <div class="font-medium">{t("shared.add")}</div>
+              <p class="text-muted-foreground text-xs">{t("shared.help")}</p>
+              <label class="flex items-center gap-2">
+                <span class="w-40 shrink-0">{t("shared.base")}</span>
+                <select class="border-input h-9 min-w-0 flex-1 rounded-md border bg-transparent px-2" bind:value={sharedBase}>
+                  {#each baseAccounts as a (a.id)}<option value={a.id}>{a.email}</option>{/each}
+                </select>
+              </label>
+              <label class="flex items-center gap-2"><span class="w-40 shrink-0">{t("shared.email")}</span><Input class="min-w-0 flex-1" bind:value={sharedEmail} /></label>
+              <label class="flex items-center gap-2"><span class="w-40 shrink-0">{t("shared.name")}</span><Input class="min-w-0 flex-1" bind:value={sharedName} /></label>
+              <div class="flex gap-2"><Button size="sm" disabled={!sharedEmail.trim()} onclick={addShared}>{t("common.add")}</Button><Button size="sm" variant="outline" onclick={() => (sharedOpen = false)}>{t("common.cancel")}</Button></div>
+            </div>
+          {:else}
+            <Button size="sm" variant="outline" onclick={openShared}><Plus class="size-4" />{t("shared.add")}</Button>
+          {/if}
+        {/if}
         <details class="rounded-md border p-3">
           <summary class="cursor-pointer font-medium">{t("settings.oauth_title")}</summary>
           <p class="text-muted-foreground mt-2 text-xs">{t("settings.oauth_help")}</p>

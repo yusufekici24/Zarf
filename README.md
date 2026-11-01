@@ -12,11 +12,18 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 - **Otomatik kurulum:** İlk açılışta oturum açmış kullanıcının adresi bulunur (Kerberos/SSSD/krb5.conf).
   Ayarlar Autodiscover ile alınır. Kurum ağında Kerberos ile **parola sorulmadan** bağlanılır.
 - Kimlik doğrulama: Kerberos (GSSAPI/SPNEGO, tek oturum açma), NTLMv2, parola, OAuth2 (Microsoft 365 / Google).
+- **Paylaşılan posta kutusu:** Tam Erişim yetkiniz olan kutu kendi kimliğinizle ayrı hesap gibi eklenir.
+- **Kimlikler (takma adlar):** Bir hesaba ek "Kimden" adresleri, yanıt adresi ve kimliğe özel imza.
 - **Hesap kilitlenme koruması:** Sunucu parolayı reddederse (ör. AD'de parola değişti) hesap duraklatılır.
   Eski parola bir daha gönderilmez, böylece AD hesabı kilitlenmez. Yeni parola girildiğinde eşitleme yeniden başlar.
 
 **Posta**
 - Sık Kullanılanlar, klasör ağacı, arama klasörleri; konuşma görünümü; kurallar; kategoriler; bayrak ve takip.
+- **Anlık posta:** Exchange akış aboneliği ve IMAP IDLE ile yeni ileti sunucuya düştüğü anda gelir.
+- **Kurallar:** Exchange kuralları sunucuda çalışır. IMAP için yerel kurallar: çoklu koşul, ve/veya, düzenli ifade, özel durumlar.
+- **Şablonlar ve düzenleyici:** İleti şablonları, bul/değiştir, HTML kaynağı, emoji, yazım denetimi (`hunspell-tr`).
+- **Çökme kurtarma:** Yazılan ileti yerelde saklanır, uygulama çökerse açılışta geri yükleme önerilir.
+- **Güvenilir göndericiler:** Adres ya da alan adı; bu kaynaklardan gelen resimler sorulmadan iner.
 - **Alıcı önerileri:** Yazarken kişiler, son kullanılan adresler ve kurum dizini (GAL) önerilir. Adresler "chip" olarak görünür.
 - **İletiyi yeni iletiye sürükleyince .msg eki** olarak eklenir. "Ek olarak ilet" de .msg kullanır.
 - Gönderimi geri alma, teslimi geciktirme, taslakların otomatik kaydı, imzalar, okundu bilgisi, önem düzeyi.
@@ -30,7 +37,8 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 - `.pst` içe aktarma (`pst-utils` paketi gerekir).
 
 **Diğer**
-- Takvim (Exchange takvimi ile eşitleme, yinelenen etkinlikler, hatırlatıcılar), kişiler (Exchange kişileri), görevler, notlar.
+- Takvim (Exchange takvimi ile eşitleme, yinelenen etkinlikler, hatırlatıcılar), kişiler ve gruplar, görevler, notlar. Görev, not ve kişi grupları Exchange ile çift yönlü eşitlenir.
+- **Yedekle / geri yükle:** Tüm veriler tek dosyada, isteğe bağlı parolayla AES-256-GCM şifreli (Dosya > Aç ve Dışarı Aktar).
 - Türkçe ve İngilizce arayüz. Yeni dil eklemek kolaydır (aşağıya bakın).
 
 ## Kurulum

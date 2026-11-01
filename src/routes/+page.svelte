@@ -344,6 +344,7 @@
         if (!(await getCurrentWindow().isFocused().catch(() => false))) void notify(t("account.paused_title", e.payload.email), t("account.paused_text"));
       }));
       unsub.push(await listen("calendar://changed", () => app.bump("calendar")));
+      unsub.push(await listen<"tasks" | "notes" | "contacts">("pim://changed", (e) => app.bump(e.payload)));
       unsub.push(await listen<{ folder: number; more: boolean }>("mail://older", (e) => mail.onOlder(e.payload.folder, e.payload.more)));
       unsub.push(await listen("contacts://changed", () => app.bump("contacts")));
       unsub.push(await listen<string>("mail://sent", (e) => toast.success(t("mail.sent_toast", e.payload || t("mail.no_subject")))));

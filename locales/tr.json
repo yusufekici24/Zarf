@@ -1442,5 +1442,14 @@
   "backup.not_backup": "Bu dosya bir MailNix yedeği değil.",
   "backup.need_password": "Bu yedek parolayla şifrelenmiş; parolayı girin.",
   "backup.bad_password": "Parola yanlış ya da yedek dosyası bozuk.",
-  "backup.corrupt": "Yedek dosyası bozuk ya da eksik."
+  "backup.corrupt": "Yedek dosyası bozuk ya da eksik.",
+  "shared.add": "Paylaşılan posta kutusu ekle",
+  "shared.help": "Kutu için Tam Erişim yetkiniz olmalı. Kutu kendi kimliğinizle açılır, parola sorulmaz. Yeni posta zamanlayıcıyla denetlenir; görev ve notlar eşitlenmez.",
+  "shared.base": "Kimliği kullanılacak hesap",
+  "shared.email": "Kutunun e-posta adresi",
+  "shared.name": "Görünen ad (isteğe bağlı)",
+  "shared.badge": "Paylaşılan kutu",
+  "shared.added": "{0} eklendi, ilk eşitleme başladı.",
+  "shared.bad_email": "Geçerli bir e-posta adresi girin.",
+  "shared.exists": "{0} zaten ekli."
 }

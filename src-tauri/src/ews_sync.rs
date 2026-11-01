@@ -82,6 +82,7 @@ pub fn store_server_rules(db: &crate::db::Db, account_id: i64, list: Vec<crate::
             remote_id: Some(sr.id),
             complex: sr.complex,
             remote_xml: sr.body_xml,
+            spec: String::new(),
         };
         let _ = db.save_rule(&r);
     }
@@ -243,6 +244,9 @@ impl Worker {
         }
         self.defer(format!("cal:{account_id}"), move |w| w.ews_sync_calendar(account_id));
         self.defer(format!("con:{account_id}"), move |w| w.ews_sync_contacts(account_id));
+        if self.db.account(account_id).is_some_and(|a| a.shared_of.is_none()) {
+            self.defer(format!("pim:{account_id}"), move |w| w.ews_sync_pim(account_id));
+        }
         self.defer(format!("rules:{account_id}"), move |w| {
             let acc = w.db.account(account_id).ok_or_else(|| MailError(t!("error.no_account")))?;
             let email = acc.email.clone();

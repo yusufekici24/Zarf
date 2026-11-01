@@ -27,6 +27,7 @@ export const api = {
     invoke<{ username: string; full_name: string; principal: string; realm: string; domain: string; email_guess: string; kerberos: boolean; email_source: string; login: string }>("system_identity"),
   discoverAccount: (email: string, user: string, password: string) => invoke<Discovery>("discover_account", { email, username: user, password }),
   oauthAuthorize: (provider: string, exchange: boolean, email: string) => invoke<string>("oauth_authorize", { provider, exchange, email }),
+  addSharedMailbox: (baseId: number, email: string, name: string) => invoke<number>("add_shared_mailbox", { baseId, email, name }),
   setAutoReply: (accountId: number, enabled: boolean, text: string) => invoke<void>("set_auto_reply", { accountId, enabled, text }),
   respondMeeting: (msgId: number, kind: "accept" | "tentative" | "decline", comment = "", send = true) => invoke<void>("respond_meeting", { msgId, kind, comment, send }),
   meetingInfo: (msgId: number) =>

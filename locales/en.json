@@ -1442,5 +1442,14 @@
   "backup.not_backup": "This file is not a MailNix backup.",
   "backup.need_password": "This backup is encrypted; enter its password.",
   "backup.bad_password": "Wrong password or the backup file is damaged.",
-  "backup.corrupt": "The backup file is damaged or incomplete."
+  "backup.corrupt": "The backup file is damaged or incomplete.",
+  "shared.add": "Add shared mailbox",
+  "shared.help": "You need Full Access to the mailbox. It opens with your own credentials, no password is asked. New mail is checked on a timer; tasks and notes are not synced.",
+  "shared.base": "Account to authenticate with",
+  "shared.email": "Mailbox email address",
+  "shared.name": "Display name (optional)",
+  "shared.badge": "Shared mailbox",
+  "shared.added": "{0} added, first sync started.",
+  "shared.bad_email": "Enter a valid email address.",
+  "shared.exists": "{0} is already added."
 }

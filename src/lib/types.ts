@@ -2,6 +2,8 @@
 
 export interface Account {
   id: number;
+  /** Paylaşılan posta kutusu: kimliği kullanılan ana hesap */
+  shared_of?: number | null;
   name: string;
   email: string;
   display_name: string;
@@ -175,6 +177,8 @@ export interface ContactGroup {
   id: number;
   name: string;
   members: string;
+  /** Exchange ile eşitlenen grubun hesabı */
+  account_id?: number | null;
 }
 
 export interface Calendar {
@@ -244,6 +248,8 @@ export interface Task {
   category: string;
   message_id: number | null;
   completed_at: number | null;
+  /** Exchange ile eşitlenen görevin hesabı */
+  account_id?: number | null;
 }
 
 export interface Note {
@@ -252,6 +258,8 @@ export interface Note {
   color: string;
   category: string;
   modified: number;
+  /** Exchange ile eşitlenen notun hesabı */
+  account_id?: number | null;
 }
 
 export interface Rule {

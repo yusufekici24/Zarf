@@ -113,6 +113,18 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("rules", "complex", "INTEGER DEFAULT 0"),
     // Yerel kuralın tam modeli (JSON): boşsa basit alan/işlem/değer kullanılır
     ("rules", "spec", "TEXT DEFAULT ''"),
+    // Paylaşılan posta kutusu: kimliği kullanılan ana hesap
+    ("accounts", "shared_of", "INTEGER"),
+    // Exchange ile eşitlenen görev, not ve kişi grupları
+    ("tasks", "account_id", "INTEGER"),
+    ("tasks", "remote_id", "TEXT"),
+    ("tasks", "dirty", "INTEGER DEFAULT 0"),
+    ("notes", "account_id", "INTEGER"),
+    ("notes", "remote_id", "TEXT"),
+    ("notes", "dirty", "INTEGER DEFAULT 0"),
+    ("contact_groups", "account_id", "INTEGER"),
+    ("contact_groups", "remote_id", "TEXT"),
+    ("contact_groups", "dirty", "INTEGER DEFAULT 0"),
     ("calendars", "account_id", "INTEGER"),
     ("calendars", "remote_id", "TEXT"),
     ("events", "remote_id", "TEXT"),
@@ -174,6 +186,8 @@ pub struct Account {
     pub auth_error: String,
     #[serde(skip_serializing)]
     pub oauth_token: String,
+    /// Paylaşılan posta kutusu: kimliği kullanılan ana hesap
+    pub shared_of: Option<i64>,
 }
 
 impl Account {
@@ -209,6 +223,7 @@ impl Account {
             auth_state: r.get::<_, Option<String>>("auth_state")?.unwrap_or_else(|| "ok".into()),
             auth_error: r.get::<_, Option<String>>("auth_error")?.unwrap_or_default(),
             oauth_token: r.get::<_, Option<String>>("oauth_token")?.unwrap_or_default(),
+            shared_of: r.get("shared_of").unwrap_or(None),
         })
     }
 
@@ -576,6 +591,11 @@ pub struct ContactGroup {
     pub id: i64,
     pub name: String,
     pub members: String,
+    /// Exchange ile eşitlenen grubun hesabı (boş: yalnızca bu bilgisayarda)
+    pub account_id: Option<i64>,
+    pub remote_id: Option<String>,
+    /// Sunucuya gönderilmeyi bekleyen değişiklik
+    pub dirty: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -695,6 +715,11 @@ pub struct Task {
     pub category: String,
     pub message_id: Option<i64>,
     pub completed_at: Option<f64>,
+    /// Exchange ile eşitlenen görevin hesabı (boş: yalnızca bu bilgisayarda)
+    pub account_id: Option<i64>,
+    pub remote_id: Option<String>,
+    /// Sunucuya gönderilmeyi bekleyen değişiklik
+    pub dirty: bool,
 }
 
 impl Task {
@@ -713,6 +738,9 @@ impl Task {
             category: r.get("category")?,
             message_id: r.get("message_id")?,
             completed_at: r.get("completed_at")?,
+            account_id: r.get("account_id")?,
+            remote_id: r.get("remote_id")?,
+            dirty: r.get::<_, i64>("dirty")? != 0,
         })
     }
 
@@ -733,6 +761,11 @@ pub struct Note {
     pub color: String,
     pub category: String,
     pub modified: f64,
+    /// Exchange ile eşitlenen notun hesabı (boş: yalnızca bu bilgisayarda)
+    pub account_id: Option<i64>,
+    pub remote_id: Option<String>,
+    /// Sunucuya gönderilmeyi bekleyen değişiklik
+    pub dirty: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -1101,11 +1134,11 @@ impl Db {
                  imap_security=?6, smtp_host=?7, smtp_port=?8, smtp_security=?9, username=?10, \
                  password=?11, signature=?12, sync_limit=?13, auto_reply_enabled=?14, \
                  auto_reply_text=?15, kind=?17, auth_method=?18, ews_url=?19, auth_state=?20, auth_error=?21, \
-                 oauth_token=?22 WHERE id=?16",
+                 oauth_token=?22, shared_of=?23 WHERE id=?16",
                 params![a.name, a.email, a.display_name, a.imap_host, a.imap_port, a.imap_security,
                     a.smtp_host, a.smtp_port, a.smtp_security, a.username, a.password, a.signature,
                     a.sync_limit, a.auto_reply_enabled as i64, a.auto_reply_text, a.id, a.kind,
-                    a.auth_method, a.ews_url, a.auth_state, a.auth_error, a.oauth_token],
+                    a.auth_method, a.ews_url, a.auth_state, a.auth_error, a.oauth_token, a.shared_of],
             )?;
             Ok(a.id)
         } else {
@@ -1113,18 +1146,26 @@ impl Db {
                 "INSERT INTO accounts(name, email, display_name, imap_host, imap_port, imap_security, \
                  smtp_host, smtp_port, smtp_security, username, password, signature, sync_limit, \
                  auto_reply_enabled, auto_reply_text, created, kind, auth_method, ews_url, auth_state, \
-                 auth_error, oauth_token) \
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
+                 auth_error, oauth_token, shared_of) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
                 params![a.name, a.email, a.display_name, a.imap_host, a.imap_port, a.imap_security,
                     a.smtp_host, a.smtp_port, a.smtp_security, a.username, a.password, a.signature,
                     a.sync_limit, a.auto_reply_enabled as i64, a.auto_reply_text, now(),
                     if a.kind.is_empty() { "imap" } else { a.kind.as_str() },
                     if a.auth_method.is_empty() { "password" } else { a.auth_method.as_str() },
                     a.ews_url, if a.auth_state.is_empty() { "ok" } else { a.auth_state.as_str() },
-                    a.auth_error, a.oauth_token],
+                    a.auth_error, a.oauth_token, a.shared_of],
             )?;
             Ok(c.last_insert_rowid())
         }
+    }
+
+    /// Ana hesabın parolası değişince paylaşılan kutuları da yeniden etkinleşir
+    pub fn update_shared_credentials(&self, base: i64, password: &str, oauth_token: &str) {
+        let _ = self.conn().execute(
+            "UPDATE accounts SET password = ?2, oauth_token = ?3, auth_state = 'ok', auth_error = '' WHERE shared_of = ?1",
+            params![base, password, oauth_token],
+        );
     }
 
     /// Kimlik doğrulama durumunu günceller ("ok" / "failed").
@@ -1909,8 +1950,10 @@ impl Db {
 
     pub fn groups(&self) -> Vec<ContactGroup> {
         let c = self.rconn();
-        let mut st = c.prepare("SELECT id, name, members FROM contact_groups ORDER BY name").unwrap();
-        st.query_map([], |r| Ok(ContactGroup { id: r.get(0)?, name: r.get(1)?, members: r.get(2)? }))
+        let mut st = c.prepare("SELECT id, name, members, account_id, remote_id, dirty FROM contact_groups ORDER BY name").unwrap();
+        st.query_map([], |r| {
+            Ok(ContactGroup { id: r.get(0)?, name: r.get(1)?, members: r.get(2)?, account_id: r.get(3)?, remote_id: r.get(4)?, dirty: r.get::<_, i64>(5)? != 0 })
+        })
             .unwrap()
             .flatten()
             .collect()
@@ -1920,14 +1963,14 @@ impl Db {
         let c = self.conn();
         if g.id > 0 {
             c.execute(
-                "UPDATE contact_groups SET name=?1, members=?2 WHERE id=?3",
-                params![g.name, g.members, g.id],
+                "UPDATE contact_groups SET name=?1, members=?2, account_id=?4, remote_id=?5, dirty=?6 WHERE id=?3",
+                params![g.name, g.members, g.id, g.account_id, g.remote_id, g.dirty as i64],
             )?;
             Ok(g.id)
         } else {
             c.execute(
-                "INSERT INTO contact_groups(name, members) VALUES (?1, ?2)",
-                params![g.name, g.members],
+                "INSERT INTO contact_groups(name, members, account_id, remote_id, dirty) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![g.name, g.members, g.account_id, g.remote_id, g.dirty as i64],
             )?;
             Ok(c.last_insert_rowid())
         }
@@ -1935,6 +1978,29 @@ impl Db {
 
     pub fn delete_group(&self, id: i64) {
         let _ = self.conn().execute("DELETE FROM contact_groups WHERE id = ?1", [id]);
+    }
+
+    pub fn group(&self, id: i64) -> Option<ContactGroup> {
+        self.groups().into_iter().find(|g| g.id == id)
+    }
+
+    pub fn mark_group_synced(&self, id: i64, remote_id: &str) {
+        let _ = self.conn().execute("UPDATE contact_groups SET remote_id = ?2, dirty = 0 WHERE id = ?1", params![id, remote_id]);
+    }
+
+    /// Sunucudan silinmeyi bekleyen öğeler (`kind`: tasks, notes, groups)
+    pub fn tombstones(&self, kind: &str, account_id: i64) -> Vec<String> {
+        self.setting(&format!("tombstones:{kind}:{account_id}")).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    }
+
+    pub fn set_tombstones(&self, kind: &str, account_id: i64, list: &[String]) {
+        self.set_setting(&format!("tombstones:{kind}:{account_id}"), &serde_json::to_string(list).unwrap_or_default());
+    }
+
+    pub fn add_tombstone(&self, kind: &str, account_id: i64, remote_id: &str) {
+        let mut list = self.tombstones(kind, account_id);
+        list.push(remote_id.to_string());
+        self.set_tombstones(kind, account_id, &list);
     }
 
     /// Otomatik tamamlama için (ad, adres) listesi; gruplar adres listesi olarak döner.
@@ -2228,18 +2294,20 @@ impl Db {
             c.execute(
                 "UPDATE tasks SET title=?1, notes=?2, start_date=?3, due_date=?4, reminder=?5, \
                  reminder_done=?6, priority=?7, status=?8, percent=?9, category=?10, message_id=?11, \
-                 completed_at=?12, modified=?13 WHERE id=?14",
+                 completed_at=?12, modified=?13, account_id=?15, remote_id=?16, dirty=?17 WHERE id=?14",
                 params![t.title, t.notes, t.start_date, t.due_date, t.reminder, t.reminder_done as i64,
-                    t.priority, t.status, t.percent, t.category, t.message_id, t.completed_at, now(), t.id],
+                    t.priority, t.status, t.percent, t.category, t.message_id, t.completed_at, now(), t.id,
+                    t.account_id, t.remote_id, t.dirty as i64],
             )?;
             Ok(t.id)
         } else {
             c.execute(
                 "INSERT INTO tasks(title, notes, start_date, due_date, reminder, reminder_done, priority, \
-                 status, percent, category, message_id, completed_at, created, modified) \
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13)",
+                 status, percent, category, message_id, completed_at, created, modified, account_id, remote_id, dirty) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13,?14,?15,?16)",
                 params![t.title, t.notes, t.start_date, t.due_date, t.reminder, t.reminder_done as i64,
-                    t.priority, t.status, t.percent, t.category, t.message_id, t.completed_at, now()],
+                    t.priority, t.status, t.percent, t.category, t.message_id, t.completed_at, now(),
+                    t.account_id, t.remote_id, t.dirty as i64],
             )?;
             Ok(c.last_insert_rowid())
         }
@@ -2249,11 +2317,19 @@ impl Db {
         let _ = self.conn().execute("DELETE FROM tasks WHERE id = ?1", [id]);
     }
 
+    /// Gönderim sürerken görev yeniden değiştirildiyse kirli kalır
+    pub fn mark_task_synced(&self, sent: &Task, remote_id: &str) {
+        let _ = self.conn().execute(
+            "UPDATE tasks SET remote_id = ?2, dirty = CASE WHEN title = ?3 AND notes = ?4 AND status = ?5 THEN 0 ELSE dirty END WHERE id = ?1",
+            params![sent.id, remote_id, sent.title, sent.notes, sent.status],
+        );
+    }
+
     // ------------------------------------------------------------------ notlar
     pub fn notes(&self) -> Vec<Note> {
         let c = self.rconn();
         let mut st = c
-            .prepare("SELECT id, body, color, category, modified FROM notes ORDER BY modified DESC")
+            .prepare("SELECT id, body, color, category, modified, account_id, remote_id, dirty FROM notes ORDER BY modified DESC")
             .unwrap();
         st.query_map([], |r| {
             Ok(Note {
@@ -2262,6 +2338,9 @@ impl Db {
                 color: r.get(2)?,
                 category: r.get(3)?,
                 modified: r.get(4)?,
+                account_id: r.get(5)?,
+                remote_id: r.get(6)?,
+                dirty: r.get::<_, i64>(7)? != 0,
             })
         })
         .unwrap()
@@ -2273,14 +2352,14 @@ impl Db {
         let c = self.conn();
         if n.id > 0 {
             c.execute(
-                "UPDATE notes SET body=?1, color=?2, category=?3, modified=?4 WHERE id=?5",
-                params![n.body, n.color, n.category, now(), n.id],
+                "UPDATE notes SET body=?1, color=?2, category=?3, modified=?4, account_id=?6, remote_id=?7, dirty=?8 WHERE id=?5",
+                params![n.body, n.color, n.category, now(), n.id, n.account_id, n.remote_id, n.dirty as i64],
             )?;
             Ok(n.id)
         } else {
             c.execute(
-                "INSERT INTO notes(body, color, category, created, modified) VALUES (?1,?2,?3,?4,?4)",
-                params![n.body, n.color, n.category, now()],
+                "INSERT INTO notes(body, color, category, created, modified, account_id, remote_id, dirty) VALUES (?1,?2,?3,?4,?4,?5,?6,?7)",
+                params![n.body, n.color, n.category, now(), n.account_id, n.remote_id, n.dirty as i64],
             )?;
             Ok(c.last_insert_rowid())
         }
@@ -2288,6 +2367,18 @@ impl Db {
 
     pub fn delete_note(&self, id: i64) {
         let _ = self.conn().execute("DELETE FROM notes WHERE id = ?1", [id]);
+    }
+
+    pub fn note(&self, id: i64) -> Option<Note> {
+        self.notes().into_iter().find(|n| n.id == id)
+    }
+
+    /// Gönderim sürerken kullanıcı yazmaya devam ettiyse yeni metin kirli kalır
+    pub fn mark_note_synced(&self, id: i64, remote_id: &str, body: &str) {
+        let _ = self.conn().execute(
+            "UPDATE notes SET remote_id = ?2, dirty = CASE WHEN body = ?3 THEN 0 ELSE 1 END WHERE id = ?1",
+            params![id, remote_id, body],
+        );
     }
 
     // ------------------------------------------------------------------ kurallar
