@@ -53,13 +53,14 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 
 | Dağıtım | Paket |
 |---|---|
-| Debian tabanlı dağıtımlar: Debian 12 / 13, Ubuntu 22.04 / 24.04, Pardus 23 / 25 ve türevleri | `Lynora_*_amd64.deb` |
+| Ubuntu 24.04 ve sonrası, Debian 13 ve türevleri (glibc 2.39+) | `Lynora_*_amd64.deb` |
 
 ```sh
 sudo apt install ./Lynora_1.1.0_amd64.deb      # bağımlılıklar otomatik kurulur
 ```
 
-Paket Ubuntu 22.04 tabanında (glibc 2.35) derlenir. Bu yüzden daha yeni tüm Debian tabanlı dağıtımlarda sorunsuz çalışır.
+Paketler GitHub **Releases** sayfasında yayımlanır. Debian 12, Ubuntu 22.04 ve Pardus 23 gibi eski dağıtımlar için
+paket Ubuntu 22.04 tabanında üretilir: `packaging/build-packages.sh` (Docker) ya da Actions > build > Run workflow.
 `.deb` paketi sistemdeki WebKitGTK 4.1 ve GTK 3 kitaplıklarını kullanır.
 
 ### MailNix'ten geçiş
