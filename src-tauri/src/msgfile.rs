@@ -136,7 +136,7 @@ fn rtf_font_codepages(rtf: &[u8]) -> HashMap<i32, u32> {
     map
 }
 
-/// HTML gövde baytları: geçerli UTF-8 ise UTF-8 (MailNix/yeni Outlook), değilse
+/// HTML gövde baytları: geçerli UTF-8 ise UTF-8 (Lynora/yeni Outlook), değilse
 /// <meta charset>, sonra iletinin kod sayfası (PR_INTERNET_CPID), en son windows-1254.
 pub(crate) fn decode_html_bytes(b: &[u8], codepage: Option<u32>) -> String {
     let b = b.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(b);
@@ -813,7 +813,7 @@ impl MsgFile {
         let mut b = MessageBuilder::new()
             .subject(self.subject())
             .date(self.date() as i64)
-            .header("X-MailNix-Source", Raw::new("msg"))
+            .header("X-Lynora-Source", Raw::new("msg"))
             .header("X-MS-Message-Class", Raw::new(self.message_class.clone()));
         let sender = self.sender();
         if !sender.is_empty() {
@@ -1158,7 +1158,7 @@ mod tests {
 
     #[test]
     fn html_body_charset() {
-        // MailNix'in yazdığı UTF-8 gövde, içinde eski iso-8859-9 etiketi olsa da bozulmaz
+        // Lynora'nın yazdığı UTF-8 gövde, içinde eski iso-8859-9 etiketi olsa da bozulmaz
         let utf = "<meta charset=iso-8859-9><p>Şığ</p>".as_bytes();
         assert_eq!(decode_html_bytes(utf, Some(65001)), "<meta charset=iso-8859-9><p>Şığ</p>");
         // Gerçek 8 bit gövde
@@ -1204,11 +1204,11 @@ mod tests {
     }
 
     /// Gerçek Outlook dosyalarıyla sınama:
-    /// `MAILNIX_MSG_SAMPLES=/klasör cargo test real_samples -- --ignored --nocapture`
+    /// `LYNORA_MSG_SAMPLES=/klasör cargo test real_samples -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn real_samples() {
-        let Ok(dir) = std::env::var("MAILNIX_MSG_SAMPLES") else { return };
+        let Ok(dir) = std::env::var("LYNORA_MSG_SAMPLES") else { return };
         for e in std::fs::read_dir(dir).unwrap().flatten() {
             let data = std::fs::read(e.path()).unwrap();
             let m = MsgFile::parse(&data).unwrap();

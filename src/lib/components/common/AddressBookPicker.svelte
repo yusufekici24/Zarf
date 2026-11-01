@@ -220,7 +220,7 @@
   }
   function addToContacts(r: Row | null | undefined) {
     if (!r) return;
-    window.dispatchEvent(new CustomEvent("mailnix:add-contact", { detail: entryOf(r) }));
+    window.dispatchEvent(new CustomEvent("lynora:add-contact", { detail: entryOf(r) }));
   }
   const PHONE_KEYS: Record<string, string> = { BusinessPhone: "card.phone_work", MobilePhone: "card.phone_mobile", HomePhone: "card.phone_home" };
 

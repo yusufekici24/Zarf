@@ -165,7 +165,7 @@ class AppState {
   openMessage(id: number, subject = "", message?: unknown) {
     // Çok büyük gövdeler (gömülü resimler) aktarılmaz; pencere kendisi okur
     const pre = message && JSON.stringify(message).length < 4_000_000 ? message : undefined;
-    void api.openWindow("read", pre ? { id, message: pre } : { id }, subject || "MailNix").catch((e) => this.error(e));
+    void api.openWindow("read", pre ? { id, message: pre } : { id }, subject || "Lynora").catch((e) => this.error(e));
   }
 
   /** Ayarlar (Outlook Seçenekleri gibi) ayrı pencerede açılır; açıksa öne gelir */

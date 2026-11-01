@@ -301,13 +301,13 @@
 
   $effect(() => {
     const h = () => void copyItems();
-    window.addEventListener("mailnix:copy-items", h);
+    window.addEventListener("lynora:copy-items", h);
     // Şeritteki "Yoksay" düğmesi
     const ig = () => void ignoreConversation();
-    window.addEventListener("mailnix:ignore", ig);
+    window.addEventListener("lynora:ignore", ig);
     return () => {
-      window.removeEventListener("mailnix:copy-items", h);
-      window.removeEventListener("mailnix:ignore", ig);
+      window.removeEventListener("lynora:copy-items", h);
+      window.removeEventListener("lynora:ignore", ig);
     };
   });
 
@@ -316,7 +316,7 @@
     const id = mail.selected[0];
     if (id == null) return;
     if (mail.current?.id !== id) await mail.show(id);
-    setTimeout(() => window.dispatchEvent(new Event("mailnix:print")), 500);
+    setTimeout(() => window.dispatchEvent(new Event("lynora:print")), 500);
   }
 
   /** İlişkili Bul: bu konuşmadaki ya da bu gönderenden gelen iletiler (tüm klasörlerde) */
@@ -552,7 +552,7 @@
         <ContextMenu.SubContent class="w-60">
           <ContextMenu.Item onclick={quickDone}>{t("ctx.qs_done")}</ContextMenu.Item>
           <ContextMenu.Item disabled={!one} onclick={replyAndDelete}>{t("ctx.qs_reply_delete")}</ContextMenu.Item>
-          <ContextMenu.Item disabled={!one} onclick={() => window.dispatchEvent(new CustomEvent("mailnix:meeting-from-mail", { detail: one?.id }))}>{t("mail.reply_meeting")}</ContextMenu.Item>
+          <ContextMenu.Item disabled={!one} onclick={() => window.dispatchEvent(new CustomEvent("lynora:meeting-from-mail", { detail: one?.id }))}>{t("mail.reply_meeting")}</ContextMenu.Item>
           <ContextMenu.Item onclick={() => mail.forwardAsAttachment()}>{t("mail.forward_attachment")}</ContextMenu.Item>
         </ContextMenu.SubContent>
       </ContextMenu.Sub>

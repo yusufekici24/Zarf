@@ -158,8 +158,8 @@
   import { onMount, untrack } from "svelte";
   onMount(() => {
     const h = () => reading?.print();
-    window.addEventListener("mailnix:print", h);
-    return () => window.removeEventListener("mailnix:print", h);
+    window.addEventListener("lynora:print", h);
+    return () => window.removeEventListener("lynora:print", h);
   });
 </script>
 
@@ -186,7 +186,7 @@
         <RibbonGroup label={t("ribbon.g_delete")}>
           <!-- Outlook: Yoksay ve Önemsiz ▾ (Göndereni Engelle, Önemsiz olarak işaretle, Önemsiz Değil) -->
           <RibbonStack>
-            <RibbonButton small icon={MailX} label={t("ctx.ignore")} disabled={mail.selected.length !== 1} onclick={() => window.dispatchEvent(new Event("mailnix:ignore"))} />
+            <RibbonButton small icon={MailX} label={t("ctx.ignore")} disabled={mail.selected.length !== 1} onclick={() => window.dispatchEvent(new Event("lynora:ignore"))} />
             <DropdownMenu.Root>
               <DropdownMenu.Trigger disabled={!has}>{#snippet child({ props })}<RibbonButton {...props} small icon={ShieldAlert} iconClass="text-[#c42b1c]" label={t("mail.junk")} menu disabled={!has} />{/snippet}</DropdownMenu.Trigger>
               <DropdownMenu.Content class="w-56">
@@ -204,7 +204,7 @@
           <RibbonButton icon={ReplyAll} iconClass="text-[#7160e8]" label={t("mail.reply_all")} disabled={!has} onclick={() => mail.reply("reply_all")} />
           <RibbonButton icon={Forward} iconClass="text-[#1f6fd1]" label={t("mail.forward")} disabled={!has} onclick={() => mail.reply("forward")} />
           <RibbonStack>
-            <RibbonButton small icon={CalendarPlus} iconClass="text-[#1f6fd1]" label={t("ribbon.meeting")} disabled={!has} onclick={() => window.dispatchEvent(new CustomEvent("mailnix:meeting-from-mail", { detail: mail.ids()[0] }))} />
+            <RibbonButton small icon={CalendarPlus} iconClass="text-[#1f6fd1]" label={t("ribbon.meeting")} disabled={!has} onclick={() => window.dispatchEvent(new CustomEvent("lynora:meeting-from-mail", { detail: mail.ids()[0] }))} />
             <DropdownMenu.Root>
               <DropdownMenu.Trigger disabled={!has}>{#snippet child({ props })}<RibbonButton {...props} small icon={MessagesSquare} label={t("ribbon.more_respond")} menu disabled={!has} />{/snippet}</DropdownMenu.Trigger>
               <DropdownMenu.Content class="w-52">
@@ -283,11 +283,11 @@
       {:else if tab === "folder"}
         {@const f = mail.folder()}
         <RibbonGroup label={t("ribbon.g_new")}>
-          <RibbonButton icon={FolderPlus} label={t("folder.new")} onclick={() => window.dispatchEvent(new CustomEvent("mailnix:new-folder", { detail: f?.id ?? null }))} />
+          <RibbonButton icon={FolderPlus} label={t("folder.new")} onclick={() => window.dispatchEvent(new CustomEvent("lynora:new-folder", { detail: f?.id ?? null }))} />
         </RibbonGroup>
         <RibbonGroup label={t("ribbon.g_actions")}>
           <RibbonButton icon={MailOpen} label={t("folder.mark_all_read")} disabled={!f} onclick={() => f && api.markFolderRead(f.id)} />
-          <RibbonButton icon={Eraser} label={t("folder.empty")} disabled={!f} onclick={() => f && window.dispatchEvent(new CustomEvent("mailnix:empty-folder", { detail: f.id }))} />
+          <RibbonButton icon={Eraser} label={t("folder.empty")} disabled={!f} onclick={() => f && window.dispatchEvent(new CustomEvent("lynora:empty-folder", { detail: f.id }))} />
           <RibbonButton icon={ListFilter} label={t("rules.run_now")} disabled={!f} onclick={async () => f && app.info(t("rules.applied", await api.runRules(f.id)))} />
         </RibbonGroup>
         <RibbonGroup label={t("folder.favorites")} last>
@@ -336,7 +336,7 @@
         </RibbonGroup>
       {:else if tab === "help"}
         <RibbonGroup label={t("ribbon.help")} last>
-          <RibbonButton icon={Keyboard} label={t("help.shortcuts")} onclick={() => window.dispatchEvent(new Event("mailnix:shortcuts"))} />
+          <RibbonButton icon={Keyboard} label={t("help.shortcuts")} onclick={() => window.dispatchEvent(new Event("lynora:shortcuts"))} />
           <RibbonButton icon={Info} label={t("settings.tab_about")} onclick={() => app.openSettings("about")} />
         </RibbonGroup>
       {/if}

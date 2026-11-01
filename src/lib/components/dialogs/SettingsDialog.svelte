@@ -360,7 +360,7 @@
 {#snippet body()}
     <div class="flex h-9 shrink-0 items-center border-b pl-3 text-[13px]" data-tauri-drag-region>
       {#if windowed}<span class="flex-1 text-[13px]" data-tauri-drag-region>{t("settings.options_title")}</span>{:else}<Dialog.Title class="flex-1 text-[13px] font-normal">{t("settings.options_title")}</Dialog.Title>{/if}
-      <button class="hover:bg-accent flex h-full w-10 items-center justify-center" title={t("help.shortcuts")} onclick={() => window.dispatchEvent(new Event("mailnix:shortcuts"))}>?</button>
+      <button class="hover:bg-accent flex h-full w-10 items-center justify-center" title={t("help.shortcuts")} onclick={() => window.dispatchEvent(new Event("lynora:shortcuts"))}>?</button>
       <button class="flex h-full w-11 items-center justify-center hover:bg-[#c42b1c] hover:text-white" title={t("common.close")} onclick={cancel}><XIcon class="size-4" /></button>
     </div>
     <div class="flex min-h-0 flex-1">
@@ -637,7 +637,7 @@
         <div class="flex items-center gap-4">
           <img src="/icon.svg" alt="" class="size-16" />
           <div>
-            <h3 class="text-2xl font-semibold">MailNix</h3>
+            <h3 class="text-2xl font-semibold">Lynora</h3>
             <div class="text-muted-foreground">{t("about.tagline")}</div>
             <div class="text-muted-foreground text-xs">{t("about.version", info?.version ?? "")}</div>
           </div>

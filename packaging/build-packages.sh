@@ -1,5 +1,5 @@
 #!/bin/bash
-# MailNix .deb paketini en eski desteklenen tabanda derler.
+# Lynora .deb paketini en eski desteklenen tabanda derler.
 #
 # Paket Ubuntu 22.04 (glibc 2.35) içinde derlenir; böylece
 # Pardus 23/25, Debian 12/13, Ubuntu 22.04/24.04 ve sonrasında çalışır.
@@ -8,7 +8,7 @@
 # Çıktı:     dist/
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE="${MAILNIX_BUILD_IMAGE:-ubuntu:22.04}"
+IMAGE="${LYNORA_BUILD_IMAGE:-ubuntu:22.04}"
 
 if [ "${1:-}" != "--inside" ]; then
   mkdir -p "$ROOT/dist" "$ROOT/.build-cache"
@@ -22,7 +22,7 @@ if [ "${1:-}" != "--inside" ]; then
   [ -n "$NODE_BIN" ] && extra+=(-v "$(dirname "$(dirname "$(readlink -f "$NODE_BIN")")"):/opt/hostnode:ro")
   exec docker run --rm --network host \
     -e HTTPS_PROXY="${HTTPS_PROXY:-}" -e https_proxy="${HTTPS_PROXY:-}" -e NO_PROXY="${NO_PROXY:-}" -e no_proxy="${NO_PROXY:-}" \
-    -e MAILNIX_MS_CLIENT_ID="${MAILNIX_MS_CLIENT_ID:-}" -e MAILNIX_GOOGLE_CLIENT_ID="${MAILNIX_GOOGLE_CLIENT_ID:-}" \
+    -e LYNORA_MS_CLIENT_ID="${LYNORA_MS_CLIENT_ID:-}" -e LYNORA_GOOGLE_CLIENT_ID="${LYNORA_GOOGLE_CLIENT_ID:-}" \
     "${extra[@]}" \
     -v "$ROOT:/src" -v "$ROOT/.build-cache:/cache" \
     "$IMAGE" bash /src/packaging/build-packages.sh --inside
@@ -62,21 +62,21 @@ npm ci --no-audit --no-fund
 npx tauri build --bundles deb --verbose > /cache/tauri-build.log 2>&1 || { grep -iv "^\s*\(compiling\|running\)" /cache/tauri-build.log | tail -40; exit 1; }
 B=/cache/target/release/bundle
 VER=$(node -p "require('/src/src-tauri/tauri.conf.json').version")
-DEB=$B/deb/MailNix_${VER}_amd64.deb
+DEB=$B/deb/Lynora_${VER}_amd64.deb
 
 # .deb'ye bildirim alanı kitaplıkları gömülür (sistemden ek paket istenmez):
-# /usr/lib/mailnix altına konur, uygulama onları önce orada arar (build.rs: rpath)
+# /usr/lib/lynora altına konur, uygulama onları önce orada arar (build.rs: rpath)
 EMBED_LIBS="libayatana-appindicator3.so.1 libayatana-indicator3.so.7 libayatana-ido3-0.4.so.0 libdbusmenu-glib.so.4 libdbusmenu-gtk3.so.4"
 R=$(mktemp -d)
 dpkg-deb -R "$DEB" "$R"
-mkdir -p "$R/usr/lib/mailnix"
+mkdir -p "$R/usr/lib/lynora"
 for l in $EMBED_LIBS; do
   src=$(ldconfig -p | awk -v l="$l" '$1==l && !f{print $NF; f=1}')
   [ -n "$src" ] || { echo "gömülecek kitaplık bulunamadı: $l"; exit 1; }
-  install -m 0644 "$(readlink -f "$src")" "$R/usr/lib/mailnix/$l"
+  install -m 0644 "$(readlink -f "$src")" "$R/usr/lib/lynora/$l"
 done
-mkdir -p "$R/usr/share/doc/mail-nix"
-dpkg-query -W -f='${Package} ${Version}\n' libayatana-appindicator3-1 libayatana-indicator3-7 libayatana-ido3-0.4-0 libdbusmenu-glib4 libdbusmenu-gtk3-4 > "$R/usr/share/doc/mail-nix/embedded-libraries.txt"
+mkdir -p "$R/usr/share/doc/lynora"
+dpkg-query -W -f='${Package} ${Version}\n' libayatana-appindicator3-1 libayatana-indicator3-7 libayatana-ido3-0.4-0 libdbusmenu-glib4 libdbusmenu-gtk3-4 > "$R/usr/share/doc/lynora/embedded-libraries.txt"
 # Gömülen kitaplığın paketi bağımlılıktan çıkar
 sed -i -E 's/(^Depends: .*)libayatana-appindicator3-1(, )?/\1/; s/, *$//' "$R/DEBIAN/control"
 sed -i -E "s/^Installed-Size: .*/Installed-Size: $(du -sk --exclude=DEBIAN "$R" | cut -f1)/" "$R/DEBIAN/control"
@@ -86,5 +86,5 @@ rm -rf "$R"
 
 rm -rf /src/dist/*
 cp "$DEB" /src/dist/
-dpkg-deb -f /src/dist/MailNix_${VER}_amd64.deb Depends
+dpkg-deb -f /src/dist/Lynora_${VER}_amd64.deb Depends
 ls -la /src/dist

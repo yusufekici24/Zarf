@@ -54,11 +54,11 @@ jobs:
       - run: npm ci
       - name: Deb paketi
         env:
-          MAILNIX_MS_CLIENT_ID: ${{ secrets.MAILNIX_MS_CLIENT_ID || secrets.LYNORA_MS_CLIENT_ID }}
+          LYNORA_MS_CLIENT_ID: ${{ secrets.LYNORA_MS_CLIENT_ID }}
         run: npx tauri build --bundles deb
       - uses: actions/upload-artifact@v4
         with:
-          name: mailnix-linux-x64
+          name: lynora-linux-x64
           path: src-tauri/target/release/bundle/deb/*.deb
       - name: Sürüm yayımla
         if: startsWith(github.ref, 'refs/tags/v')

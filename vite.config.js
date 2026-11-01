@@ -11,7 +11,7 @@ const fluentMap = fluentMapJson;
 function fluentIcons() {
   const PREFIX = "\0fluent-icon:";
   return {
-    name: "mailnix-fluent-icons",
+    name: "lynora-fluent-icons",
     enforce: "pre",
     /** @param {string} source */
     resolveId(source) {

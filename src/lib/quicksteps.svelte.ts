@@ -137,7 +137,7 @@ class QuickSteps {
         } else if (a.type === "new_mail") {
           app.compose({ mode: "new", data: { to: a.to, cc: a.cc, subject: a.subject } });
         } else if (a.type === "meeting") {
-          window.dispatchEvent(new CustomEvent("mailnix:meeting-from-mail", { detail: ids[0] }));
+          window.dispatchEvent(new CustomEvent("lynora:meeting-from-mail", { detail: ids[0] }));
         }
       } catch (e) {
         app.error(e);

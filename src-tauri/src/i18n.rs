@@ -12,7 +12,7 @@
 //! eklemek için `locales/` klasörüne yeni bir JSON dosyası eklemek ve `BUILTIN`
 //! listesine bir satır yazmak yeterlidir. Yeniden derlemeden dil eklemek için
 //! dosya şu klasörlerden birine bırakılabilir:
-//! `~/.local/share/mailnix/locales/`, `/usr/share/mailnix/locales/`.
+//! `~/.local/share/lynora/locales/`, `/usr/share/lynora/locales/`.
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -46,14 +46,14 @@ fn parse(text: &str) -> LangMap {
 fn search_dirs() -> Vec<std::path::PathBuf> {
     let mut v = Vec::new();
     if let Some(d) = dirs::data_dir() {
-        v.push(d.join("mailnix").join("locales"));
+        v.push(d.join("lynora").join("locales"));
     }
-    v.push("/usr/share/mailnix/locales".into());
-    v.push("/usr/local/share/mailnix/locales".into());
+    v.push("/usr/share/lynora/locales".into());
+    v.push("/usr/local/share/lynora/locales".into());
     if let Ok(exe) = std::env::current_exe() {
         if let Some(p) = exe.parent() {
             v.push(p.join("locales"));
-            v.push(p.join("../share/mailnix/locales"));
+            v.push(p.join("../share/lynora/locales"));
         }
     }
     v

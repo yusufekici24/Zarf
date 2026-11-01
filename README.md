@@ -1,6 +1,6 @@
-# MailNix
+# Lynora
 
-Pardus için e-posta, takvim, kişiler, görevler ve notlar uygulaması.
+Debian tabanlı Linux dağıtımları için e-posta, takvim, kişiler, görevler ve notlar uygulaması.
 Kurumsal **Microsoft Exchange** desteği vardır ve **.msg** ileti dosyalarını açar.
 
 Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svelte** (arayüz).
@@ -45,35 +45,42 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 
 | Dağıtım | Paket |
 |---|---|
-| Pardus 23 / 25, Debian 12 / 13, Ubuntu 22.04 / 24.04 ve türevleri | `MailNix_*_amd64.deb` |
+| Debian tabanlı dağıtımlar: Debian 12 / 13, Ubuntu 22.04 / 24.04, Pardus 23 / 25 ve türevleri | `Lynora_*_amd64.deb` |
 
 ```sh
-sudo apt install ./MailNix_1.0.54_amd64.deb      # bağımlılıklar otomatik kurulur
+sudo apt install ./Lynora_1.0.54_amd64.deb      # bağımlılıklar otomatik kurulur
 ```
 
-Paket Ubuntu 22.04 tabanında (glibc 2.35) derlenir. Bu yüzden daha yeni tüm Pardus/Debian/Ubuntu sürümlerinde sorunsuz çalışır.
+Paket Ubuntu 22.04 tabanında (glibc 2.35) derlenir. Bu yüzden daha yeni tüm Debian tabanlı dağıtımlarda sorunsuz çalışır.
 `.deb` paketi sistemdeki WebKitGTK 4.1 ve GTK 3 kitaplıklarını kullanır.
+
+### MailNix'ten geçiş
+
+Uygulamanın önceki adı MailNix'ti. Lynora paketi kurulurken eski `mail-nix` paketi kaldırılır. İlk açılışta veriler
+`~/.local/share/mailnix` klasöründen `~/.local/share/lynora` klasörüne taşınır. Anahtarlıktaki parolalar, oturumda başlatma
+ve varsayılan e-posta uygulaması seçimi de yeni ada aktarılır. Eski `.mnbak` yedekleri geri yüklenebilir.
+`MAILNIX_*` ortam değişkenleri artık okunmaz, bunların yerine `LYNORA_*` kullanılır.
 
 ## Kurumsal kullanım (Exchange + Active Directory)
 
-1. Bilgisayar etki alanına katılmış olmalı (Pardus'ta `pardus-domain-joiner`, `realmd`/`sssd` veya `krb5-user` + `kinit`).
+1. Bilgisayar etki alanına katılmış olmalı (`realmd`/`sssd` veya `krb5-user` + `kinit`; Pardus'ta `pardus-domain-joiner` de kullanılabilir).
    Oturum açınca Kerberos bileti alınır (`klist` ile görülebilir).
-2. MailNix ilk açıldığında kullanıcının adresini bulur ve Exchange'e parolasız bağlanır.
+2. Lynora ilk açıldığında kullanıcının adresini bulur ve Exchange'e parolasız bağlanır.
    Kerberos kullanılamıyorsa yalnızca bir kez parola sorulur (NTLM).
 3. Microsoft 365 için kurumun Entra ID yöneticisi bir "genel istemci" uygulaması kaydetmelidir (yönlendirme adresi `http://localhost`).
-   Uygulama kimliği **Ayarlar → Hesaplar → OAuth** bölümüne girilir. Derleme sırasında `MAILNIX_MS_CLIENT_ID` ile pakete de gömülebilir.
-4. İç ağda Autodiscover farklı bir adresteyse `MAILNIX_AUTODISCOVER_URL` ortam değişkeni ile verilebilir.
+   Uygulama kimliği **Ayarlar → Hesaplar → OAuth** bölümüne girilir. Derleme sırasında `LYNORA_MS_CLIENT_ID` ile pakete de gömülebilir.
+4. İç ağda Autodiscover farklı bir adresteyse `LYNORA_AUTODISCOVER_URL` ortam değişkeni ile verilebilir.
    EWS adresi hesap ayarlarından elle de girilebilir.
 
 **Parola değişince:** Kerberos kullanan hesaplar parola saklamaz, bu yüzden AD parolası değişince bir şey yapmak gerekmez.
 Parolalı (NTLM/IMAP) hesaplarda sunucu parolayı reddettiği anda eşitleme durur ve klasör listesinde uyarı çıkar.
-"Parolayı güncelle" ile yeni parola girilir. MailNix reddedilen parolayı tekrar tekrar denemez.
+"Parolayı güncelle" ile yeni parola girilir. Lynora reddedilen parolayı tekrar tekrar denemez.
 
 ## Yeni dil eklemek
 
 `locales/tr.json` dosyasını örneğin `locales/de.json` adıyla kopyalayıp çevirin. `@name` alanına dilin adını yazın.
-Uygulamayı yeniden derlemeden denemek için dosyayı `~/.local/share/mailnix/locales/` klasörüne koyun.
-Sistem geneli için `/usr/share/mailnix/locales/` kullanılır. Dil, **Ayarlar → Genel** bölümünden seçilir.
+Uygulamayı yeniden derlemeden denemek için dosyayı `~/.local/share/lynora/locales/` klasörüne koyun.
+Sistem geneli için `/usr/share/lynora/locales/` kullanılır. Dil, **Ayarlar → Genel** bölümünden seçilir.
 
 ## Geliştirme
 

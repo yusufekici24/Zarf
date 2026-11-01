@@ -65,7 +65,7 @@ fn strip_id(s: &str) -> String {
 pub fn new_message_id(account: Option<&Account>) -> String {
     let domain = account
         .and_then(|a| a.email.rsplit_once('@').map(|(_, d)| d.to_string()))
-        .unwrap_or_else(|| "mailnix.local".into());
+        .unwrap_or_else(|| "lynora.local".into());
     format!("{}@{}", uuid::Uuid::new_v4().simple(), domain)
 }
 
@@ -85,13 +85,13 @@ pub fn build_raw(
                 if alias.is_empty() { a.email.clone() } else { alias.to_string() },
             )
         })
-        .unwrap_or_else(|| Address::new_address(None::<String>, "mailnix@localhost".to_string()));
+        .unwrap_or_else(|| Address::new_address(None::<String>, "lynora@localhost".to_string()));
     let mut b = MessageBuilder::new()
         .from(from)
         .subject(m.subject.clone())
         .date(chrono::Utc::now().timestamp())
         .message_id(new_message_id(account))
-        .header("X-Mailer", Raw::new("MailNix"));
+        .header("X-Mailer", Raw::new("Lynora"));
     if let Some(a) = to_address(&m.to) {
         b = b.to(a);
     }
@@ -159,7 +159,7 @@ pub fn extract_data_images(html: &str) -> (String, Vec<(String, String, Vec<u8>)
         let clean: String = c[3].chars().filter(|ch| !ch.is_whitespace()).collect();
         match base64::engine::general_purpose::STANDARD.decode(clean.as_bytes()) {
             Ok(data) => {
-                let cid = format!("image{:03}.{}@mailnix", images.len() + 1, uuid::Uuid::new_v4().simple());
+                let cid = format!("image{:03}.{}@lynora", images.len() + 1, uuid::Uuid::new_v4().simple());
                 images.push((cid.clone(), c[2].to_lowercase(), data));
                 format!("{}cid:{cid}{}", &c[1], &c[4])
             }

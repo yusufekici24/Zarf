@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "MailNix",
+  "productName": "Lynora",
   "version": "1.0.54",
-  "identifier": "app.mailnix.MailNix",
+  "identifier": "app.lynora.Lynora",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "MailNix",
+        "title": "Lynora",
         "width": 1360,
         "height": 860,
         "minWidth": 900,
@@ -34,9 +34,9 @@
       "deb"
     ],
     "category": "Productivity",
-    "shortDescription": "Pardus için e-posta, takvim ve Exchange istemcisi",
-    "longDescription": "MailNix; Microsoft Exchange (EWS), IMAP/SMTP, takvim, kişiler, görevler ve notları tek uygulamada toplayan kişisel bilgi yöneticisidir. .msg ileti dosyalarını açar ve kaydeder, Kerberos ile parolasız kurumsal oturum açmayı destekler.",
-    "publisher": "MailNix",
+    "shortDescription": "Debian tabanlı dağıtımlar için e-posta, takvim ve Exchange istemcisi",
+    "longDescription": "Lynora; Microsoft Exchange (EWS), IMAP/SMTP, takvim, kişiler, görevler ve notları tek uygulamada toplayan kişisel bilgi yöneticisidir. .msg ileti dosyalarını açar ve kaydeder, Kerberos ile parolasız kurumsal oturum açmayı destekler.",
+    "publisher": "Lynora",
     "copyright": "GPL-3.0-or-later",
     "icon": [
       "icons/32x32.png",
@@ -82,7 +82,7 @@
       "deb": {
         "depends": [],
         "section": "mail",
-        "desktopTemplate": "../packaging/mailnix.desktop",
+        "desktopTemplate": "../packaging/lynora.desktop",
         "recommends": [
           "libgssapi-krb5-2",
           "hunspell-tr",
@@ -93,16 +93,16 @@
           "fonts-noto-core"
         ],
         "conflicts": [
-          "lynora"
+          "mail-nix"
         ],
         "replaces": [
-          "lynora"
+          "mail-nix"
         ],
         "provides": [
-          "lynora"
+          "mail-nix"
         ],
         "files": {
-          "/usr/share/mime/packages/mailnix.xml": "../packaging/mailnix-mime.xml"
+          "/usr/share/mime/packages/lynora.xml": "../packaging/lynora-mime.xml"
         },
         "postInstallScript": "../packaging/postinst.sh"
       }

@@ -186,7 +186,7 @@ fn parse_duration_minutes(v: &str) -> i64 {
 pub fn event_to_vevent(e: &Event, organizer: Option<&str>) -> Vec<String> {
     let mut l = vec![
         "BEGIN:VEVENT".to_string(),
-        format!("UID:{}", if e.uid.is_empty() { format!("{}@mailnix", uuid::Uuid::new_v4()) } else { e.uid.clone() }),
+        format!("UID:{}", if e.uid.is_empty() { format!("{}@lynora", uuid::Uuid::new_v4()) } else { e.uid.clone() }),
         format!("DTSTAMP:{}", fmt_dt(crate::db::now(), false)),
     ];
     if e.all_day {
@@ -262,7 +262,7 @@ pub fn event_to_vevent(e: &Event, organizer: Option<&str>) -> Vec<String> {
 }
 
 pub fn task_to_vtodo(t: &Task) -> Vec<String> {
-    let mut l = vec!["BEGIN:VTODO".to_string(), format!("UID:task-{}@mailnix", t.id), format!("SUMMARY:{}", escape(&t.title))];
+    let mut l = vec!["BEGIN:VTODO".to_string(), format!("UID:task-{}@lynora", t.id), format!("SUMMARY:{}", escape(&t.title))];
     if !t.notes.is_empty() {
         l.push(format!("DESCRIPTION:{}", escape(&t.notes)));
     }
@@ -284,7 +284,7 @@ pub fn task_to_vtodo(t: &Task) -> Vec<String> {
 }
 
 pub fn export_ics(events: &[Event], method: Option<&str>, organizer: Option<&str>) -> String {
-    let mut l = vec!["BEGIN:VCALENDAR".to_string(), "VERSION:2.0".into(), "PRODID:-//Pardus//MailNix//TR".into(), "CALSCALE:GREGORIAN".into()];
+    let mut l = vec!["BEGIN:VCALENDAR".to_string(), "VERSION:2.0".into(), "PRODID:-//Lynora//Lynora//TR".into(), "CALSCALE:GREGORIAN".into()];
     if let Some(m) = method {
         l.push(format!("METHOD:{m}"));
     }
@@ -296,7 +296,7 @@ pub fn export_ics(events: &[Event], method: Option<&str>, organizer: Option<&str
 }
 
 pub fn export_tasks_ics(tasks: &[Task]) -> String {
-    let mut l = vec!["BEGIN:VCALENDAR".to_string(), "VERSION:2.0".into(), "PRODID:-//Pardus//MailNix//TR".into()];
+    let mut l = vec!["BEGIN:VCALENDAR".to_string(), "VERSION:2.0".into(), "PRODID:-//Lynora//Lynora//TR".into()];
     for t in tasks {
         l.extend(task_to_vtodo(t));
     }
@@ -507,7 +507,7 @@ pub fn make_reply(ics: &str, my_email: &str, partstat: &str) -> Option<(String, 
     let mut out = vec![
         "BEGIN:VCALENDAR".to_string(),
         "VERSION:2.0".into(),
-        "PRODID:-//MailNix//MailNix//TR".into(),
+        "PRODID:-//Lynora//Lynora//TR".into(),
         "METHOD:REPLY".into(),
         "BEGIN:VEVENT".into(),
         format!("DTSTAMP:{}", fmt_dt(crate::db::now(), false)),

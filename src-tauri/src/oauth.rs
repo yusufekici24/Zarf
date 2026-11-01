@@ -3,7 +3,7 @@
 //! Microsoft 365 ve Gmail parola ile girişi kapattığı için modern kimlik
 //! doğrulaması gerekir. Kurumlar kendi Azure AD (Entra ID) uygulama kaydının
 //! istemci kimliğini Ayarlar'dan girer ya da paketleyen kişi derleme sırasında
-//! `MAILNIX_MS_CLIENT_ID` / `MAILNIX_GOOGLE_CLIENT_ID` ortam değişkenlerini verir.
+//! `LYNORA_MS_CLIENT_ID` / `LYNORA_GOOGLE_CLIENT_ID` ortam değişkenlerini verir.
 //! Yönlendirme adresi: `http://localhost` (yerel geri dönüş).
 
 use crate::db::{Account, Db};
@@ -52,7 +52,7 @@ fn setting(key: &str) -> String {
 pub fn provider(name: &str, exchange: bool) -> MailResult<Provider> {
     match name {
         "microsoft" => {
-            let client_id = Some(setting("oauth_ms_client_id")).filter(|s| !s.is_empty()).or_else(|| option_env!("MAILNIX_MS_CLIENT_ID").map(String::from)).unwrap_or_default();
+            let client_id = Some(setting("oauth_ms_client_id")).filter(|s| !s.is_empty()).or_else(|| option_env!("LYNORA_MS_CLIENT_ID").map(String::from)).unwrap_or_default();
             if client_id.is_empty() {
                 return Err(MailError(crate::t!("oauth.no_client_id", "Microsoft")));
             }
@@ -70,8 +70,8 @@ pub fn provider(name: &str, exchange: bool) -> MailResult<Provider> {
             })
         }
         "google" => {
-            let client_id = Some(setting("oauth_google_client_id")).filter(|s| !s.is_empty()).or_else(|| option_env!("MAILNIX_GOOGLE_CLIENT_ID").map(String::from)).unwrap_or_default();
-            let client_secret = Some(setting("oauth_google_client_secret")).filter(|s| !s.is_empty()).or_else(|| option_env!("MAILNIX_GOOGLE_CLIENT_SECRET").map(String::from)).unwrap_or_default();
+            let client_id = Some(setting("oauth_google_client_id")).filter(|s| !s.is_empty()).or_else(|| option_env!("LYNORA_GOOGLE_CLIENT_ID").map(String::from)).unwrap_or_default();
+            let client_secret = Some(setting("oauth_google_client_secret")).filter(|s| !s.is_empty()).or_else(|| option_env!("LYNORA_GOOGLE_CLIENT_SECRET").map(String::from)).unwrap_or_default();
             if client_id.is_empty() {
                 return Err(MailError(crate::t!("oauth.no_client_id", "Google")));
             }
@@ -164,7 +164,7 @@ pub fn authorize(provider_name: &str, exchange: bool, login_hint: &str, open_url
         let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
         let params: HashMap<String, String> =
             query.split('&').filter_map(|kv| kv.split_once('=')).map(|(k, v)| (k.to_string(), http::url_decode(v))).collect();
-        let page = |msg: &str| format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!doctype html><meta charset=utf-8><title>MailNix</title><body style=\"font-family:sans-serif;text-align:center;padding-top:15vh\"><h2>MailNix</h2><p>{msg}</p></body>");
+        let page = |msg: &str| format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!doctype html><meta charset=utf-8><title>Lynora</title><body style=\"font-family:sans-serif;text-align:center;padding-top:15vh\"><h2>Lynora</h2><p>{msg}</p></body>");
         if let Some(code) = params.get("code") {
             if params.get("state").map(|s| s == &state).unwrap_or(false) {
                 let _ = stream.write_all(page(&crate::t!("oauth.done")).as_bytes());

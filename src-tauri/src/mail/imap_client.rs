@@ -428,11 +428,11 @@ mod tests {
     }
 
     /// Gerçek sunucuya karşı uçtan uca (ör. yerel Dovecot):
-    /// MAILNIX_IMAP_TEST="sunucu:port:kullanıcı:parola" cargo test -- --ignored imap_live
+    /// LYNORA_IMAP_TEST="sunucu:port:kullanıcı:parola" cargo test -- --ignored imap_live
     #[test]
     #[ignore]
     fn imap_live() {
-        let Ok(spec) = std::env::var("MAILNIX_IMAP_TEST") else { return };
+        let Ok(spec) = std::env::var("LYNORA_IMAP_TEST") else { return };
         let p: Vec<&str> = spec.splitn(4, ':').collect();
         let acc = Account { imap_host: p[0].into(), imap_port: p[1].parse().unwrap(), imap_security: "none".into(), username: p[2].into(), email: p[2].into(), ..Default::default() };
         let mut c = Imap::connect(&acc, p[3]).expect("bağlan");

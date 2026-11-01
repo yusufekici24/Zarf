@@ -13,7 +13,7 @@ pub struct Srv {
 }
 
 fn nameservers() -> Vec<String> {
-    if let Ok(s) = std::env::var("MAILNIX_DNS_SERVER") {
+    if let Ok(s) = std::env::var("LYNORA_DNS_SERVER") {
         return vec![s];
     }
     let text = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();

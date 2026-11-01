@@ -53,7 +53,7 @@ pub fn exchange(email: &str, auth: Auth, log: &mut Vec<String>) -> MailResult<Di
         format!("https://{domain}/autodiscover/autodiscover.xml"),
     ];
     // Kurumsal dağıtımlar için (ör. iç ağda farklı adres) elle verilen Autodiscover adresi
-    if let Ok(u) = std::env::var("MAILNIX_AUTODISCOVER_URL") {
+    if let Ok(u) = std::env::var("LYNORA_AUTODISCOVER_URL") {
         if !u.trim().is_empty() {
             urls.insert(0, u.trim().to_string());
         }
@@ -257,7 +257,7 @@ fn candidate_domains(login: &str, email: &str) -> Vec<String> {
 /// İlk kimlik reddinde durur; böylece hatalı parola tek kez denenmiş olur.
 fn mailbox_via_ews(login: &str, auth: &Auth, uses_password: bool, domains: &[String], log: &mut Vec<String>) -> MailResult<Option<(String, String, String)>> {
     let mut urls: Vec<String> = Vec::new();
-    if let Ok(u) = std::env::var("MAILNIX_AUTODISCOVER_URL") {
+    if let Ok(u) = std::env::var("LYNORA_AUTODISCOVER_URL") {
         let lower = u.to_ascii_lowercase();
         if let Some(i) = lower.find("/autodiscover/") {
             urls.push(format!("{}/EWS/Exchange.asmx", &u[..i]));

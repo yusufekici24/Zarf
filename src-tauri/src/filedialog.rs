@@ -4,7 +4,7 @@
 //! açılırken GVFS (Nautilus'un ağ konumları, takılmış SMB paylaşımı vb.) yanıt vermezse
 //! uygulamanın ana iş parçacığı kilitlenip her şey donuyordu. Burada:
 //! - Masaüstünün dosya seçici servisi (xdg-desktop-portal) varsa diyalog ayrı bir süreçte
-//!   açılır (GtkFileChooserNative + GTK_USE_PORTAL): orada takılma olsa da MailNix donmaz.
+//!   açılır (GtkFileChooserNative + GTK_USE_PORTAL): orada takılma olsa da Lynora donmaz.
 //! - Diyalog iç içe ana döngü kurmadan (run() değil, show() + yanıt geri çağrısı) açılır;
 //!   arayüz çizilmeye devam eder.
 

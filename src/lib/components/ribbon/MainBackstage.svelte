@@ -91,9 +91,9 @@
   items={[
     { key: "info", label: t("bs.info") },
     { key: "open", label: t("bs.open_export") },
-    { key: "save_as", label: t("mail.save_as"), disabled: !mail.current, action: () => window.dispatchEvent(new CustomEvent("mailnix:save-as", { detail: mail.current?.id })) },
+    { key: "save_as", label: t("mail.save_as"), disabled: !mail.current, action: () => window.dispatchEvent(new CustomEvent("lynora:save-as", { detail: mail.current?.id })) },
     { key: "save_att", label: t("bs.save_attachments"), disabled: !mail.current?.attachments?.some((a) => !a.inline), action: saveAllAttachments },
-    { key: "print", label: t("common.print"), disabled: !mail.current, action: () => setTimeout(() => window.dispatchEvent(new Event("mailnix:print")), 50) },
+    { key: "print", label: t("common.print"), disabled: !mail.current, action: () => setTimeout(() => window.dispatchEvent(new Event("lynora:print")), 50) },
   ]}
   bottom={[
     { key: "about", label: t("bs.about"), action: () => app.openSettings("about") },

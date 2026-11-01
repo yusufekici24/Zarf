@@ -1,4 +1,4 @@
-//! MailNix — Pardus için Outlook benzeri kişisel bilgi yöneticisi.
+//! Lynora — Debian tabanlı dağıtımlar için Outlook benzeri kişisel bilgi yöneticisi.
 
 pub mod backup;
 pub mod commands;
@@ -49,12 +49,12 @@ fn useful_args(argv: &[String]) -> Vec<String> {
 /// Wayland oturumunda XWayland üzerinden (X11) çalışılır: Wayland pencerelerin kendi
 /// konumunu belirlemesine, her zaman üstte kalmasına ve öne gelmesine izin vermiyor; bu
 /// yüzden masaüstü uyarı kartları sağ altta duramaz, pencereler kapandığı yerde açılamaz ve
-/// "arkada mı" denetimi yapılamaz. XWayland yoksa ya da MAILNIX_WAYLAND=1 verilmişse
+/// "arkada mı" denetimi yapılamaz. XWayland yoksa ya da LYNORA_WAYLAND=1 verilmişse
 /// doğrudan Wayland kullanılır (bu özellikler kısıtlı çalışır).
 #[cfg(target_os = "linux")]
 fn prefer_x11() {
     let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v == "wayland");
-    if wayland && std::env::var_os("GDK_BACKEND").is_none() && std::env::var_os("DISPLAY").is_some() && std::env::var_os("MAILNIX_WAYLAND").is_none() {
+    if wayland && std::env::var_os("GDK_BACKEND").is_none() && std::env::var_os("DISPLAY").is_some() && std::env::var_os("LYNORA_WAYLAND").is_none() {
         std::env::set_var("GDK_BACKEND", "x11");
     }
 }
@@ -118,7 +118,7 @@ fn tray(app: &tauri::AppHandle) {
         let open = MenuItem::with_id(app, "open", t!("tray.open"), true, None::<&str>)?;
         let quit = MenuItem::with_id(app, "quit", t!("tray.exit"), true, None::<&str>)?;
         let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
-        let mut b = TrayIconBuilder::with_id("mailnix").tooltip("MailNix").menu(&menu).show_menu_on_left_click(false);
+        let mut b = TrayIconBuilder::with_id("lynora").tooltip("Lynora").menu(&menu).show_menu_on_left_click(false);
         if let Some(icon) = app.default_window_icon() {
             b = b.icon(icon.clone());
         }
@@ -153,7 +153,7 @@ pub fn run() {
         let bt = std::backtrace::Backtrace::force_capture();
         let line = format!("[{}] {info}\n{bt}\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
         eprintln!("{line}");
-        if let Some(dir) = dirs::data_dir().map(|d| d.join("mailnix")) {
+        if let Some(dir) = dirs::data_dir().map(|d| d.join("lynora")) {
             let _ = std::fs::create_dir_all(&dir);
             use std::io::Write;
             if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("crash.log")) {
@@ -273,7 +273,7 @@ pub fn run() {
                 windows::reveal_later(&w, 5000);
             }
 
-            // Eski adla (Lynora) yapılmış masaüstü ayarlarını yeni ada aktar
+            // Eski adla (MailNix) yapılmış masaüstü ayarlarını yeni ada aktar
             std::thread::spawn(commands::migrate_legacy_integration);
 
             // Yeni ileti / okuma pencereleri anında açılsın diye yedek pencere hazırla
@@ -289,7 +289,7 @@ pub fn run() {
             let hb = app.handle().clone();
             let dbb = db.clone();
             std::thread::Builder::new()
-                .name("mailnix-badge".into())
+                .name("lynora-badge".into())
                 .spawn(move || {
                     let mut last = -1i64;
                     let mut tick = 0u32;
@@ -308,7 +308,7 @@ pub fn run() {
             // Eski iletilerin ek adları arka planda doldurulur (aramada ek önerileri için)
             let dba = db.clone();
             std::thread::Builder::new()
-                .name("mailnix-attnames".into())
+                .name("lynora-attnames".into())
                 .spawn(move || {
                     std::thread::sleep(Duration::from_secs(40));
                     while dba.backfill_att_names(100) > 0 {
@@ -321,7 +321,7 @@ pub fn run() {
             let handle = app.handle().clone();
             let db2 = db.clone();
             std::thread::Builder::new()
-                .name("mailnix-timer".into())
+                .name("lynora-timer".into())
                 .spawn(move || {
                     if db2.setting_bool("sync_on_start", true) {
                         // Önce arayüz yüklensin (açılışta işlemci ve disk ona kalsın)
@@ -578,7 +578,7 @@ pub fn run() {
             commands::display_names,
         ])
         .run(tauri::generate_context!())
-        .expect("MailNix başlatılamadı");
+        .expect("Lynora başlatılamadı");
 }
 
 fn r_key(r: &commands::Reminder) -> String {

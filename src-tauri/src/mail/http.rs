@@ -111,7 +111,7 @@ impl Client {
             auth,
             conn: None,
             timeout: Duration::from_secs(60),
-            user_agent: format!("MailNix/{}", env!("CARGO_PKG_VERSION")),
+            user_agent: format!("Lynora/{}", env!("CARGO_PKG_VERSION")),
             resolved: None,
             conn_gen: 0,
             authed_gen: None,
@@ -272,7 +272,7 @@ impl Client {
         let Some(ch) = challenge else {
             return Ok(r1);
         };
-        let ws = std::fs::read_to_string("/etc/hostname").map(|s| s.trim().to_uppercase()).unwrap_or_else(|_| "MAILNIX".into());
+        let ws = std::fs::read_to_string("/etc/hostname").map(|s| s.trim().to_uppercase()).unwrap_or_else(|_| "LYNORA".into());
         let t3 = ntlm::authenticate(&ch, user, password, &ws);
         let mut h = base.to_vec();
         h.push(("Authorization".into(), format!("NTLM {}", b64.encode(t3))));

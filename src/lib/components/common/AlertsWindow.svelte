@@ -285,7 +285,7 @@
         {@const started = (it.start ?? 0) <= Date.now() / 1000 + 30 && it.kind === "event"}
         <div class="flex h-6 items-center gap-2 text-[12px]">
           <img src="/icon.svg" alt="" class="size-5 rounded-md" />
-          <span class="font-semibold">MailNix</span>
+          <span class="font-semibold">Lynora</span>
           <span class="text-muted-foreground">•</span>
           <span class="text-muted-foreground truncate">{it.kind === "event" ? t("alerts.meeting") : t("alerts.task_reminder")}</span>
           <span class="flex-1"></span>
@@ -314,7 +314,7 @@
       <!-- Üst satır: uygulama, tür, zaman, kapat -->
       <div class="flex h-6 items-center gap-2 text-[12px]">
         <img src="/icon.svg" alt="" class="size-5 rounded-md" />
-        <span class="font-semibold">MailNix</span>
+        <span class="font-semibold">Lynora</span>
         <span class="text-muted-foreground">•</span>
         <span class="text-muted-foreground truncate">{t("alerts.new_mail")}</span>
         <span class="flex-1"></span>

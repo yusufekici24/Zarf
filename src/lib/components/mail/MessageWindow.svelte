@@ -80,7 +80,7 @@
       });
     }
     (window as unknown as { __contentReady?: boolean }).__contentReady = true;
-    window.dispatchEvent(new Event("mailnix:content-ready"));
+    window.dispatchEvent(new Event("lynora:content-ready"));
   }
 
   onMount(async () => {
@@ -150,7 +150,7 @@
       (yeni pencere açılmaz; SecondaryWindow içeriği değiştirir) */
   function reply(mode: "reply" | "reply_all" | "forward") {
     if (!message) return;
-    window.dispatchEvent(new CustomEvent("mailnix:become-compose", { detail: { mode, sourceId: message.id, key: Date.now() } }));
+    window.dispatchEvent(new CustomEvent("lynora:become-compose", { detail: { mode, sourceId: message.id, key: Date.now() } }));
   }
 
   /** Yoksay (Outlook): bu konuşmanın sonraki iletileri doğrudan silinir, bu ileti de silinir */
@@ -222,7 +222,7 @@
 <div class="bg-background flex h-screen flex-col border {windowFocus.focused ? 'border-primary' : 'border-black/25 dark:border-white/20'}">
   <WindowTitleBar
     title={`${message?.subject || t("mail.no_subject")} - ${t("compose.window_msg")}`}
-    onsave={message ? () => window.dispatchEvent(new CustomEvent("mailnix:save-as", { detail: message!.id })) : undefined}
+    onsave={message ? () => window.dispatchEvent(new CustomEvent("lynora:save-as", { detail: message!.id })) : undefined}
     onprev={pos > 0 ? () => load(siblings[pos - 1]) : null}
     onnext={pos >= 0 && siblings[pos + 1] != null ? () => load(siblings[pos + 1]) : null}
     onclose={closeWindow}
@@ -232,7 +232,7 @@
     <Backstage
       items={[
         { key: "info", label: t("bs.info") },
-        { key: "save_as", label: t("mail.save_as"), action: () => window.dispatchEvent(new CustomEvent("mailnix:save-as", { detail: message!.id })) },
+        { key: "save_as", label: t("mail.save_as"), action: () => window.dispatchEvent(new CustomEvent("lynora:save-as", { detail: message!.id })) },
         { key: "save_att", label: t("bs.save_attachments"), disabled: !message.attachments.some((a) => !a.inline), action: saveAllAttachments },
         { key: "print", label: t("common.print"), action: () => setTimeout(() => reading?.print(), 50) },
         { key: "close", label: t("common.close"), action: closeWindow },
@@ -291,7 +291,7 @@
       <RibbonButton icon={ReplyAll} iconClass="text-[#7160e8]" label={t("mail.reply_all")} disabled={!message} onclick={() => reply("reply_all")} />
       <RibbonButton icon={Forward} iconClass="text-[#1f6fd1]" label={t("mail.forward")} disabled={!message} onclick={() => reply("forward")} />
       <RibbonStack>
-        <RibbonButton small icon={CalendarPlus} iconClass="text-[#1f6fd1]" label={t("ribbon.meeting")} disabled={!has} onclick={() => window.dispatchEvent(new CustomEvent("mailnix:meeting-from-mail", { detail: message!.id }))} />
+        <RibbonButton small icon={CalendarPlus} iconClass="text-[#1f6fd1]" label={t("ribbon.meeting")} disabled={!has} onclick={() => window.dispatchEvent(new CustomEvent("lynora:meeting-from-mail", { detail: message!.id }))} />
         <DropdownMenu.Root>
           <DropdownMenu.Trigger disabled={!message}>{#snippet child({ props })}<RibbonButton {...props} small icon={MessagesSquare} label={t("ribbon.more_respond")} menu disabled={!message} />{/snippet}</DropdownMenu.Trigger>
           <DropdownMenu.Content class="w-52">

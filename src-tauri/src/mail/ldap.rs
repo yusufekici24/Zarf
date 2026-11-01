@@ -276,7 +276,7 @@ fn base_from_realm(realm: &str) -> String {
 
 /// Denenecek LDAP sunucuları: (bağlantı adresi, Kerberos için sunucu adı)
 fn servers(domain: &str) -> Vec<(String, String)> {
-    if let Ok(s) = std::env::var("MAILNIX_LDAP_SERVER") {
+    if let Ok(s) = std::env::var("LYNORA_LDAP_SERVER") {
         let host = s.rsplit_once(':').map(|(h, _)| h.to_string()).unwrap_or_else(|| s.clone());
         return vec![(s, host)];
     }

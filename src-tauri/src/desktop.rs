@@ -93,7 +93,7 @@ pub fn open_attachment_file(path: &str) -> Result<(), String> {
 
 pub fn notify(title: &str, body: &str, sound: bool) {
     let mut n = notify_rust::Notification::new();
-    n.appname("MailNix").summary(title).body(body).icon("mailnix");
+    n.appname("Lynora").summary(title).body(body).icon("lynora");
     if sound {
         n.sound_name("message-new-email");
     }
@@ -107,7 +107,7 @@ fn socket_path() -> PathBuf {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     crate::db::default_data_dir().hash(&mut h);
-    let name = format!("mailnix-{:08x}.sock", h.finish() as u32);
+    let name = format!("lynora-{:08x}.sock", h.finish() as u32);
     match std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|d| d.is_dir()) {
         Some(d) => d.join(name),
         None => {
@@ -118,7 +118,7 @@ fn socket_path() -> PathBuf {
             };
             #[cfg(not(unix))]
             let uid = 0;
-            std::env::temp_dir().join(format!("mailnix-{uid}")).join(name)
+            std::env::temp_dir().join(format!("lynora-{uid}")).join(name)
         }
     }
 }
@@ -169,7 +169,7 @@ pub fn single_instance(args: &[String], on_args: impl Fn(Vec<String>) + Send + '
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     }
-    let _ = std::thread::Builder::new().name("mailnix-instance".into()).spawn(move || {
+    let _ = std::thread::Builder::new().name("lynora-instance".into()).spawn(move || {
         for mut s in listener.incoming().flatten() {
             let mut buf = Vec::new();
             let _ = (&mut s).take(64 * 1024).read_to_end(&mut buf);
@@ -197,7 +197,7 @@ mod tests {
         assert!(!is_openable_url("file:///etc/passwd"));
         assert!(!is_openable_url("javascript:alert(1)"));
         assert!(!is_openable_url("/usr/bin/xterm"));
-        let dir = std::env::temp_dir().join(format!("mailnix-desktop-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("lynora-desktop-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         for (name, blocked) in [("rapor.pdf", false), ("kur.desktop", true), ("x.SH", true), ("a.AppImage", true), ("fatura.xlsx", false)] {
             let p = dir.join(name);
@@ -219,14 +219,14 @@ mod tests {
     #[test]
     #[ignore]
     fn notify_live() {
-        notify("MailNix deneme", "Yeni ileti: Bütçe & Planlama", true);
+        notify("Lynora deneme", "Yeni ileti: Bütçe & Planlama", true);
     }
 
     #[cfg(unix)]
     #[test]
     fn single_instance_forwards_args() {
-        let dir = std::env::temp_dir().join(format!("mailnix-si-{}", std::process::id()));
-        std::env::set_var("MAILNIX_DATA_DIR", &dir);
+        let dir = std::env::temp_dir().join(format!("lynora-si-{}", std::process::id()));
+        std::env::set_var("LYNORA_DATA_DIR", &dir);
         std::env::set_var("XDG_RUNTIME_DIR", std::env::temp_dir());
         let (tx, rx) = std::sync::mpsc::channel();
         assert!(!single_instance(&[], move |a| tx.send(a).unwrap()));

@@ -14,22 +14,22 @@ mod imp {
 
     const W: i32 = 520;
     const CSS: &str = "
-        window.mailnix-splash { background: #ffffff; border: 1px solid #c8cdd4; }
-        .mailnix-splash progressbar trough { min-height: 3px; background: #e6eef8; border: none; border-radius: 0; }
-        .mailnix-splash progressbar progress { min-height: 3px; background: #2b8af0; border: none; border-radius: 0; }
-        .mailnix-splash label { color: #5f6670; font-size: 12px; }
+        window.lynora-splash { background: #ffffff; border: 1px solid #c8cdd4; }
+        .lynora-splash progressbar trough { min-height: 3px; background: #e6eef8; border: none; border-radius: 0; }
+        .lynora-splash progressbar progress { min-height: 3px; background: #2b8af0; border: none; border-radius: 0; }
+        .lynora-splash label { color: #5f6670; font-size: 12px; }
     ";
 
     /// Açılış ekranını gösterir (ana iş parçacığında)
     pub fn show(text: &str) {
         let win = gtk::Window::new(gtk::WindowType::Toplevel);
-        win.set_title("MailNix");
-        win.set_icon_name(Some("mailnix"));
+        win.set_title("Lynora");
+        win.set_icon_name(Some("lynora"));
         win.set_decorated(false);
         win.set_resizable(false);
         win.set_position(gtk::WindowPosition::Center);
         win.set_type_hint(gtk::gdk::WindowTypeHint::Splashscreen);
-        win.style_context().add_class("mailnix-splash");
+        win.style_context().add_class("lynora-splash");
         let css = gtk::CssProvider::new();
         let _ = css.load_from_data(CSS.as_bytes());
         if let Some(screen) = gtk::gdk::Screen::default() {

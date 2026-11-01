@@ -86,8 +86,8 @@
       app.module = "contacts";
       openEdit({ ...blank(), first_name: parts.length > 1 ? parts.slice(0, -1).join(" ") : parts[0] ?? "", last_name: parts.length > 1 ? parts[parts.length - 1] : "", display_name: name, email: addr });
     };
-    window.addEventListener("mailnix:add-contact", h);
-    return () => window.removeEventListener("mailnix:add-contact", h);
+    window.addEventListener("lynora:add-contact", h);
+    return () => window.removeEventListener("lynora:add-contact", h);
   });
 
   const selected = $derived(contacts.find((c) => c.id === selectedId) ?? null);

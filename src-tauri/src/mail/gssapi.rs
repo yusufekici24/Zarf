@@ -1,7 +1,7 @@
 //! Kerberos tek oturum açma (GSSAPI).
 //!
-//! Etki alanına (Active Directory / FreeIPA) katılmış Pardus makinelerinde kullanıcı
-//! oturum açtığında SSSD bir Kerberos bileti alır. MailNix bu bileti kullanarak
+//! Etki alanına (Active Directory / FreeIPA) katılmış Linux makinelerinde kullanıcı
+//! oturum açtığında SSSD bir Kerberos bileti alır. Lynora bu bileti kullanarak
 //! IMAP/SMTP (SASL GSSAPI) ve Exchange (HTTP Negotiate) sunucularına parola
 //! sormadan ve parola saklamadan bağlanır. AD parolası değiştiğinde bilet oturum
 //! açılışında yenilendiği için hesap kilitlenmesi riski de yoktur.

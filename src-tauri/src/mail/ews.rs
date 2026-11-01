@@ -1666,7 +1666,7 @@ Satır 2</Body><Categories><String>İş</String></Categories><Importance>High</I
     }
 }
 
-/// Exchange sunucu kuralı (MailNix'in basit kural modeline eşlenmiş hali)
+/// Exchange sunucu kuralı (Lynora'nın basit kural modeline eşlenmiş hali)
 #[derive(Debug, Clone, Default)]
 pub struct ServerRule {
     pub id: String,

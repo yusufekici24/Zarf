@@ -96,11 +96,11 @@
       const f = mail.folder((e as CustomEvent<number>).detail);
       if (f) void empty(f);
     };
-    window.addEventListener("mailnix:new-folder", nf);
-    window.addEventListener("mailnix:empty-folder", ef);
+    window.addEventListener("lynora:new-folder", nf);
+    window.addEventListener("lynora:empty-folder", ef);
     return () => {
-      window.removeEventListener("mailnix:new-folder", nf);
-      window.removeEventListener("mailnix:empty-folder", ef);
+      window.removeEventListener("lynora:new-folder", nf);
+      window.removeEventListener("lynora:empty-folder", ef);
     };
   });
 

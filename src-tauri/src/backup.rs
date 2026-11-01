@@ -1,6 +1,6 @@
 //! Yedekle / geri yükle.
 //!
-//! Yedek tek dosyadır (.mnbak). İçinde sırayla kayıtlar bulunur: manifest.json, veritabanının
+//! Yedek tek dosyadır (.lybak; eski adla alınanlar .mnbak). İçinde sırayla kayıtlar bulunur: manifest.json, veritabanının
 //! tutarlı anlık görüntüsü (VACUUM INTO: uygulama çalışırken alınabilir; hesap ayarları, iletiler,
 //! kişiler, takvim, görevler, notlar, kurallar, imzalar, şablonlar, ayarlar) ve sunucuda karşılığı
 //! olmayan dosyalar. Parolalar ve belirteçler anahtarlıkta durur, yedeğe girmez.
@@ -27,7 +27,9 @@ const MAGIC_PLAIN: &[u8; 6] = b"MNBK1\n";
 const MAGIC_SEALED: &[u8; 6] = b"MNBE1\n";
 const CHUNK: usize = 1 << 20;
 const ITERATIONS: u32 = 600_000;
-const DB_NAME: &str = "mailnix.db";
+const DB_NAME: &str = "lynora.db";
+/// Eski adla (MailNix) alınmış yedeklerde veritabanı kaydının adı
+const LEGACY_DB_NAME: &str = "mailnix.db";
 const MANIFEST: &str = "manifest.json";
 const PENDING: &str = "restore-pending";
 /// Kullanıcı onaylayınca yazılır: yalnızca bu dosya varsa açılışta geri yüklenir
@@ -207,6 +209,7 @@ fn write_container(w: &mut impl Write, manifest: &Value, snapshot: &Path, files:
 
 /// Kayıt adı hazırlık klasörünün dışına çıkamaz
 fn safe_target(root: &Path, name: &str) -> Option<PathBuf> {
+    let name = if name == LEGACY_DB_NAME { DB_NAME } else { name };
     let rel = Path::new(name);
     let known = name == MANIFEST || name == DB_NAME || name.starts_with("files/");
     (known && rel.components().all(|c| matches!(c, Component::Normal(_)))).then(|| root.join(rel))
@@ -271,7 +274,7 @@ fn manifest(db: &Db, version: &str) -> Value {
     let accounts: Vec<String> = db.accounts().into_iter().map(|a| a.email).collect();
     json!({
         "format": 1,
-        "app": "mailnix",
+        "app": "lynora",
         "app_version": version,
         "created": chrono::Local::now().to_rfc3339(),
         "accounts": accounts,
@@ -338,7 +341,7 @@ pub fn is_encrypted(path: &Path) -> Result<bool, String> {
 fn verify(root: &Path) -> Result<Value, String> {
     let text = std::fs::read_to_string(root.join(MANIFEST)).map_err(|_| t!("backup.corrupt"))?;
     let info: Value = serde_json::from_str(&text).map_err(|_| t!("backup.corrupt"))?;
-    if info.get("app").and_then(Value::as_str) != Some("mailnix") {
+    if !matches!(info.get("app").and_then(Value::as_str), Some("lynora" | "mailnix")) {
         return Err(t!("backup.not_backup"));
     }
     let conn = rusqlite::Connection::open_with_flags(root.join(DB_NAME), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|_| t!("backup.corrupt"))?;
@@ -425,7 +428,7 @@ mod tests {
     use super::*;
 
     fn temp_dir() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("mailnix-test-{}", uuid::Uuid::new_v4().simple()));
+        let d = std::env::temp_dir().join(format!("lynora-test-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&d).unwrap();
         d
     }
@@ -480,9 +483,23 @@ mod tests {
         let root = Path::new("/veri/restore");
         assert_eq!(safe_target(root, DB_NAME), Some(root.join(DB_NAME)));
         assert_eq!(safe_target(root, "files/smime/certs/a.pem"), Some(root.join("files/smime/certs/a.pem")));
-        for bad in ["../mailnix.db", "/etc/passwd", "files/../../x", "baska.txt"] {
+        for bad in ["../lynora.db", "/etc/passwd", "files/../../x", "baska.txt"] {
             assert_eq!(safe_target(root, bad), None, "{bad}");
         }
+    }
+
+    /// Eski adla (MailNix) alınmış yedeğin veritabanı kaydı yeni ada yerleşir
+    #[test]
+    fn extract_accepts_legacy_db_name() {
+        let root = temp_dir();
+        let mut bytes = Vec::new();
+        put_entry(&mut bytes, MANIFEST, 2, &mut b"{}".as_slice()).unwrap();
+        put_entry(&mut bytes, LEGACY_DB_NAME, 1, &mut b"x".as_slice()).unwrap();
+        bytes.extend(0u32.to_be_bytes());
+        extract(&mut bytes.as_slice(), &root).unwrap();
+        assert_eq!(std::fs::read(root.join(DB_NAME)).unwrap(), b"x");
+        assert!(!root.join(LEGACY_DB_NAME).exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -491,7 +508,7 @@ mod tests {
         let snapshot = dir.join("snap.db");
         std::fs::write(&snapshot, b"veritabani").unwrap();
         let mut bytes = Vec::new();
-        write_container(&mut bytes, &json!({"app": "mailnix"}), &snapshot, &[]).unwrap();
+        write_container(&mut bytes, &json!({"app": "lynora"}), &snapshot, &[]).unwrap();
         let root = dir.join("out");
         std::fs::create_dir_all(&root).unwrap();
         extract(&mut bytes.as_slice(), &root).unwrap();

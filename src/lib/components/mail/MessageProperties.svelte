@@ -44,7 +44,7 @@
   /** İletinin ham (RFC 822) içeriği: geçici dosyaya kaydedilip okunur */
   export async function messageSource(id: number): Promise<string> {
     try {
-      const tmp = `${await import("@tauri-apps/api/path").then((p) => p.tempDir())}/mailnix-src-${id}.eml`;
+      const tmp = `${await import("@tauri-apps/api/path").then((p) => p.tempDir())}/lynora-src-${id}.eml`;
       await api2.saveMessageAs(id, tmp);
       return await invoke<string>("read_text_file", { path: tmp });
     } catch {

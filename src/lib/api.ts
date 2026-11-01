@@ -78,7 +78,7 @@ export const api = {
   /** Eki varsayılan uygulamayla açar (çalıştırılabilir türler açılmaz) */
   openAttachment: (path: string) => invoke<void>("open_attachment", { path }),
   notify: (title: string, body: string, sound: boolean) => invoke<void>("desktop_notify", { title, body, sound }),
-  /** Bir MailNix penceresi ekranda görünüyor mu (yeni posta uyarısı yalnızca görünmüyorken) */
+  /** Bir Lynora penceresi ekranda görünüyor mu (yeni posta uyarısı yalnızca görünmüyorken) */
   appVisible: () => invoke<boolean>("app_visible"),
   siblingIds: (folderId: number) => invoke<number[]>("sibling_ids", { folderId }),
   listMessages: (folderId: number | null, search: string, filter: string, order: ListOrder, offset = 0, limit = 500) =>

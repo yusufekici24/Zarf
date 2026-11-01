@@ -61,7 +61,7 @@ pub fn fmt_local(ts: f64) -> String {
 }
 
 pub fn temp_dir() -> std::path::PathBuf {
-    let d = std::env::temp_dir().join(format!("mailnix-{}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("lynora-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&d);
     d
 }

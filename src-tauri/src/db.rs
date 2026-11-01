@@ -812,29 +812,29 @@ pub struct Db {
 }
 
 pub fn default_data_dir() -> PathBuf {
-    if let Ok(d) = std::env::var("MAILNIX_DATA_DIR") {
+    if let Ok(d) = std::env::var("LYNORA_DATA_DIR") {
         if !d.trim().is_empty() {
             return PathBuf::from(d);
         }
     }
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
-    base.join("mailnix")
+    base.join("lynora")
 }
 
-/// Uygulamanın eski adıyla (Lynora) oluşturulmuş veriler yeni klasöre taşınır:
-/// ~/.local/share/lynora/lynora.db -> ~/.local/share/mailnix/mailnix.db (iletiler, hesaplar,
+/// Uygulamanın eski adıyla (MailNix) oluşturulmuş veriler yeni klasöre taşınır:
+/// ~/.local/share/mailnix/mailnix.db -> ~/.local/share/lynora/lynora.db (iletiler, hesaplar,
 /// ayarlar korunur). Yeni klasör zaten varsa dokunulmaz.
 pub fn migrate_legacy_data_dir(new_dir: &std::path::Path, old_dir: &std::path::Path) {
-    if new_dir.exists() || !old_dir.join("lynora.db").exists() {
+    if new_dir.exists() || !old_dir.join("mailnix.db").exists() {
         return;
     }
     if std::fs::rename(old_dir, new_dir).is_err() {
         return;
     }
     for ext in ["", "-wal", "-shm"] {
-        let from = new_dir.join(format!("lynora.db{ext}"));
+        let from = new_dir.join(format!("mailnix.db{ext}"));
         if from.exists() {
-            let _ = std::fs::rename(&from, new_dir.join(format!("mailnix.db{ext}")));
+            let _ = std::fs::rename(&from, new_dir.join(format!("lynora.db{ext}")));
         }
     }
 }
@@ -881,9 +881,9 @@ impl MsgFilter {
 impl Db {
     pub fn open_default() -> Result<Self> {
         let dir = default_data_dir();
-        if std::env::var_os("MAILNIX_DATA_DIR").is_none() {
+        if std::env::var_os("LYNORA_DATA_DIR").is_none() {
             if let Some(base) = dirs::data_dir() {
-                migrate_legacy_data_dir(&dir, &base.join("lynora"));
+                migrate_legacy_data_dir(&dir, &base.join("mailnix"));
             }
         }
         let _ = std::fs::create_dir_all(&dir);
@@ -893,7 +893,7 @@ impl Db {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
         }
-        Self::open(dir.join("mailnix.db"))
+        Self::open(dir.join("lynora.db"))
     }
 
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
@@ -1042,7 +1042,7 @@ impl Db {
         if let Some(inbox) = self.folder_by_role(None, "inbox") {
             let body = crate::i18n::tr("welcome.body");
             let raw = crate::mail::build::simple_raw(
-                "MailNix <mailnix@pardus.local>",
+                "Lynora <lynora@lynora.local>",
                 &crate::i18n::tr("welcome.to"),
                 &crate::i18n::tr("welcome.subject"),
                 &body,
@@ -1059,7 +1059,7 @@ impl Db {
     /// (Outlook'ta olmayan) yerel klasörler boşsa gizli kalır.
     pub fn remove_welcome(&self) {
         let _ = self.conn().execute(
-            "DELETE FROM messages WHERE (sender LIKE '%<mailnix@pardus.local>%' OR sender LIKE '%<lynora@pardus.local>%') AND folder_id IN \
+            "DELETE FROM messages WHERE (sender LIKE '%<lynora@lynora.local>%' OR sender LIKE '%<mailnix@pardus.local>%' OR sender LIKE '%<lynora@pardus.local>%') AND folder_id IN \
              (SELECT id FROM folders WHERE account_id IS NULL AND role = 'inbox')",
             [],
         );
@@ -2210,7 +2210,7 @@ impl Db {
     pub fn save_event(&self, e: &Event) -> Result<i64> {
         let mut e = e.clone();
         if e.uid.is_empty() {
-            e.uid = format!("{}@mailnix", uuid::Uuid::new_v4());
+            e.uid = format!("{}@lynora", uuid::Uuid::new_v4());
         }
         if e.recurrence.is_empty() {
             e.recurrence = "none".into();
@@ -2622,35 +2622,35 @@ mod search_tests {
         assert!(n);
     }
 
-    /// Eski adla (Lynora) oluşturulmuş veri klasörü yeni ada taşınır; yeni klasör varsa dokunulmaz
+    /// Eski adla (MailNix) oluşturulmuş veri klasörü yeni ada taşınır; yeni klasör varsa dokunulmaz
     #[test]
     fn migrates_legacy_data_dir() {
-        let root = std::env::temp_dir().join(format!("mailnix-mig-{}", std::process::id()));
-        let (old, new) = (root.join("lynora"), root.join("mailnix"));
+        let root = std::env::temp_dir().join(format!("lynora-mig-{}", std::process::id()));
+        let (old, new) = (root.join("mailnix"), root.join("lynora"));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(old.join("photos")).unwrap();
         {
-            let db = Db::open(old.join("lynora.db")).unwrap();
+            let db = Db::open(old.join("mailnix.db")).unwrap();
             db.set_setting("eski", "veri");
         }
         std::fs::write(old.join(".key"), [7u8; 32]).unwrap();
         migrate_legacy_data_dir(&new, &old);
         assert!(!old.exists());
-        assert!(new.join("mailnix.db").exists() && !new.join("lynora.db").exists());
+        assert!(new.join("lynora.db").exists() && !new.join("mailnix.db").exists());
         assert!(new.join(".key").exists() && new.join("photos").is_dir());
-        assert_eq!(Db::open(new.join("mailnix.db")).unwrap().setting("eski").as_deref(), Some("veri"));
+        assert_eq!(Db::open(new.join("lynora.db")).unwrap().setting("eski").as_deref(), Some("veri"));
         // İkinci kez: yeni klasör var, eski (yeniden oluşmuş) klasöre dokunulmaz
         std::fs::create_dir_all(&old).unwrap();
-        std::fs::write(old.join("lynora.db"), b"x").unwrap();
+        std::fs::write(old.join("mailnix.db"), b"x").unwrap();
         migrate_legacy_data_dir(&new, &old);
-        assert!(old.join("lynora.db").exists());
+        assert!(old.join("mailnix.db").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Dosya veritabanında okuma bağlantısı yazılanları görür, yazma sürerken de okur
     #[test]
     fn reader_connection_sees_writes() {
-        let dir = std::env::temp_dir().join(format!("mailnix-db-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("lynora-db-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let db = Db::open(dir.join("t.db")).unwrap();
         assert!(!Arc::ptr_eq(&db.conn, &db.reader));

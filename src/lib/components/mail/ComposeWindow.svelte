@@ -149,8 +149,8 @@
     if (editor) html = editor.getHtml();
     const box = document.createElement("div");
     box.innerHTML = html;
-    // (eski adla kaydedilmiş taslaklardaki "lynora-" işaretleri de tanınır)
-    const old = box.querySelector(".mailnix-signature, .lynora-signature");
+    // (eski adla kaydedilmiş taslaklardaki "mailnix-" işaretleri de tanınır)
+    const old = box.querySelector(".lynora-signature, .mailnix-signature");
     const tpl = document.createElement("template");
     tpl.innerHTML = sig;
     const fresh = tpl.content.firstElementChild;
@@ -158,7 +158,7 @@
       if (fresh) old.replaceWith(fresh);
       else old.remove();
     } else if (fresh) {
-      const quote = box.querySelector(".mailnix-quote, .lynora-quote");
+      const quote = box.querySelector(".lynora-quote, .mailnix-quote");
       const gap = document.createElement("div");
       gap.innerHTML = "<br>";
       if (quote) quote.before(fresh);
@@ -198,7 +198,7 @@
         if (d.account_id && app.accounts.some((a) => a.id === d.account_id)) accountId = d.account_id;
         identity = identityByEmail(accountId, d.from_addr ?? "");
         // Satır içi yanıttan yeni pencereye alınan ya da geri yüklenen ileti zaten imzalıdır
-        if (!req.recoveryId && !/(?:mailnix|lynora)-signature/.test(d.html ?? "")) applySignature(accountId);
+        if (!req.recoveryId && !/(?:lynora|mailnix)-signature/.test(d.html ?? "")) applySignature(accountId);
       }
       attachments = [...attachments, ...(req.attachments ?? [])];
       showCc = !!cc;
@@ -476,7 +476,7 @@
     const sendOpts = { ok: t("compose.send_anyway"), cancel: t("compose.dont_send"), safe: true };
     if (!subject.trim() && !(await app.confirm(t("compose.no_subject"), t("compose.no_subject_text"), sendOpts))) return;
     // Yalnızca kullanıcının yazdığı kısım denetlenir (alıntı ve imza hariç)
-    const own = currentHtml().split(/<div class="(?:mailnix|lynora)-(?:signature|quote)">/)[0];
+    const own = currentHtml().split(/<div class="(?:lynora|mailnix)-(?:signature|quote)">/)[0];
     const plainText = own.replace(/<[^>]+>/g, " ").toLocaleLowerCase();
     // Boş ileti (metin de ek de yok)
     const hasText = plainText.replace(/&nbsp;|\s/g, "").length > 0 || /<img\b/i.test(own);
@@ -561,7 +561,7 @@
     if (!name) return;
     const box = document.createElement("div");
     box.innerHTML = currentHtml();
-    box.querySelectorAll(".mailnix-signature, .lynora-signature, .mailnix-quote, .lynora-quote").forEach((n) => n.remove());
+    box.querySelectorAll(".lynora-signature, .mailnix-signature, .lynora-quote, .mailnix-quote").forEach((n) => n.remove());
     const list = loadTemplates();
     const same = list.some((x) => x.name.toLocaleLowerCase() === name.toLocaleLowerCase());
     if (same && !(await app.confirm(t("tpl.exists", name), t("tpl.overwrite"), { ok: t("common.save") }))) return;

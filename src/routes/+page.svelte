@@ -205,7 +205,7 @@
     }
     // Ctrl+C: metin seçili değilse seçili iletiler kopyalanır
     if (ctrl && k === "c" && !e.shiftKey && !typing && app.module === "mail" && !window.getSelection()?.toString()) {
-      window.dispatchEvent(new Event("mailnix:copy-items"));
+      window.dispatchEvent(new Event("lynora:copy-items"));
       return;
     }
     if (e.key === "F1") {
@@ -218,7 +218,7 @@
     else if (ctrl && k === "f") { e.preventDefault(); mail.reply("forward"); }
     else if (ctrl && k === "q") { e.preventDefault(); void mail.setRead(mail.ids(), true); }
     else if (ctrl && k === "u") { e.preventDefault(); void mail.setRead(mail.ids(), false); }
-    else if (ctrl && k === "p") { e.preventDefault(); window.dispatchEvent(new Event("mailnix:print")); }
+    else if (ctrl && k === "p") { e.preventDefault(); window.dispatchEvent(new Event("lynora:print")); }
     else if (e.key === "Delete") { e.preventDefault(); void mail.delete(e.shiftKey); }
     else if (e.key === "Backspace") { e.preventDefault(); void mail.moveToRole("archive"); }
     else if (e.key === "Insert") { e.preventDefault(); void mail.toggleFlag(); }
@@ -237,7 +237,7 @@
 
   /**
    * İlk açılışta: varsayılan e-posta uygulaması olsun mu (e-posta bağlantıları ve .msg/.eml
-   * dosyaları MailNix ile açılır). Hayır denirse Ayarlar'da nereden yapılacağı söylenir.
+   * dosyaları Lynora ile açılır). Hayır denirse Ayarlar'da nereden yapılacağı söylenir.
    * Bir kez sorulur; hesap kurulumu açıksa o kapanınca sorulur.
    */
   async function askDefaultApp() {
@@ -424,10 +424,10 @@
     })();
 
     const handlers: [string, (e: Event) => void][] = [
-      ["mailnix:shortcuts", () => (shortcutsOpen = true)],
-      ["mailnix:save-as", (e) => saveAs(Number((e as CustomEvent).detail))],
-      ["mailnix:meeting-from-mail", (e) => meetingFromMail(Number((e as CustomEvent).detail))],
-      ["mailnix:add-contact", (e) => {
+      ["lynora:shortcuts", () => (shortcutsOpen = true)],
+      ["lynora:save-as", (e) => saveAs(Number((e as CustomEvent).detail))],
+      ["lynora:meeting-from-mail", (e) => meetingFromMail(Number((e as CustomEvent).detail))],
+      ["lynora:add-contact", (e) => {
         if (app.module === "contacts") return; // kişiler görünümü kendisi işler
         const raw = String((e as CustomEvent).detail ?? "");
         const m = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(raw);
@@ -436,9 +436,9 @@
         const parts = name.split(/\s+/).filter(Boolean);
         app.newItem("contacts", { first_name: parts.length > 1 ? parts.slice(0, -1).join(" ") : parts[0] ?? "", last_name: parts.length > 1 ? parts[parts.length - 1] : "", display_name: name, email });
       }],
-      ["mailnix:view-source", async (e) => {
+      ["lynora:view-source", async (e) => {
         const id = Number((e as CustomEvent).detail);
-        const tmp = `${await import("@tauri-apps/api/path").then((p) => p.tempDir())}/mailnix-src-${id}.eml`;
+        const tmp = `${await import("@tauri-apps/api/path").then((p) => p.tempDir())}/lynora-src-${id}.eml`;
         await api.saveMessageAs(id, tmp);
         sourceText = await import("@tauri-apps/api/core").then((c) => c.invoke<string>("read_text_file", { path: tmp }));
       }],

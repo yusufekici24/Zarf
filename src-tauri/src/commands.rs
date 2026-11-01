@@ -845,7 +845,7 @@ pub async fn compose_prefill(state: State<'_, AppState>, mode: String, source_id
         "forward" => {
             d.subject = mail::reply_subject(&p.subject, &t!("compose.fw_prefix"));
             d.html = format!(
-                "<div><br></div><div><br></div><div class=\"mailnix-quote\"><div style=\"border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0 0 0\">{}</div><div><br></div>{}</div>",
+                "<div><br></div><div><br></div><div class=\"lynora-quote\"><div style=\"border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0 0 0\">{}</div><div><br></div>{}</div>",
                 quote_header(&p),
                 body_html_of(&p)
             );
@@ -889,7 +889,7 @@ pub async fn compose_prefill(state: State<'_, AppState>, mode: String, source_id
             d.in_reply_to = p.message_id.clone();
             d.references = [p.references.as_str(), p.message_id.as_str()].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(" ");
             d.html = format!(
-                "<div><br></div><div><br></div><div class=\"mailnix-quote\"><div style=\"border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0 0 0\">{}</div><div><br></div>{}</div>",
+                "<div><br></div><div><br></div><div class=\"lynora-quote\"><div style=\"border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0 0 0\">{}</div><div><br></div>{}</div>",
                 quote_header(&p),
                 body_html_of(&p)
             );
@@ -2475,12 +2475,12 @@ pub fn image_data_url(path: String) -> R<String> {
 #[tauri::command(async)]
 pub fn set_autostart(enabled: bool) -> R<()> {
     let dir = dirs::config_dir().ok_or("config")?.join("autostart");
-    let path = dir.join("mailnix.desktop");
+    let path = dir.join("lynora.desktop");
     if enabled {
         std::fs::create_dir_all(&dir).map_err(err)?;
-        let exe = std::env::var("APPIMAGE").ok().or_else(|| std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string())).unwrap_or_else(|| "mailnix".into());
+        let exe = std::env::var("APPIMAGE").ok().or_else(|| std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string())).unwrap_or_else(|| "lynora".into());
         let body = format!(
-            "[Desktop Entry]\nType=Application\nName=MailNix\nExec=\"{exe}\" --minimized\nIcon=mailnix\nX-GNOME-Autostart-enabled=true\nX-GNOME-Autostart-Delay=5\nNoDisplay=false\n"
+            "[Desktop Entry]\nType=Application\nName=Lynora\nExec=\"{exe}\" --minimized\nIcon=lynora\nX-GNOME-Autostart-enabled=true\nX-GNOME-Autostart-Delay=5\nNoDisplay=false\n"
         );
         std::fs::write(&path, body).map_err(err)?;
     } else if path.exists() {
@@ -2523,7 +2523,7 @@ fn desktop_id() -> Option<String> {
     let sys = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
     dirs.extend(sys.split(':').filter(|s| !s.is_empty()).map(|s| std::path::PathBuf::from(s).join("applications")));
     if std::env::var_os("APPIMAGE").is_none() {
-        for name in ["MailNix.desktop", "mailnix.desktop"] {
+        for name in ["Lynora.desktop", "lynora.desktop"] {
             if dirs.iter().any(|d| d.join(name).exists()) {
                 return Some(name.into());
             }
@@ -2534,12 +2534,12 @@ fn desktop_id() -> Option<String> {
     let dir = dirs::data_dir()?.join("applications");
     std::fs::create_dir_all(&dir).ok()?;
     let body = format!(
-        "[Desktop Entry]\nType=Application\nName=MailNix\nExec=\"{exe}\" %U\nIcon=mailnix\nTerminal=false\nCategories=Office;Email;\nMimeType={};\n",
+        "[Desktop Entry]\nType=Application\nName=Lynora\nExec=\"{exe}\" %U\nIcon=lynora\nTerminal=false\nCategories=Office;Email;\nMimeType={};\n",
         DEFAULT_MIMES.join(";")
     );
-    std::fs::write(dir.join("mailnix-user.desktop"), body).ok()?;
+    std::fs::write(dir.join("lynora-user.desktop"), body).ok()?;
     let _ = std::process::Command::new("update-desktop-database").arg(&dir).status();
-    Some("mailnix-user.desktop".into())
+    Some("lynora-user.desktop".into())
 }
 
 /// Masaüstüne özel varsayılan uygulama listeleri ($XDG_CURRENT_DESKTOP; varsa)
@@ -2560,15 +2560,15 @@ fn desktop_mimeapps_paths() -> Vec<std::path::PathBuf> {
 /// sisteme kurar; AppImage ya da eksikse kullanıcı klasörüne yazılır.
 #[cfg(target_os = "linux")]
 pub fn ensure_mime_definition() {
-    const XML: &str = include_str!("../../packaging/mailnix-mime.xml");
+    const XML: &str = include_str!("../../packaging/lynora-mime.xml");
     // Paketle kurulan tanım sistem önbelleğine işlenmişse yeter (önbellek güncellenmemişse
     // .msg yine "OLE belgesi" sanılır: o durumda kullanıcı klasörüne de yazılır)
     let in_cache = |dir: &str| std::fs::read_to_string(format!("{dir}/globs2")).is_ok_and(|g| g.contains("application/vnd.ms-outlook:*.msg"));
-    if std::path::Path::new("/usr/share/mime/packages/mailnix.xml").exists() && in_cache("/usr/share/mime") {
+    if std::path::Path::new("/usr/share/mime/packages/lynora.xml").exists() && in_cache("/usr/share/mime") {
         return;
     }
     let Some(base) = dirs::data_dir().map(|d| d.join("mime")) else { return };
-    let file = base.join("packages").join("mailnix.xml");
+    let file = base.join("packages").join("lynora.xml");
     if std::fs::read_to_string(&file).is_ok_and(|s| s == XML) && in_cache(&base.to_string_lossy()) {
         return;
     }
@@ -2672,21 +2672,21 @@ fn default_for(mime: &str) -> String {
     String::new()
 }
 
-/// MailNix e-posta bağlantıları, .msg ve .eml için varsayılan mı
+/// Lynora e-posta bağlantıları, .msg ve .eml için varsayılan mı
 fn default_app_status_all() -> bool {
     #[cfg(target_os = "linux")]
-    return default_for(DEFAULT_MIMES[0]).starts_with("mailnix") && DEFAULT_MIMES[1..].iter().all(|m| explicit_default(m).is_some_and(|v| v.starts_with("mailnix")));
+    return default_for(DEFAULT_MIMES[0]).starts_with("lynora") && DEFAULT_MIMES[1..].iter().all(|m| explicit_default(m).is_some_and(|v| v.starts_with("lynora")));
     #[allow(unreachable_code)]
     false
 }
 
-/// MailNix varsayılan e-posta uygulaması mı (bağlantılar ve ileti dosyaları)
+/// Lynora varsayılan e-posta uygulaması mı (bağlantılar ve ileti dosyaları)
 #[tauri::command(async)]
 pub fn default_app_status() -> bool {
     default_app_status_all()
 }
 
-/// MailNix'i e-posta bağlantıları ve .msg/.eml dosyaları için varsayılan yapar
+/// Lynora'yı e-posta bağlantıları ve .msg/.eml dosyaları için varsayılan yapar
 #[tauri::command(async)]
 pub fn set_default_app() -> R<()> {
     #[cfg(target_os = "linux")]
@@ -2697,8 +2697,8 @@ pub fn set_default_app() -> R<()> {
         let src = std::fs::read_to_string(&path).unwrap_or_default();
         let mut defaults: Vec<(&str, String)> = DEFAULT_MIMES.iter().map(|m| (*m, format!("{id};"))).collect();
         // Tür önbelleği eski kalmış sistemlerde .msg genel "OLE belgesi" sanılır: o tür için
-        // kullanıcı başka bir uygulama seçmemişse MailNix açar
-        if explicit_default(OLE_MIME).map_or(true, |v| v.is_empty() || v.starts_with("mailnix")) {
+        // kullanıcı başka bir uygulama seçmemişse Lynora açar
+        if explicit_default(OLE_MIME).map_or(true, |v| v.is_empty() || v.starts_with("lynora") || v.starts_with("mailnix")) {
             defaults.push((OLE_MIME, format!("{id};")));
         }
         let out = set_ini_keys(&set_ini_keys(&src, "Default Applications", &defaults), "Added Associations", &defaults);
@@ -2729,13 +2729,13 @@ pub fn set_default_app() -> R<()> {
     Ok(())
 }
 
-/// Uygulamanın eski adı (Lynora) ile yapılmış masaüstü ayarları yeni ada aktarılır:
+/// Uygulamanın eski adı (MailNix) ile yapılmış masaüstü ayarları yeni ada aktarılır:
 /// oturumda başlatma kaydı ve varsayılan e-posta uygulaması seçimi. Bir kez çalışır.
 pub fn migrate_legacy_integration() {
     #[cfg(target_os = "linux")]
     {
         // Oturum açılınca başlat
-        if let Some(old) = dirs::config_dir().map(|d| d.join("autostart").join("lynora.desktop")) {
+        if let Some(old) = dirs::config_dir().map(|d| d.join("autostart").join("mailnix.desktop")) {
             if old.exists() {
                 let _ = std::fs::remove_file(&old);
                 let _ = set_autostart(true);
@@ -2745,7 +2745,7 @@ pub fn migrate_legacy_integration() {
         let list = mimeapps_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
         let was_default = list.lines().any(|l| {
             let l = l.to_lowercase();
-            DEFAULT_MIMES.iter().any(|m| l.starts_with(&format!("{m}="))) && (l.contains("=lynora.desktop") || l.contains("=lynora-user.desktop"))
+            DEFAULT_MIMES.iter().any(|m| l.starts_with(&format!("{m}="))) && (l.contains("=mailnix.desktop") || l.contains("=mailnix-user.desktop"))
         });
         if was_default {
             let _ = set_default_app();
@@ -2753,14 +2753,14 @@ pub fn migrate_legacy_integration() {
         ensure_mime_definition();
         // Kullanıcı varsayılan yapmayı seçtiyse ve başka bir uygulama .msg/.eml/mailto
         // atamasını değiştirdiyse sessizce geri alınır
-        // E-posta uygulaması MailNix ise (ayarlardan ya da sistemin "Varsayılan uygulamalar"
-        // bölümünden seçilmiş olsun) .msg/.eml dosyaları da MailNix ile açılır
+        // E-posta uygulaması Lynora ise (ayarlardan ya da sistemin "Varsayılan uygulamalar"
+        // bölümünden seçilmiş olsun) .msg/.eml dosyaları da Lynora ile açılır
         let chosen = crate::db::Db::open_default().ok().and_then(|db| db.setting("default_app_chosen")).as_deref() == Some("1");
-        let mail_app = default_for(DEFAULT_MIMES[0]).starts_with("mailnix");
+        let mail_app = default_for(DEFAULT_MIMES[0]).starts_with("lynora");
         if (chosen || mail_app) && !was_default && !default_app_status_all() {
             let _ = set_default_app();
         }
-        if let Some(f) = dirs::data_dir().map(|d| d.join("applications").join("lynora-user.desktop")) {
+        if let Some(f) = dirs::data_dir().map(|d| d.join("applications").join("mailnix-user.desktop")) {
             let _ = std::fs::remove_file(f);
         }
     }
@@ -2782,15 +2782,15 @@ mod tests {
     #[test]
     fn mimeapps_keys() {
         let src = "[Default Applications]\ntext/html=firefox.desktop;\nx-scheme-handler/mailto=thunderbird.desktop;\n\n[Added Associations]\nimage/png=eog.desktop;\n";
-        let keys = vec![("x-scheme-handler/mailto", "MailNix.desktop;".to_string()), ("message/rfc822", "MailNix.desktop;".to_string())];
+        let keys = vec![("x-scheme-handler/mailto", "Lynora.desktop;".to_string()), ("message/rfc822", "Lynora.desktop;".to_string())];
         let out = set_ini_keys(&set_ini_keys(src, "Default Applications", &keys), "Added Associations", &keys);
         assert!(out.contains("text/html=firefox.desktop;"));
         assert!(out.contains("image/png=eog.desktop;"));
         assert!(!out.contains("thunderbird"));
-        assert_eq!(out.matches("x-scheme-handler/mailto=MailNix.desktop;").count(), 2);
-        assert_eq!(out.matches("message/rfc822=MailNix.desktop;").count(), 2);
+        assert_eq!(out.matches("x-scheme-handler/mailto=Lynora.desktop;").count(), 2);
+        assert_eq!(out.matches("message/rfc822=Lynora.desktop;").count(), 2);
         let fresh = set_ini_keys("", "Default Applications", &keys);
-        assert!(fresh.starts_with("[Default Applications]\nx-scheme-handler/mailto=MailNix.desktop;"));
+        assert!(fresh.starts_with("[Default Applications]\nx-scheme-handler/mailto=Lynora.desktop;"));
     }
 
     /// "İ" küçük harfe çevrilince uzunluğu değişir; gövde kesimi çökmemeli.
@@ -2901,7 +2901,7 @@ pub async fn sender_photo(state: State<'_, AppState>, email: String) -> R<Option
 
 fn photo_for(db: &Db, email: &str) -> Option<String> {
     use base64::Engine;
-    let dir = dirs::data_dir()?.join("mailnix").join("photos");
+    let dir = dirs::data_dir()?.join("lynora").join("photos");
     let _ = std::fs::create_dir_all(&dir);
     let key = util::safe_filename(email);
     let img = dir.join(format!("{key}.jpg"));

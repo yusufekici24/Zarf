@@ -15,9 +15,9 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-const SERVICE: &str = "MailNix";
+const SERVICE: &str = "Lynora";
 /// Uygulamanın eski adı: o adla anahtarlığa yazılmış parolalar okunur ve yeni ada taşınır
-const LEGACY_SERVICE: &str = "Lynora";
+const LEGACY_SERVICE: &str = "MailNix";
 const KR_PREFIX: &str = "kr:v1:";
 const ENC_PREFIX: &str = "enc:v1:";
 
@@ -29,7 +29,7 @@ fn b64() -> base64::engine::GeneralPurpose {
 fn keyring_ok() -> bool {
     static OK: OnceLock<bool> = OnceLock::new();
     *OK.get_or_init(|| {
-        if std::env::var("MAILNIX_NO_KEYRING").is_ok() {
+        if std::env::var("LYNORA_NO_KEYRING").is_ok() {
             return false;
         }
         match keyring::Entry::new(SERVICE, "__probe__") {
@@ -64,7 +64,7 @@ fn local_key() -> [u8; 32] {
         }
         let machine = std::fs::read_to_string("/etc/machine-id").or_else(|_| std::fs::read_to_string("/var/lib/dbus/machine-id")).unwrap_or_default();
         let mut h = Sha256::new();
-        // Anahtar türetme sabiti: uygulamanın eski adını taşır ama DEĞİŞTİRİLMEMELİ
+        // Anahtar türetme sabiti: DEĞİŞTİRİLMEMELİ
         // (değişirse daha önce şifrelenmiş parolalar çözülemez)
         h.update(b"lynora-secret-v1");
         h.update(&raw);
@@ -161,9 +161,9 @@ mod tests {
 
     #[test]
     fn local_roundtrip_and_legacy() {
-        std::env::set_var("MAILNIX_NO_KEYRING", "1");
-        let dir = std::env::temp_dir().join(format!("mailnix-secret-{}", std::process::id()));
-        std::env::set_var("MAILNIX_DATA_DIR", &dir);
+        std::env::set_var("LYNORA_NO_KEYRING", "1");
+        let dir = std::env::temp_dir().join(format!("lynora-secret-{}", std::process::id()));
+        std::env::set_var("LYNORA_DATA_DIR", &dir);
         let s = seal("x@y|password", "Gizli Parola ğüş!");
         assert!(s.starts_with(ENC_PREFIX));
         assert!(!s.contains("Gizli"));

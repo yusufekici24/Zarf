@@ -1,11 +1,11 @@
-//! MailNix kullanıcının önünde mi: yeni posta uyarısı yalnızca uygulama görünmüyorken
+//! Lynora kullanıcının önünde mi: yeni posta uyarısı yalnızca uygulama görünmüyorken
 //! (simge durumunda, başka masaüstünde ya da başka pencerelerin arkasında kalmışken) gösterilir.
-//! Odak başka bir uygulamadayken (ör. ikinci monitörde tarayıcı) MailNix penceresi ekranda
+//! Odak başka bir uygulamadayken (ör. ikinci monitörde tarayıcı) Lynora penceresi ekranda
 //! açık duruyorsa uyarı gelmez.
 //!
 //! X11: pencere yöneticisinin üst üste diziliş sırası (_NET_CLIENT_LIST_STACKING) okunur ve
-//! MailNix penceresinin üstündeki pencerelerin onu ne kadar örttüğü ölçülür.
-//! Wayland (XWayland yoksa): diziliş bilinemez; odaklı bir MailNix penceresi varsa görünür sayılır.
+//! Lynora penceresinin üstündeki pencerelerin onu ne kadar örttüğü ölçülür.
+//! Wayland (XWayland yoksa): diziliş bilinemez; odaklı bir Lynora penceresi varsa görünür sayılır.
 
 use tauri::{AppHandle, Manager};
 
@@ -45,12 +45,12 @@ pub fn covered_fraction(target: Rect, above: &[Rect]) -> f64 {
     hit as f64 / (N * N) as f64
 }
 
-/// Uyarı penceresi dışındaki MailNix pencereleri (gizli yedek pencere hariç)
+/// Uyarı penceresi dışındaki Lynora pencereleri (gizli yedek pencere hariç)
 fn app_windows(app: &AppHandle) -> Vec<tauri::WebviewWindow> {
     app.webview_windows().into_values().filter(|w| w.label() != "alerts" && w.label() != "reminders" && w.is_visible().unwrap_or(false)).collect()
 }
 
-/// Kullanıcı şu an bir MailNix penceresini görebiliyor mu
+/// Kullanıcı şu an bir Lynora penceresini görebiliyor mu
 #[tauri::command]
 pub fn app_visible(app: AppHandle) -> bool {
     let wins = app_windows(&app);
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn coverage() {
         let me = Rect { x: 1920, y: 0, w: 1000, h: 800 };
-        // İkinci monitördeki tarayıcı MailNix'i örtmez
+        // İkinci monitördeki tarayıcı Lynora'yı örtmez
         assert_eq!(covered_fraction(me, &[Rect { x: 0, y: 0, w: 1920, h: 1080 }]), 0.0);
         // Tam üstünde ekranı kaplayan pencere
         assert_eq!(covered_fraction(me, &[Rect { x: 1920, y: 0, w: 1920, h: 1080 }]), 1.0);

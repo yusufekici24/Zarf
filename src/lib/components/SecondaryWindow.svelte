@@ -68,11 +68,11 @@
     return new Promise((res) => {
       const done = () => {
         clearTimeout(timer);
-        window.removeEventListener("mailnix:content-ready", done);
+        window.removeEventListener("lynora:content-ready", done);
         res();
       };
       const timer = setTimeout(done, ms);
-      window.addEventListener("mailnix:content-ready", done);
+      window.addEventListener("lynora:content-ready", done);
     });
   }
 
@@ -82,8 +82,8 @@
       content = { kind: "compose", payload: (e as CustomEvent).detail };
       void invoke("set_window_kind", { kind: "compose" }).catch(() => {});
     };
-    window.addEventListener("mailnix:become-compose", h);
-    return () => window.removeEventListener("mailnix:become-compose", h);
+    window.addEventListener("lynora:become-compose", h);
+    return () => window.removeEventListener("lynora:become-compose", h);
   });
 
   // Ayarlar penceresi: içerik gelince sekme açılır
@@ -169,7 +169,7 @@
       void emitTo("main", "app://action", { name, detail: (e as CustomEvent).detail });
       void api.focusMain();
     };
-    const names = ["mailnix:add-contact", "mailnix:meeting-from-mail", "mailnix:view-source", "mailnix:save-as", "mailnix:shortcuts"];
+    const names = ["lynora:add-contact", "lynora:meeting-from-mail", "lynora:view-source", "lynora:save-as", "lynora:shortcuts"];
     const hs = names.map((n) => [n, forward(n)] as const);
     for (const [n, h] of hs) window.addEventListener(n, h);
     return () => {

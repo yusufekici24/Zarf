@@ -38,5 +38,5 @@ export function defaultSignature(accountId: number | null, kind: "new" | "reply"
 /** İletiye eklenecek imza bloğu */
 export function signatureBlock(name: string): string {
   const s = loadSignatures().find((x) => x.name === name);
-  return s && s.html.trim() ? `<div class="mailnix-signature">${s.html}</div>` : "";
+  return s && s.html.trim() ? `<div class="lynora-signature">${s.html}</div>` : "";
 }

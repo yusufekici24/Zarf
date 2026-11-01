@@ -4,15 +4,15 @@
 //! (ör. Dovecot + aiosmtpd) kurup şu değişkenleri verin:
 //!
 //! ```sh
-//! MAILNIX_E2E_IMAP=127.0.0.1:1143 MAILNIX_E2E_SMTP=127.0.0.1:2525 \
-//! MAILNIX_E2E_USER=ali@test.local MAILNIX_E2E_PASS=parola1 \
-//! MAILNIX_E2E_PEER=veli@test.local \
+//! LYNORA_E2E_IMAP=127.0.0.1:1143 LYNORA_E2E_SMTP=127.0.0.1:2525 \
+//! LYNORA_E2E_USER=ali@test.local LYNORA_E2E_PASS=parola1 \
+//! LYNORA_E2E_PEER=veli@test.local \
 //! cargo test --test e2e_mail -- --ignored --nocapture
 //! ```
 
-use mailnix_lib::db::{Account, Db, MsgFilter, Rule};
-use mailnix_lib::mail::build::{build_raw, ComposedMail};
-use mailnix_lib::sync::MailService;
+use lynora_lib::db::{Account, Db, MsgFilter, Rule};
+use lynora_lib::mail::build::{build_raw, ComposedMail};
+use lynora_lib::sync::MailService;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -34,16 +34,16 @@ fn split(addr: &str) -> (String, i64) {
 #[ignore]
 fn full_mail_cycle() {
     let (Ok(imap), Ok(smtp), Ok(user), Ok(pass), Ok(peer)) = (
-        std::env::var("MAILNIX_E2E_IMAP"),
-        std::env::var("MAILNIX_E2E_SMTP"),
-        std::env::var("MAILNIX_E2E_USER"),
-        std::env::var("MAILNIX_E2E_PASS"),
-        std::env::var("MAILNIX_E2E_PEER"),
+        std::env::var("LYNORA_E2E_IMAP"),
+        std::env::var("LYNORA_E2E_SMTP"),
+        std::env::var("LYNORA_E2E_USER"),
+        std::env::var("LYNORA_E2E_PASS"),
+        std::env::var("LYNORA_E2E_PEER"),
     ) else {
-        eprintln!("MAILNIX_E2E_* tanımlı değil, atlandı");
+        eprintln!("LYNORA_E2E_* tanımlı değil, atlandı");
         return;
     };
-    mailnix_lib::i18n::init(Some("tr"));
+    lynora_lib::i18n::init(Some("tr"));
     let db = Db::open_memory().unwrap();
     let errors = Arc::new(Mutex::new(Vec::<String>::new()));
     let errs = errors.clone();
@@ -68,7 +68,7 @@ fn full_mail_cycle() {
         smtp_host: sh,
         smtp_port: sp,
         smtp_security: "none".into(),
-        password: mailnix_lib::util::obfuscate(&pass),
+        password: lynora_lib::util::obfuscate(&pass),
         sync_limit: 500,
         ..Default::default()
     };
@@ -200,7 +200,7 @@ fn full_mail_cycle() {
 
     // 9) Yerel klasöre içe aktarılan iletiyi sunucu klasörüne taşı (APPEND)
     let local_inbox = db.folder_by_role(None, "inbox").unwrap();
-    let raw = mailnix_lib::mail::build::simple_raw("Dış <dis@x.com>", &user, "Yerelden sunucuya", "gövde");
+    let raw = lynora_lib::mail::build::simple_raw("Dış <dis@x.com>", &user, "Yerelden sunucuya", "gövde");
     let lid = svc.import_raw(local_inbox.id, raw, true).unwrap();
     svc.move_messages(&[lid], archive.id);
     wait_idle(&svc);
@@ -215,15 +215,15 @@ fn full_mail_cycle() {
 }
 
 /// Kerberos (GSSAPI) ile parolasız IMAP girişi.
-/// `MAILNIX_E2E_KRB_IMAP=localhost:1143 cargo test --test e2e_mail kerberos -- --ignored`
+/// `LYNORA_E2E_KRB_IMAP=localhost:1143 cargo test --test e2e_mail kerberos -- --ignored`
 /// (önceden `kinit` ile bilet alınmış olmalı)
 #[test]
 #[ignore]
 fn kerberos_imap_login() {
-    let Ok(addr) = std::env::var("MAILNIX_E2E_KRB_IMAP") else { return };
-    mailnix_lib::i18n::init(Some("tr"));
+    let Ok(addr) = std::env::var("LYNORA_E2E_KRB_IMAP") else { return };
+    lynora_lib::i18n::init(Some("tr"));
     let (h, p) = split(&addr);
-    let id = mailnix_lib::mail::gssapi::system_identity();
+    let id = lynora_lib::mail::gssapi::system_identity();
     println!("kimlik: {id:?}");
     assert!(id.kerberos, "Kerberos bileti bulunamadı");
     let acc = Account {
@@ -234,7 +234,7 @@ fn kerberos_imap_login() {
         auth_method: "kerberos".into(),
         ..Default::default()
     };
-    let mut c = mailnix_lib::mail::imap_client::Imap::connect(&acc, "").expect("GSSAPI girişi");
+    let mut c = lynora_lib::mail::imap_client::Imap::connect(&acc, "").expect("GSSAPI girişi");
     let folders = c.list_folders().unwrap();
     println!("klasörler: {}", folders.len());
     assert!(folders.iter().any(|f| f.role.as_deref() == Some("inbox")));
@@ -244,19 +244,19 @@ fn kerberos_imap_login() {
 /// Sahte/gerçek bir Exchange EWS sunucusuna karşı uçtan uca test.
 ///
 /// ```sh
-/// MAILNIX_E2E_EWS=http://localhost:8443/EWS/Exchange.asmx MAILNIX_E2E_EWS_AUTH=kerberos \
+/// LYNORA_E2E_EWS=http://localhost:8443/EWS/Exchange.asmx LYNORA_E2E_EWS_AUTH=kerberos \
 /// cargo test --test e2e_mail exchange_cycle -- --ignored --nocapture
 /// ```
 #[test]
 #[ignore]
 fn exchange_cycle() {
-    let Ok(ews) = std::env::var("MAILNIX_E2E_EWS") else {
-        eprintln!("MAILNIX_E2E_EWS tanımlı değil, atlandı");
+    let Ok(ews) = std::env::var("LYNORA_E2E_EWS") else {
+        eprintln!("LYNORA_E2E_EWS tanımlı değil, atlandı");
         return;
     };
-    let auth = std::env::var("MAILNIX_E2E_EWS_AUTH").unwrap_or_else(|_| "kerberos".into());
-    let expect_reject = std::env::var("MAILNIX_E2E_EWS_REJECT").is_ok();
-    mailnix_lib::i18n::init(Some("tr"));
+    let auth = std::env::var("LYNORA_E2E_EWS_AUTH").unwrap_or_else(|_| "kerberos".into());
+    let expect_reject = std::env::var("LYNORA_E2E_EWS_REJECT").is_ok();
+    lynora_lib::i18n::init(Some("tr"));
     let db = Db::open_memory().unwrap();
     let auth_failed = Arc::new(Mutex::new(0usize));
     let af = auth_failed.clone();
@@ -280,19 +280,19 @@ fn exchange_cycle() {
         kind: "exchange".into(),
         auth_method: auth.clone(),
         ews_url: ews.clone(),
-        password: mailnix_lib::util::obfuscate(&pass),
+        password: lynora_lib::util::obfuscate(&pass),
         sync_limit: 500,
         ..Default::default()
     };
 
-    if let Ok(ad) = std::env::var("MAILNIX_AUTODISCOVER_URL") {
+    if let Ok(ad) = std::env::var("LYNORA_AUTODISCOVER_URL") {
         let mut log = Vec::new();
         let a = if auth == "kerberos" {
-            mailnix_lib::mail::http::Auth::Negotiate
+            lynora_lib::mail::http::Auth::Negotiate
         } else {
-            mailnix_lib::mail::http::Auth::Ntlm { user: "TEST\\ali".into(), password: pass.clone() }
+            lynora_lib::mail::http::Auth::Ntlm { user: "TEST\\ali".into(), password: pass.clone() }
         };
-        let d = mailnix_lib::mail::discover::exchange("ali@test.local", a, &mut log);
+        let d = lynora_lib::mail::discover::exchange("ali@test.local", a, &mut log);
         println!("autodiscover ({ad}): {:?}\n{}", d.as_ref().map(|d| d.ews_url.clone()), log.join("\n"));
         if !expect_reject {
             assert_eq!(d.unwrap().ews_url, ews);
@@ -428,11 +428,11 @@ fn exchange_cycle() {
     svc.push_event(acc_id, eid);
     wait_idle(&svc);
     assert!(db.event(eid).and_then(|e| e.remote_id).is_some(), "etkinlik sunucuya yazılmalı");
-    svc.respond_ews(acc_id, evs[0].remote_id.clone().unwrap(), "accept".into());
+    svc.respond_ews(acc_id, evs[0].remote_id.clone().unwrap(), "accept".into(), String::new(), true);
     wait_idle(&svc);
 
     // 8) GAL araması ve otomatik yanıt
-    let mut e = mailnix_lib::mail::ews::Ews::for_account(&db.account(acc_id).unwrap()).unwrap();
+    let mut e = lynora_lib::mail::ews::Ews::for_account(&db.account(acc_id).unwrap()).unwrap();
     let names = e.resolve_names("ayşe").unwrap();
     assert_eq!(names.len(), 1);
     assert_eq!(names[0].1, "ayse.yilmaz@kurum.gov.tr");
@@ -441,17 +441,17 @@ fn exchange_cycle() {
 }
 
 /// Kerberos ile dizinden (AD/LDAP) kullanıcının gerçek e-posta adresini okuma.
-/// `MAILNIX_LDAP_SERVER=localhost:3389 cargo test --test e2e_mail directory_lookup -- --ignored`
+/// `LYNORA_LDAP_SERVER=localhost:3389 cargo test --test e2e_mail directory_lookup -- --ignored`
 #[test]
 #[ignore]
 fn directory_lookup() {
-    if std::env::var("MAILNIX_LDAP_SERVER").is_err() && std::env::var("MAILNIX_DNS_SERVER").is_err() {
+    if std::env::var("LYNORA_LDAP_SERVER").is_err() && std::env::var("LYNORA_DNS_SERVER").is_err() {
         return;
     }
-    mailnix_lib::i18n::init(Some("tr"));
-    let p = mailnix_lib::mail::gssapi::current_principal().expect("kinit gerekli");
+    lynora_lib::i18n::init(Some("tr"));
+    let p = lynora_lib::mail::gssapi::current_principal().expect("kinit gerekli");
     let mut log = Vec::new();
-    let u = mailnix_lib::mail::ldap::lookup_principal(&p, &mut log);
+    let u = lynora_lib::mail::ldap::lookup_principal(&p, &mut log);
     println!("{p} → {u:?}\n{}", log.join("\n"));
     let u = u.expect("dizinde bulunamadı");
     assert_eq!(u.email, "ali.veli@kurum.gov.tr");
@@ -459,16 +459,16 @@ fn directory_lookup() {
 }
 
 /// Outlook gibi: e-posta yazmadan, bilgisayar kullanıcı adı (KURUM\kullanici) ve parola ile kurulum.
-/// Sahte EWS (EWS_AUTH=ntlm) ve MAILNIX_AUTODISCOVER_URL gerekir.
+/// Sahte EWS (EWS_AUTH=ntlm) ve LYNORA_AUTODISCOVER_URL gerekir.
 #[test]
 #[ignore]
 fn discover_by_login() {
-    if std::env::var("MAILNIX_AUTODISCOVER_URL").is_err() {
+    if std::env::var("LYNORA_AUTODISCOVER_URL").is_err() {
         return;
     }
-    mailnix_lib::i18n::init(Some("tr"));
-    let reject = std::env::var("MAILNIX_E2E_EWS_REJECT").is_ok();
-    let d = mailnix_lib::mail::discover::discover("", "TEST\\ali", "parola1");
+    lynora_lib::i18n::init(Some("tr"));
+    let reject = std::env::var("LYNORA_E2E_EWS_REJECT").is_ok();
+    let d = lynora_lib::mail::discover::discover("", "TEST\\ali", "parola1");
     println!("{d:#?}");
     if reject {
         assert!(d.auth_failed, "hatalı parola bildirilmeli");
@@ -486,17 +486,17 @@ fn discover_by_login() {
 #[test]
 #[ignore]
 fn discover_asks_credentials_on_401() {
-    if std::env::var("MAILNIX_AUTODISCOVER_URL").is_err() {
+    if std::env::var("LYNORA_AUTODISCOVER_URL").is_err() {
         return;
     }
-    mailnix_lib::i18n::init(Some("tr"));
-    let d = mailnix_lib::mail::discover::discover("ad.soyad@kurum.gov.tr", "", "");
+    lynora_lib::i18n::init(Some("tr"));
+    let d = lynora_lib::mail::discover::discover("ad.soyad@kurum.gov.tr", "", "");
     println!("{:?}", d.log);
     assert!(d.need_credentials, "parola istenmeli");
     assert_eq!(d.kind, "exchange");
     assert!(d.imap_host.is_empty());
     // Ardından kullanıcı adı ve parola ile
-    let d = mailnix_lib::mail::discover::discover("ad.soyad@kurum.gov.tr", "KURUM\\ad.soyad", "parola1");
+    let d = lynora_lib::mail::discover::discover("ad.soyad@kurum.gov.tr", "KURUM\\ad.soyad", "parola1");
     println!("{:?}", d.log);
     assert!(!d.need_credentials && !d.auth_failed);
     assert!(d.ews_url.ends_with("/EWS/Exchange.asmx"));
@@ -508,8 +508,8 @@ fn discover_asks_credentials_on_401() {
 #[test]
 #[ignore]
 fn exchange_large_mailbox() {
-    let Ok(ews) = std::env::var("MAILNIX_E2E_EWS") else { return };
-    mailnix_lib::i18n::init(Some("tr"));
+    let Ok(ews) = std::env::var("LYNORA_E2E_EWS") else { return };
+    lynora_lib::i18n::init(Some("tr"));
     let db = Db::open_memory().unwrap();
     let news = Arc::new(Mutex::new(Vec::<String>::new()));
     let n2 = news.clone();
@@ -550,7 +550,7 @@ fn exchange_large_mailbox() {
     let with_body = db.messages_without_content(inbox.id, 10000).len();
     assert!(with_body >= total as usize - 60, "eskiler başlık olarak kalmalı");
     // Yeni posta: dakikalık denetim yakalamalı
-    let ews_base = std::env::var("MAILNIX_E2E_EWS").unwrap().replace("/EWS/Exchange.asmx", "");
+    let ews_base = std::env::var("LYNORA_E2E_EWS").unwrap().replace("/EWS/Exchange.asmx", "");
     let _ = std::process::Command::new("curl").args(["-s", &format!("{ews_base}/__newmail")]).output();
     let before = db.total_count(inbox.id);
     svc.quick_check();
@@ -559,8 +559,8 @@ fn exchange_large_mailbox() {
     assert_eq!(db.messages(Some(inbox.id), "Az önce gelen", &MsgFilter::All).len(), 1);
     assert!(news.lock().unwrap().iter().any(|n| n.contains("Az önce gelen")), "yeni posta bildirilmeli");
     // Sunucuda arama (AQS)
-    let mut e = mailnix_lib::mail::ews::Ews::for_account(&db.account(acc_id).unwrap()).unwrap();
-    let (hits, _) = e.find_items("inbox", None, Some(&mailnix_lib::db::search_to_aqs("konu:\"Eski ileti 599\"")), 50).unwrap();
+    let mut e = lynora_lib::mail::ews::Ews::for_account(&db.account(acc_id).unwrap()).unwrap();
+    let (hits, _) = e.find_items("inbox", None, Some(&lynora_lib::db::search_to_aqs("konu:\"Eski ileti 599\"")), 50).unwrap();
     assert_eq!(hits.len(), 1);
 }
 
@@ -568,8 +568,8 @@ fn exchange_large_mailbox() {
 #[test]
 #[ignore]
 fn exchange_rules() {
-    let Ok(ews) = std::env::var("MAILNIX_E2E_EWS") else { return };
-    mailnix_lib::i18n::init(Some("tr"));
+    let Ok(ews) = std::env::var("LYNORA_E2E_EWS") else { return };
+    lynora_lib::i18n::init(Some("tr"));
     let db = Db::open_memory().unwrap();
     let svc = MailService::new(db.clone(), Arc::new(|ev: &str, p: serde_json::Value| if ev == "mail://error" { eprintln!("HATA: {p}") }));
     let acc = Account { name: "Kurum".into(), email: "ali@test.local".into(), kind: "exchange".into(), auth_method: "kerberos".into(), ews_url: ews, sync_limit: 10, ..Default::default() };
@@ -588,10 +588,10 @@ fn exchange_rules() {
     // Yeni kural: sunucuda oluşturulur
     let new = Rule { name: "Duyurular okundu".into(), enabled: true, account_id: Some(acc_id), field: "from".into(), op: "contains".into(), value: "duyuru@".into(), action: "mark_read".into(), ..Default::default() };
     let blob = std::env::var("EWS_RULE_BLOB").is_ok();
-    let r = mailnix_lib::ews_sync::push_server_rule(&db, &new, false);
+    let r = lynora_lib::ews_sync::push_server_rule(&db, &new, false);
     if blob {
         assert_eq!(r, Err("rules.blob_exists".into()));
-        mailnix_lib::ews_sync::push_server_rule(&db, &new, true).unwrap();
+        lynora_lib::ews_sync::push_server_rule(&db, &new, true).unwrap();
     } else {
         r.unwrap();
     }
@@ -601,14 +601,14 @@ fn exchange_rules() {
     // Karmaşık kuralı kapat (yapısı korunmalı)
     let mut cx = rules.iter().find(|r| r.complex).unwrap().clone();
     cx.enabled = false;
-    mailnix_lib::ews_sync::push_server_rule(&db, &cx, true).unwrap();
+    lynora_lib::ews_sync::push_server_rule(&db, &cx, true).unwrap();
     let after = db.rules(false);
     let cx2 = after.iter().find(|r| r.name == "Müdür ve önemli").unwrap();
     assert!(!cx2.enabled && cx2.complex && cx2.remote_xml.contains("Importance"));
     // Sil
-    mailnix_lib::ews_sync::delete_server_rule(&db, created, true).unwrap();
+    lynora_lib::ews_sync::delete_server_rule(&db, created, true).unwrap();
     assert!(!db.rules(false).iter().any(|r| r.name == "Duyurular okundu"));
     // Sunucu kuralları yerelde ikinci kez uygulanmaz
-    let m = mailnix_lib::db::Message { subject: "Fatura Ekim".into(), ..Default::default() };
-    assert!(mailnix_lib::rules::evaluate(&db.rules(true), &m, Some(acc_id)).is_empty());
+    let m = lynora_lib::db::Message { subject: "Fatura Ekim".into(), ..Default::default() };
+    assert!(lynora_lib::rules::evaluate(&db.rules(true), &m, Some(acc_id), &[]).is_empty());
 }

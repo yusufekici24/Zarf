@@ -200,16 +200,16 @@
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Content align="end" class="w-56">
                   <DropdownMenu.Item onclick={() => print()}>{t("common.print")}</DropdownMenu.Item>
-                  <DropdownMenu.Item onclick={() => window.dispatchEvent(new CustomEvent("mailnix:save-as", { detail: m.id }))}>{t("mail.save_as")}</DropdownMenu.Item>
+                  <DropdownMenu.Item onclick={() => window.dispatchEvent(new CustomEvent("lynora:save-as", { detail: m.id }))}>{t("mail.save_as")}</DropdownMenu.Item>
                   <DropdownMenu.Item onclick={() => (zoom = Math.min(2.5, zoom + 0.1))}><ZoomIn class="size-4" />{t("view.zoom_in")}</DropdownMenu.Item>
                   <DropdownMenu.Item onclick={() => (zoom = Math.max(0.5, zoom - 0.1))}><ZoomOut class="size-4" />{t("view.zoom_out")}</DropdownMenu.Item>
                   <DropdownMenu.Item onclick={() => (zoom = baseZoom)}>{t("view.zoom_reset")}</DropdownMenu.Item>
                   {#if !m.external}
                     <DropdownMenu.Separator />
-                    <DropdownMenu.Item onclick={() => window.dispatchEvent(new CustomEvent("mailnix:add-contact", { detail: m.sender }))}>{t("mail.add_sender_contact")}</DropdownMenu.Item>
-                    <DropdownMenu.Item onclick={() => window.dispatchEvent(new CustomEvent("mailnix:meeting-from-mail", { detail: m.id }))}>{t("mail.reply_meeting")}</DropdownMenu.Item>
+                    <DropdownMenu.Item onclick={() => window.dispatchEvent(new CustomEvent("lynora:add-contact", { detail: m.sender }))}>{t("mail.add_sender_contact")}</DropdownMenu.Item>
+                    <DropdownMenu.Item onclick={() => window.dispatchEvent(new CustomEvent("lynora:meeting-from-mail", { detail: m.id }))}>{t("mail.reply_meeting")}</DropdownMenu.Item>
                     <DropdownMenu.Item onclick={() => app.openRulesFor(m.sender)}>{t("rules.create_from")}</DropdownMenu.Item>
-                    <DropdownMenu.Item onclick={() => window.dispatchEvent(new CustomEvent("mailnix:view-source", { detail: m.id }))}>{t("mail.view_source")}</DropdownMenu.Item>
+                    <DropdownMenu.Item onclick={() => window.dispatchEvent(new CustomEvent("lynora:view-source", { detail: m.id }))}>{t("mail.view_source")}</DropdownMenu.Item>
                   {/if}
                 </DropdownMenu.Content>
               </DropdownMenu.Root>

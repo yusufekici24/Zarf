@@ -13,7 +13,7 @@
 
   let { mode, onclose }: { mode: "backup" | "restore"; onclose: () => void } = $props();
 
-  const FILTER = [{ name: t("backup.filter"), extensions: ["mnbak"] }];
+  const FILTER = [{ name: t("backup.filter"), extensions: ["lybak", "mnbak"] }];
   let path = $state("");
   let password = $state("");
   let confirmPassword = $state("");
@@ -29,7 +29,7 @@
     error = "";
     if (mode === "backup") {
       const stamp = new Date().toISOString().slice(0, 10);
-      path = (await saveDialog({ defaultPath: `mailnix-${stamp}.mnbak`, filters: FILTER })) ?? path;
+      path = (await saveDialog({ defaultPath: `lynora-${stamp}.lybak`, filters: FILTER })) ?? path;
       return;
     }
     const r = await openDialog({ filters: FILTER });

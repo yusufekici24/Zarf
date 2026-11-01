@@ -137,7 +137,7 @@ fn spawn_worker(name: &str, mut worker: Worker, queue: Arc<Queue>, foreground: b
                     if foreground {
                         (worker.emit)("mail://error", json!(e.message()));
                     } else {
-                        eprintln!("mailnix arka plan: {}", e.message());
+                        eprintln!("lynora arka plan: {}", e.message());
                     }
                     // Bağlantı hatasında önbellekteki bağlantıları at
                     worker.conns.clear();
@@ -208,8 +208,8 @@ impl MailService {
             enum_seen: enum_seen.clone(),
             folder_locks: folder_locks.clone(),
         };
-        spawn_worker("mailnix-mail", worker(&db), queue.clone(), true);
-        spawn_worker("mailnix-mail-bg", worker(&db), bg.clone(), false);
+        spawn_worker("lynora-mail", worker(&db), queue.clone(), true);
+        spawn_worker("lynora-mail-bg", worker(&db), bg.clone(), false);
         mail::net::set_work_offline(db.setting("work_offline").as_deref() == Some("1"));
         let svc = MailService {
             db,
@@ -229,7 +229,7 @@ impl MailService {
     fn spawn_net_monitor(&self) {
         let svc = self.clone();
         std::thread::Builder::new()
-            .name("mailnix-net".into())
+            .name("lynora-net".into())
             .spawn(move || {
                 let mut last = String::new();
                 let mut last_probe = std::time::Instant::now() - std::time::Duration::from_secs(3600);
@@ -383,7 +383,7 @@ impl MailService {
                 continue;
             }
             let svc = self.clone();
-            let _ = std::thread::Builder::new().name(format!("mailnix-push-{id}")).spawn(move || {
+            let _ = std::thread::Builder::new().name(format!("lynora-push-{id}")).spawn(move || {
                 if exchange {
                     svc.push_loop(id);
                 } else {

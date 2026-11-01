@@ -1,6 +1,6 @@
-# Linux Posta → MailNix geçiş notu
+# Linux Posta → Lynora geçiş notu
 
-Taban ürün MailNix'tir (eski adı Lynora, Tauri + Svelte). Linux Posta'daki (`yusufekici24/mailapp-linux`)
+Taban ürün Lynora'dır (Tauri + Svelte, bir dönem adı MailNix'ti). Linux Posta'daki (`yusufekici24/mailapp-linux`)
 iyi özellikler buraya taşınıyor. Paket yalnızca `.deb`; RPM ve AppImage kaldırıldı.
 
 ## Taşınanlar
@@ -30,7 +30,7 @@ Linux Posta'dan:
 - CalDAV ve CardDAV
 - Kuralları Şimdi Çalıştır için önizleme ve ilerleme
 
-MailNix'in kendi eksikleri:
+Lynora'nın kendi eksikleri:
 
 - Kişiler, Görevler ve Notlar şeritleri eski stilde, Giriş ve Yardım sekmeleri var
 - HTML temizleme üç düzenli ifadeden ibaret, asıl koruma CSP ve sandbox (`bleach` benzeri izin listesi gerekli)
