@@ -36,6 +36,11 @@ pub struct ComposedMail {
     pub send_at: Option<f64>,
     pub ics: Option<String>,
     pub draft_id: Option<i64>,
+    /// Takma ad: boşsa hesabın kendi adresi kullanılır
+    pub from_email: String,
+    pub from_name: String,
+    /// Takma adın yanıt adresi (Reply-To)
+    pub reply_to: String,
 }
 
 fn to_address(list: &str) -> Option<Address<'static>> {
@@ -71,11 +76,13 @@ pub fn build_raw(
     attachments: &[(String, String, Vec<u8>)],
     include_bcc: bool,
 ) -> Vec<u8> {
+    let alias = m.from_email.trim();
     let from = account
         .map(|a| {
+            let name = if alias.is_empty() || m.from_name.trim().is_empty() { a.display_name.clone() } else { m.from_name.trim().to_string() };
             Address::new_address(
-                if a.display_name.is_empty() { None } else { Some(a.display_name.clone()) },
-                a.email.clone(),
+                if name.is_empty() { None } else { Some(name) },
+                if alias.is_empty() { a.email.clone() } else { alias.to_string() },
             )
         })
         .unwrap_or_else(|| Address::new_address(None::<String>, "mailnix@localhost".to_string()));
@@ -90,6 +97,9 @@ pub fn build_raw(
     }
     if let Some(a) = to_address(&m.cc) {
         b = b.cc(a);
+    }
+    if let Some(a) = to_address(&m.reply_to) {
+        b = b.reply_to(a);
     }
     if include_bcc {
         if let Some(a) = to_address(&m.bcc) {
@@ -114,7 +124,8 @@ pub fn build_raw(
     }
     if m.read_receipt {
         if let Some(a) = account {
-            b = b.header("Disposition-Notification-To", Raw::new(a.email.clone()));
+            let addr = if alias.is_empty() { a.email.clone() } else { alias.to_string() };
+            b = b.header("Disposition-Notification-To", Raw::new(addr));
         }
     }
     b = b.text_body(if m.text.is_empty() { super::html::html_to_text(&m.html) } else { m.text.clone() });
@@ -226,6 +237,27 @@ mod tests {
         assert_eq!(imgs[0].1, "image/png");
         assert!(h.contains(&format!("src=\"cid:{}\"", imgs[0].0)));
         assert!(h.contains("src='cid:x'"));
+    }
+
+    #[test]
+    fn alias_overrides_sender() {
+        let acc = Account { email: "ben@ornek.com".into(), display_name: "Ben Biri".into(), ..Default::default() };
+        let m = ComposedMail {
+            to: "ali@x.com".into(),
+            subject: "s".into(),
+            text: "t".into(),
+            from_email: "destek@ornek.com".into(),
+            from_name: "Destek".into(),
+            reply_to: "yanit@ornek.com".into(),
+            read_receipt: true,
+            ..Default::default()
+        };
+        let raw = build_raw(Some(&acc), &m, &[], false);
+        let p = super::super::parse::parse(&raw);
+        assert_eq!(p.sender, "Destek <destek@ornek.com>");
+        assert!(p.reply_to.contains("yanit@ornek.com"));
+        let text = String::from_utf8_lossy(&raw);
+        assert!(text.contains("Disposition-Notification-To: destek@ornek.com"));
     }
 
     #[test]

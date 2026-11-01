@@ -117,6 +117,9 @@ export const api = {
   cancelOutbox: (id: number) => invoke<number>("cancel_outbox", { id }),
   retryOutbox: (id: number) => invoke<void>("retry_outbox", { id }),
   addressBook: () => invoke<[string, string][]>("address_book"),
+  saveRecovery: (id: string, payload: string) => invoke<void>("save_recovery", { id, payload }),
+  listRecovery: () => invoke<string[]>("list_recovery"),
+  removeRecovery: (id: string) => invoke<void>("remove_recovery", { id }),
 
   // dosyalar
   openFile: (path: string) => invoke<{ kind: string; id?: number; count?: number; appointment?: boolean }>("open_file", { path }),

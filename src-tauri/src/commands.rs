@@ -735,6 +735,10 @@ pub struct ComposeData {
     attachments: Vec<Value>,
     draft_id: Option<i64>,
     importance: i64,
+    /// Taslakta seçili "Kimden" adresi (takma ad)
+    from_addr: String,
+    /// Yanıtlanan iletinin alıcıları: hangi takma ada geldiği buradan anlaşılır
+    recipients: String,
 }
 
 fn quote_header(p: &parse::ParsedMail) -> String {
@@ -792,6 +796,7 @@ pub async fn compose_prefill(state: State<'_, AppState>, mode: String, source_id
             d.in_reply_to = p.in_reply_to.clone();
             d.references = p.references.clone();
             d.importance = p.importance;
+            d.from_addr = mail::split_name_addr(&p.sender).1;
             d.attachments = p.real_attachments().iter().map(|a| json!({"name": a.name, "mime": a.mime, "size": a.size, "source_msg": source_id, "source_index": a.index})).collect();
             if mode == "draft" {
                 d.draft_id = Some(source_id);
@@ -813,6 +818,7 @@ pub async fn compose_prefill(state: State<'_, AppState>, mode: String, source_id
         }
         _ => {
             d.subject = mail::reply_subject(&p.subject, &t!("compose.re_prefix"));
+            d.recipients = format!("{}, {}", p.to, p.cc);
             // Bozuk Reply-To (geçerli adres içermiyor) yok sayılır, gönderene yanıt verilir
             let reply_to = mail::split_addresses(&p.reply_to);
             d.to = if reply_to.is_empty() { mail::split_addresses(&p.sender).join(", ") } else { reply_to.join(", ") };
@@ -822,7 +828,8 @@ pub async fn compose_prefill(state: State<'_, AppState>, mode: String, source_id
             if mode == "reply_all" {
                 // Outlook gibi: Kime = gönderen + özgün Kime alıcıları, Bilgi = özgün Bilgi alıcıları
                 // (kendi adreslerimiz ve yinelenenler çıkarılır)
-                let me: Vec<String> = state.db.accounts().iter().map(|a| a.email.to_lowercase()).collect();
+                let mut me: Vec<String> = state.db.accounts().iter().map(|a| a.email.to_lowercase()).collect();
+                me.extend(identity_emails(&state.db));
                 let mut seen: std::collections::HashSet<String> = mail::bare_addresses(&d.to).into_iter().map(|a| a.to_lowercase()).collect();
                 let mut keep = |list: &str| -> Vec<String> {
                     mail::split_addresses(list)
@@ -856,6 +863,16 @@ pub async fn compose_prefill(state: State<'_, AppState>, mode: String, source_id
     }
     Ok(d)
     })
+}
+
+/// Takma ad adresleri (ayarlardaki kimlikler): "tümünü yanıtla" kendimizi alıcı yapmasın
+fn identity_emails(db: &Db) -> Vec<String> {
+    db.setting("identities")
+        .and_then(|s| serde_json::from_str::<Vec<Value>>(&s).ok())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|v| v.get("email").and_then(|e| e.as_str()).map(|e| e.trim().to_lowercase()))
+        .collect()
 }
 
 fn resolve_attachments(state: &AppState, m: &ComposedMail) -> R<Vec<(String, String, Vec<u8>)>> {
@@ -999,6 +1016,43 @@ pub fn retry_outbox(state: State<AppState>, id: i64) {
 #[tauri::command(async)]
 pub fn address_book(state: State<AppState>) -> Vec<(String, String)> {
     state.db.address_book()
+}
+
+// ======================================================================= çökme kurtarma
+fn recovery_dir() -> std::path::PathBuf {
+    crate::db::default_data_dir().join("recovery")
+}
+
+/// Kimlik pencereden gelir; dosya adı dışına çıkılmasın diye yalnızca güvenli karakterler
+fn recovery_file(id: &str) -> Option<std::path::PathBuf> {
+    let ok = !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    ok.then(|| recovery_dir().join(format!("compose-{id}.json")))
+}
+
+/// Yazılmakta olan iletinin yerel kopyası: yarım yazım kalmasın diye önce geçici dosyaya
+#[tauri::command(async)]
+pub fn save_recovery(id: String, payload: String) -> R<()> {
+    let path = recovery_file(&id).ok_or("?")?;
+    std::fs::create_dir_all(recovery_dir()).map_err(err)?;
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, payload).map_err(err)?;
+    std::fs::rename(&tmp, &path).map_err(err)
+}
+
+#[tauri::command(async)]
+pub fn list_recovery() -> Vec<String> {
+    let Ok(dir) = std::fs::read_dir(recovery_dir()) else { return Vec::new() };
+    dir.flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .collect()
+}
+
+#[tauri::command(async)]
+pub fn remove_recovery(id: String) {
+    if let Some(path) = recovery_file(&id) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 // ======================================================================= dosya açma / içe-dışa aktarma

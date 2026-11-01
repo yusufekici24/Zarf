@@ -141,6 +141,10 @@ export interface ComposeData {
   attachments: OutAttachment[];
   draft_id: number | null;
   importance: number;
+  /** Taslakta seçili "Kimden" adresi (takma ad) */
+  from_addr?: string;
+  /** Yanıtlanan iletinin alıcıları: hangi takma ada geldiği buradan anlaşılır */
+  recipients?: string;
 }
 
 export interface Contact {

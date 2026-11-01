@@ -60,8 +60,14 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                     use gtk::prelude::WidgetExt;
                     use std::cell::RefCell;
                     use std::rc::Rc;
-                    use webkit2gtk::{HitTestResultExt, SettingsExt, WebViewExt};
+                    use webkit2gtk::{HitTestResultExt, SettingsExt, WebContextExt, WebViewExt};
                     let view = pv.inner();
+                    // WebKitGTK'da yazım denetimi varsayılan olarak kapalıdır; açılmazsa
+                    // düzenleyicideki spellcheck özniteliği hiçbir şey yapmaz
+                    if let Some(ctx) = WebViewExt::context(&view) {
+                        ctx.set_spell_checking_languages(&["tr_TR", "en_US"]);
+                        ctx.set_spell_checking_enabled(true);
+                    }
                     // Akıcı kaydırma (Outlook gibi): tekerlek adımları animasyonla, kesik kesik
                     // atlamadan kayar; kaydırma ayrı katmanda çizildiği için tepki gecikmez
                     if let Some(st) = WebViewExt::settings(&view) {

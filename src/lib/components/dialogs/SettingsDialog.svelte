@@ -1,5 +1,8 @@
 <script lang="ts">
   import SignaturesEditor from "./SignaturesEditor.svelte";
+  import TemplatesEditor from "./TemplatesEditor.svelte";
+  import IdentitiesEditor from "./IdentitiesEditor.svelte";
+  import { addTrustedSender, loadTrustedSenders, removeTrustedSender } from "$lib/trust";
   import { ALERT_ACTIONS, ALERT_BUTTON_DEFAULTS } from "$lib/alerts";
   // Ayarlar: genel, posta, takvim, hesaplar, imzalar, otomatik yanıtlar, kurallar, kategoriler, hakkında.
   import * as Dialog from "$lib/components/ui/dialog";
@@ -39,7 +42,7 @@
   }
 
   // Outlook Seçenekleri'ndeki sırayla
-  const NAV = ["general", "mail", "calendar", "people", "language", "advanced", "|", "accounts", "signatures", "autoreply", "rules", "categories", "|", "trust", "about"];
+  const NAV = ["general", "mail", "calendar", "people", "language", "advanced", "|", "accounts", "identities", "signatures", "templates", "autoreply", "rules", "categories", "|", "trust", "about"];
   /** Outlook düzeninde (sıkı satırlı) seçenek sayfaları */
   const OPTION_TABS = ["general", "mail", "calendar", "people", "language", "advanced", "trust", "stationery"];
   const ICONS: Record<string, typeof SettingsIcon> = { general: SettingsIcon, mail: MailIcon, calendar: CalendarIcon, people: UsersIcon, language: LanguagesIcon, advanced: SlidersIcon, trust: ShieldIcon, stationery: TypeIcon };
@@ -94,6 +97,11 @@
   let newCatColor = $state("#3498db");
 
   const tab = $derived(app.settingsDialog.tab);
+
+  async function addTrusted() {
+    const v = await app.prompt(t("settings.trusted_add"), t("settings.trusted_label"));
+    if (v) await addTrustedSender(v);
+  }
 
   // Varsayılan e-posta uygulaması (Genel → Başlangıç)
   let isDefault = $state(true);
@@ -429,6 +437,21 @@
         {@render check("load_remote", t("settings.load_remote"))}
         {@render section(t("settings.sec_email_security"))}
         {@render check("plain_text_only", t("settings.plain_text_only"))}
+        {@render section(t("settings.sec_trusted_senders"))}
+        <div class="max-w-md space-y-1.5 py-1 pl-4 text-[13px]">
+          <p class="text-muted-foreground text-xs">{t("settings.trusted_help")}</p>
+          <div class="min-h-16 rounded-[3px] border border-[#8a8a8a] bg-white dark:border-white/30 dark:bg-transparent">
+            {#each loadTrustedSenders() as s (s)}
+              <div class="flex items-center gap-2 px-2 py-0.5">
+                <span class="min-w-0 flex-1 truncate">{s}</span>
+                <button class="hover:bg-accent rounded p-0.5" title={t("common.delete")} aria-label={t("common.delete")} onclick={() => removeTrustedSender(s)}><Trash2 class="size-3.5" /></button>
+              </div>
+            {:else}
+              <p class="text-muted-foreground p-2 text-xs">{t("settings.trusted_none")}</p>
+            {/each}
+          </div>
+          <button class="hover:bg-accent h-7 rounded border px-3" onclick={addTrusted}>{t("settings.trusted_add")}</button>
+        </div>
       {:else if tab === "mail"}
         {@render intro(t("settings.mail_intro"))}
         {@render section(t("settings.sec_compose"))}
@@ -526,6 +549,10 @@
         </details>
       {:else if tab === "signatures"}
         <SignaturesEditor />
+      {:else if tab === "templates"}
+        <TemplatesEditor />
+      {:else if tab === "identities"}
+        <IdentitiesEditor />
       {:else if tab === "autoreply"}
         <h3 class="text-lg font-semibold">{t("settings.tab_autoreply")}</h3>
         <p class="text-muted-foreground">{t("autoreply.help")}</p>

@@ -85,6 +85,8 @@
         "desktopTemplate": "../packaging/mailnix.desktop",
         "recommends": [
           "libgssapi-krb5-2",
+          "hunspell-tr",
+          "hunspell-en-us",
           "fonts-crosextra-carlito",
           "fonts-crosextra-caladea",
           "fonts-liberation2",

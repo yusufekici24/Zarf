@@ -12,6 +12,8 @@ export interface ComposeRequest {
   sourceId?: number;
   data?: Partial<ComposeData>;
   attachments?: OutAttachment[];
+  /** Çökme kurtarmadan geri yüklenen iletinin kaydı */
+  recoveryId?: string;
 }
 
 interface ConfirmReq {

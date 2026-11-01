@@ -25,6 +25,7 @@
   import HelpCircle from "@lucide/svelte/icons/circle-help";
   import X from "@lucide/svelte/icons/x";
   import UserPlus from "@lucide/svelte/icons/user-plus";
+  import { addTrustedSender, isTrustedSender } from "$lib/trust";
   import MailCheck from "@lucide/svelte/icons/mail-check";
   import Clock from "@lucide/svelte/icons/clock";
   import Flag from "@lucide/svelte/icons/flag";
@@ -89,9 +90,15 @@
     trusted = false;
     if (m && !allowRemote) {
       const addr = splitNameAddr(m.sender).addr;
-      if (addr) api.contactByEmail(addr).then((c) => { if (c && message?.id === m.id) trusted = true; });
+      if (isTrustedSender(addr)) trusted = true;
+      else if (addr) api.contactByEmail(addr).then((c) => { if (c && message?.id === m.id) trusted = true; });
     }
   });
+
+  function trustSender() {
+    const addr = message ? splitNameAddr(message.sender).addr : "";
+    if (addr) void addTrustedSender(addr);
+  }
 
   const pending = $derived.by(() => {
     if (!message?.pending?.startsWith("send:")) return null;
@@ -226,6 +233,7 @@
           <ImageOff class="size-4 shrink-0" />
           <span class="flex-1">{t("mail.remote_blocked")}</span>
           <Button size="sm" variant="outline" class="h-6 text-xs" onclick={() => (allowRemote = true)}>{t("mail.load_images")}</Button>
+          <Button size="sm" variant="outline" class="h-6 text-xs" onclick={trustSender}>{t("mail.trust_sender")}</Button>
         </div>
       {/if}
       {#if m.has_calendar}

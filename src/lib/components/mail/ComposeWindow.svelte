@@ -1,5 +1,9 @@
 <script lang="ts">
   import { defaultSignature, loadSignatures, signatureBlock } from "$lib/signatures";
+  import { identityByEmail, identityForReply, loadIdentities, type Identity } from "$lib/identities";
+  import { loadTemplates, saveTemplates, type Template } from "$lib/templates";
+  import { EMOJI } from "$lib/emoji";
+  import FindReplaceBar from "./FindReplaceBar.svelte";
   // Yeni ileti / yanıtla / ilet / taslak düzenleme penceresi.
   import * as Dialog from "$lib/components/ui/dialog";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
@@ -52,6 +56,10 @@
   import MailCheck from "@lucide/svelte/icons/mail-check";
   import SpellCheck from "@lucide/svelte/icons/spell-check";
   import TextSelect from "@lucide/svelte/icons/text-select";
+  import Search from "@lucide/svelte/icons/search";
+  import FileCode from "@lucide/svelte/icons/file-code";
+  import FileText from "@lucide/svelte/icons/file-text";
+  import Smile from "@lucide/svelte/icons/smile";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import { mail } from "$lib/stores/mail.svelte";
@@ -112,12 +120,28 @@
   let bookOpen = $state(false);
   let lastSaved = $state<number | null>(null);
   let editor: RichEditor | undefined = $state();
+  /** Seçili takma ad (null: hesabın kendi adresi) */
+  let identity = $state<Identity | null>(null);
+  let findOpen = $state(false);
+  let sourceOpen = $state(false);
+  let sourceHtml = $state("");
+  /** Çökme kurtarma kaydının kimliği (geri yüklenen iletide aynısı sürer) */
+  const recoveryId = req.recoveryId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
   /** Outlook: yeni iletide "Yeni iletiler", yanıt/iletmede "Yanıtlar/İletmeler" imzası */
   const sigKind = req.mode === "new" ? "new" : "reply";
 
+  /** Takma adın kendi imzası varsa o, yoksa hesabın varsayılan imzası */
   function applySignature(aid: number | null) {
-    putSignature(signatureBlock(defaultSignature(aid, sigKind)));
+    putSignature(signatureBlock(identity?.signature || defaultSignature(aid, sigKind)));
+  }
+
+  /** Kimden menüsü: "<hesap>" ya da "<hesap>:<takma ad>" */
+  function pickFrom(value: string) {
+    const [acc, ...rest] = value.split(":");
+    accountId = Number(acc);
+    identity = identityByEmail(accountId, rest.join(":"));
+    applySignature(accountId);
   }
 
   /** İmza bloğunu değiştirir/ekler (iç içe öğeli zengin imzalar için DOM üzerinden) */
@@ -158,6 +182,7 @@
         draftId = d.draft_id;
         importance = d.importance || 1;
         if (d.account_id && app.accounts.some((a) => a.id === d.account_id)) accountId = d.account_id;
+        identity = identityByEmail(accountId, d.from_addr ?? "") ?? identityForReply(accountId, d.recipients ?? "");
         if (req.mode !== "draft" && req.mode !== "edit") applySignature(accountId);
       } else {
         const d = req.data ?? {};
@@ -171,8 +196,9 @@
         if (d.draft_id) draftId = d.draft_id;
         if (d.importance) importance = d.importance;
         if (d.account_id && app.accounts.some((a) => a.id === d.account_id)) accountId = d.account_id;
-        // Satır içi yanıttan yeni pencereye alınan ileti zaten imzalıdır
-        if (!/(?:mailnix|lynora)-signature/.test(d.html ?? "")) applySignature(accountId);
+        identity = identityByEmail(accountId, d.from_addr ?? "");
+        // Satır içi yanıttan yeni pencereye alınan ya da geri yüklenen ileti zaten imzalıdır
+        if (!req.recoveryId && !/(?:mailnix|lynora)-signature/.test(d.html ?? "")) applySignature(accountId);
       }
       attachments = [...attachments, ...(req.attachments ?? [])];
       showCc = !!cc;
@@ -265,11 +291,20 @@
   });
 
   // Otomatik taslak kaydı
+  const hasContent = () => !!(subject.trim() || to.trim() || currentHtml().replace(/<[^>]+>/g, "").trim());
   const autosave = setInterval(() => {
-    if (dirty && ready && (subject.trim() || to.trim() || currentHtml().replace(/<[^>]+>/g, "").trim())) void saveDraft(true);
+    if (dirty && ready && hasContent()) void saveDraft(true);
   }, 60000);
+  // Çökme kurtarma: kaydedilmemiş içerik diske yazılır; gönderilince, taslak kaydedilince ya da
+  // pencere kapanınca silinir. Uygulama çökerse açılışta geri yükleme önerilir.
+  const recovery = setInterval(() => {
+    if (!dirty || !ready || !hasContent()) return;
+    const data = { id: recoveryId, account_id: accountId, from_addr: identity?.email ?? "", to, cc, bcc, subject, html: currentHtml(), in_reply_to: inReplyTo, references, draft_id: draftId, importance, attachments: $state.snapshot(attachments), saved_at: Date.now() / 1000 };
+    void api.saveRecovery(recoveryId, JSON.stringify(data)).catch(() => {});
+  }, 20000);
   onDestroy(() => {
     clearInterval(autosave);
+    clearInterval(recovery);
     unlisten?.();
   });
 
@@ -402,6 +437,9 @@
       text,
       html: bodyHtml,
       attachments: attachments.map((a) => ({ name: a.name, mime: a.mime, path: a.path ?? null, source_msg: a.source_msg ?? null, source_index: a.source_index ?? null })),
+      from_email: identity?.email ?? "",
+      from_name: identity?.name ?? "",
+      reply_to: identity?.reply_to ?? "",
       in_reply_to: inReplyTo,
       references,
       importance,
@@ -466,6 +504,7 @@
       draftId = await api.saveDraft(payload());
       dirty = false;
       lastSaved = Date.now() / 1000;
+      void api.removeRecovery(recoveryId).catch(() => {});
       if (!silent) toast.success(t("compose.draft_saved"));
     } catch (e) {
       if (!silent) app.error(e);
@@ -486,6 +525,7 @@
       if (r === "ok") await saveDraft(true);
     }
     closing = true;
+    await api.removeRecovery(recoveryId).catch(() => {});
     if (inline) {
       onclosed?.();
       return;
@@ -498,12 +538,47 @@
     const h = currentHtml();
     app.compose({
       mode: "new",
-      data: { account_id: accountId, to, cc, bcc, subject, html: h, in_reply_to: inReplyTo, references, draft_id: draftId, importance },
+      data: { account_id: accountId, from_addr: identity?.email ?? "", to, cc, bcc, subject, html: h, in_reply_to: inReplyTo, references, draft_id: draftId, importance },
       attachments: [...attachments],
     });
     dirty = false;
     closing = true;
+    void api.removeRecovery(recoveryId).catch(() => {});
     onclosed?.();
+  }
+
+  // ---------------------------------------------------------------- şablonlar
+  function applyTemplate(tp: Template) {
+    if (!subject.trim()) subject = tp.subject;
+    if (plain) editor?.exec("insertText", htmlToText(tp.html));
+    else editor?.insertHtml(tp.html);
+    dirty = true;
+  }
+
+  /** Yalnızca kullanıcının yazdığı kısım şablon olur (imza ve alıntı hariç) */
+  async function saveAsTemplate() {
+    const name = (await app.prompt(t("tpl.save_title"), t("sig.name_label"), subject))?.trim();
+    if (!name) return;
+    const box = document.createElement("div");
+    box.innerHTML = currentHtml();
+    box.querySelectorAll(".mailnix-signature, .lynora-signature, .mailnix-quote, .lynora-quote").forEach((n) => n.remove());
+    const list = loadTemplates();
+    const same = list.some((x) => x.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    if (same && !(await app.confirm(t("tpl.exists", name), t("tpl.overwrite"), { ok: t("common.save") }))) return;
+    await saveTemplates([...list.filter((x) => x.name.toLocaleLowerCase() !== name.toLocaleLowerCase()), { name, subject, html: box.innerHTML }]);
+    toast.success(t("tpl.saved", name));
+  }
+
+  // ---------------------------------------------------------------- HTML kaynağı
+  function openSource() {
+    sourceHtml = currentHtml();
+    sourceOpen = true;
+  }
+
+  function applySource() {
+    html = sourceHtml;
+    dirty = true;
+    sourceOpen = false;
   }
 
   // Satır içi yanıt açıkken başka ileti seçilirse taslak sessizce kaydedilip kapanır
@@ -542,6 +617,7 @@
   let caret = $state({ family: "", size: 0 });
 
   const fromLabel = $derived.by(() => {
+    if (identity) return identity.email;
     const a = app.accounts.find((x) => x.id === accountId);
     return a ? a.email : t("compose.no_account_option");
   });
@@ -600,7 +676,10 @@
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
       e.preventDefault();
       void saveDraft();
-    } else if (e.key === "Escape" && !e.defaultPrevented && !delayOpen && !bookOpen && !app.confirmReq && !app.promptReq && !document.querySelector("[data-state=open][role=menu]")) {
+    } else if ((e.ctrlKey || e.metaKey) && ["f", "h"].includes(e.key.toLowerCase())) {
+      e.preventDefault();
+      findOpen = true;
+    } else if (e.key === "Escape" && !e.defaultPrevented && !delayOpen && !bookOpen && !sourceOpen && !app.confirmReq && !app.promptReq && !document.querySelector("[data-state=open][role=menu]")) {
       e.preventDefault();
       void close();
     }
@@ -760,6 +839,7 @@
                 </DropdownMenu.Content>
               </DropdownMenu.Root>
               {@render signatureMenu()}
+              {@render templateMenu()}
             </RibbonGroup>
             <RibbonGroup label={t("ribbon.g_tags")} last>
               <RibbonStack>
@@ -774,6 +854,7 @@
             <RibbonButton icon={Paperclip} label={t("ribbon.attach_file")} onclick={attach} />
             <RibbonButton icon={Mail} label={t("compose.attach_item")} onclick={openItemPicker} />
             {@render signatureMenu()}
+            {@render templateMenu()}
           </RibbonGroup>
           <RibbonGroup label={t("ribbon.g_tables")}>
             <DropdownMenu.Root>
@@ -791,6 +872,14 @@
           </RibbonGroup>
           <RibbonGroup label={t("ribbon.g_symbols")} last>
             <RibbonButton icon={Minus} label={t("editor.hr")} disabled={plain} onclick={() => editor?.exec("insertHorizontalRule")} />
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger>{#snippet child({ props })}<RibbonButton {...props} icon={Smile} label={t("editor.emoji")} menu />{/snippet}</DropdownMenu.Trigger>
+              <DropdownMenu.Content class="w-auto p-1">
+                <div class="grid grid-cols-8 gap-0.5">
+                  {#each EMOJI as e (e)}<DropdownMenu.Item class="justify-center px-1 py-1 text-lg leading-none" onclick={() => editor?.exec("insertText", e)}>{e}</DropdownMenu.Item>{/each}
+                </div>
+              </DropdownMenu.Content>
+            </DropdownMenu.Root>
           </RibbonGroup>
         {:else if tab === "options"}
           <RibbonGroup label={t("ribbon.g_show_fields")}>
@@ -808,7 +897,9 @@
           </RibbonGroup>
         {:else if tab === "review"}
           <RibbonGroup label={t("ribbon.g_editing")} last>
-            <RibbonButton icon={SpellCheck} label={t("ribbon.spelling")} onclick={() => editor?.focus()} />
+            <RibbonButton icon={SpellCheck} label={t("ribbon.spelling")} active={app.setting("spell_check", "1") === "1"} onclick={() => void app.setSetting("spell_check", app.setting("spell_check", "1") === "1" ? "0" : "1")} />
+            <RibbonButton icon={Search} label={t("editor.find_replace")} onclick={() => (findOpen = true)} />
+            <RibbonButton icon={FileCode} label={t("editor.html_source")} disabled={plain} onclick={openSource} />
             <RibbonButton icon={TextSelect} label={t("ribbon.select_all")} onclick={() => { editor?.focus(); editor?.exec("selectAll"); }} />
           </RibbonGroup>
         {/if}
@@ -831,6 +922,20 @@
       </DropdownMenu.Root>
     {/snippet}
 
+    {#snippet templateMenu()}
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger>{#snippet child({ props })}<RibbonButton {...props} icon={FileText} label={t("compose.template")} menu />{/snippet}</DropdownMenu.Trigger>
+        <DropdownMenu.Content>
+          {#each loadTemplates() as tp (tp.name)}
+            <DropdownMenu.Item onclick={() => applyTemplate(tp)}>{tp.name}</DropdownMenu.Item>
+          {/each}
+          {#if loadTemplates().length}<DropdownMenu.Separator />{/if}
+          <DropdownMenu.Item onclick={saveAsTemplate}>{t("compose.save_template")}</DropdownMenu.Item>
+          <DropdownMenu.Item onclick={() => app.openSettings("templates")}>{t("compose.edit_templates")}</DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>
+    {/snippet}
+
     {#if sendAt}
       <div class="flex items-center gap-2 bg-amber-50 px-4 py-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-100">
         <Clock class="size-3.5" />{t("compose.scheduled", fmtDateTime(sendAt))}
@@ -847,8 +952,13 @@
         <DropdownMenu.Root>
           <DropdownMenu.Trigger>{#snippet child({ props })}<button {...props} class="compose-btn flex h-8 items-center justify-center gap-1 text-[13px]">{t("compose.from_btn")}<ChevronDown class="size-3.5" /></button>{/snippet}</DropdownMenu.Trigger>
           <DropdownMenu.Content class="w-80">
-            <DropdownMenu.RadioGroup value={String(accountId ?? "")} onValueChange={(v) => { accountId = Number(v); applySignature(accountId); }}>
-              {#each app.accounts as a (a.id)}<DropdownMenu.RadioItem value={String(a.id)}>{a.display_name ? `${a.display_name} <${a.email}>` : a.email}</DropdownMenu.RadioItem>{/each}
+            <DropdownMenu.RadioGroup value={identity ? `${identity.account_id}:${identity.email}` : String(accountId ?? "")} onValueChange={pickFrom}>
+              {#each app.accounts as a (a.id)}
+                <DropdownMenu.RadioItem value={String(a.id)}>{a.display_name ? `${a.display_name} <${a.email}>` : a.email}</DropdownMenu.RadioItem>
+                {#each loadIdentities(a.id) as x (x.email)}
+                  <DropdownMenu.RadioItem value={`${a.id}:${x.email}`}>{x.name ? `${x.name} <${x.email}>` : x.email}</DropdownMenu.RadioItem>
+                {/each}
+              {/each}
             </DropdownMenu.RadioGroup>
             {#if !app.accounts.length}<DropdownMenu.Item onclick={() => app.openAccountDialog()}>{t("account.add")}</DropdownMenu.Item>{/if}
           </DropdownMenu.Content>
@@ -878,6 +988,7 @@
       </div>
     {/if}
 
+    {#if findOpen}<FindReplaceBar {editor} onclose={() => (findOpen = false)} />{/if}
     <RichEditor bind:this={editor} bind:html bind:caret {plain} toolbar={inline} fontStyle={fontCss(fontSpec)} onchange={() => (dirty = true)} onfiles={(p) => void addPaths(p)} />
     {#if lastSaved}<div class="text-muted-foreground border-t px-3 py-0.5 text-[11px]">{t("compose.saved_at", new Date(lastSaved * 1000).toLocaleTimeString().slice(0, 5))}</div>{/if}
     </div>
@@ -891,6 +1002,18 @@
     <Dialog.Footer>
       <Button variant="outline" onclick={() => { sendAt = null; delayOpen = false; }}>{t("compose.no_delay")}</Button>
       <Button data-default-button onclick={setDelay}>{t("common.ok")}</Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+
+<!-- HTML kaynağı -->
+<Dialog.Root bind:open={sourceOpen}>
+  <Dialog.Content class="z-[60] flex h-[70vh] flex-col sm:max-w-3xl" overlayClass="z-[60]">
+    <Dialog.Header><Dialog.Title>{t("editor.html_source")}</Dialog.Title></Dialog.Header>
+    <textarea class="selectable min-h-0 flex-1 resize-none rounded border bg-transparent p-2 font-mono text-xs outline-none" spellcheck="false" bind:value={sourceHtml}></textarea>
+    <Dialog.Footer>
+      <Button variant="outline" onclick={() => (sourceOpen = false)}>{t("common.cancel")}</Button>
+      <Button onclick={applySource}>{t("common.ok")}</Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

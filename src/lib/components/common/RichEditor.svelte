@@ -323,6 +323,110 @@
   export function insertHtml(s: string) {
     exec("insertHTML", s);
   }
+
+  // ---------------------------------------------------------------- bul ve değiştir
+  /** Düzenleyicideki metin ve her metin düğümünün bu metindeki başlangıcı (biçimlendirme
+      bir sözcüğü bölse de bulunur) */
+  function textIndex() {
+    const nodes: { node: Text; start: number }[] = [];
+    let text = "";
+    if (editor) {
+      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (n.parentElement?.closest("style, script")) continue;
+        nodes.push({ node: n as Text, start: text.length });
+        text += n.nodeValue ?? "";
+      }
+    }
+    return { nodes, text };
+  }
+
+  /** Büyük/küçük harf eşitleme; uzunluk korunur ki bulunan yer metinle aynı kalsın (İ → i) */
+  function fold(s: string, caseSensitive: boolean): string {
+    if (caseSensitive) return s;
+    let out = "";
+    for (const c of s) {
+      const l = c.toLocaleLowerCase("tr");
+      out += l.length === c.length ? l : c;
+    }
+    return out;
+  }
+
+  function rangeAt(nodes: { node: Text; start: number }[], from: number, to: number): Range {
+    const locate = (pos: number, end: boolean) => {
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        const n = nodes[i];
+        if (end ? n.start < pos : n.start <= pos) return { node: n.node, offset: pos - n.start };
+      }
+      return { node: nodes[0].node, offset: 0 };
+    };
+    const a = locate(from, false);
+    const b = locate(to, true);
+    const r = document.createRange();
+    r.setStart(a.node, a.offset);
+    r.setEnd(b.node, b.offset);
+    return r;
+  }
+
+  function select(r: Range) {
+    editor?.focus();
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(r);
+    (r.startContainer.parentElement as HTMLElement | null)?.scrollIntoView({ block: "nearest" });
+  }
+
+  /** Seçimin metin içindeki bitiş konumu: arama buradan sürer */
+  function selectionEnd(nodes: { node: Text; start: number }[]): number {
+    const sel = window.getSelection();
+    if (!sel?.rangeCount) return 0;
+    const r = sel.getRangeAt(0);
+    return (nodes.find((x) => x.node === r.endContainer)?.start ?? -r.endOffset) + r.endOffset;
+  }
+
+  /** Sonraki eşleşmeyi seçer; metnin sonuna gelince baştan arar */
+  export function findNext(query: string, caseSensitive = false): boolean {
+    const { nodes, text } = textIndex();
+    if (!query || !nodes.length) return false;
+    const hay = fold(text, caseSensitive);
+    const q = fold(query, caseSensitive);
+    let at = hay.indexOf(q, selectionEnd(nodes));
+    if (at < 0) at = hay.indexOf(q);
+    if (at < 0) return false;
+    select(rangeAt(nodes, at, at + q.length));
+    return true;
+  }
+
+  /** Seçili eşleşmeyi değiştirip sonrakine geçer; seçim eşleşmiyorsa önce onu bulur */
+  export function replaceCurrent(query: string, replacement: string, caseSensitive = false): boolean {
+    const current = window.getSelection()?.toString() ?? "";
+    if (fold(current, caseSensitive) !== fold(query, caseSensitive)) return findNext(query, caseSensitive);
+    document.execCommand("insertText", false, replacement);
+    sync();
+    findNext(query, caseSensitive);
+    return true;
+  }
+
+  /** Tüm eşleşmeleri değiştirir; sondan başa gider ki önceki konumlar bozulmasın. Her adımda
+      metin yeniden taranır: değiştirme metin düğümlerini bölüp birleştirebilir */
+  export function replaceAll(query: string, replacement: string, caseSensitive = false): number {
+    if (!query) return 0;
+    const q = fold(query, caseSensitive);
+    let count = 0;
+    let limit = Infinity;
+    for (;;) {
+      const { nodes, text } = textIndex();
+      const at = nodes.length ? fold(text, caseSensitive).lastIndexOf(q, limit) : -1;
+      if (at < 0) break;
+      select(rangeAt(nodes, at, at + q.length));
+      document.execCommand("insertText", false, replacement);
+      count++;
+      if (at < q.length) break;
+      limit = at - q.length;
+    }
+    if (count) sync();
+    return count;
+  }
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
@@ -370,7 +474,7 @@
     role="textbox"
     tabindex="0"
     aria-multiline="true"
-    spellcheck="true"
+    spellcheck={app.setting("spell_check", "1") === "1" ? "true" : "false"}
     class="rich-editor min-h-0 flex-1 overflow-auto px-4 py-3 outline-none {plain ? 'font-mono whitespace-pre-wrap' : ''}"
     style={fontStyle}
     oninput={sync}

@@ -94,6 +94,24 @@
     app.search = "";
   }
 
+  /** Önceki oturum çöktüyse yarım kalan iletiler geri sunulur; "İptal" kayıtları sonraki açılışa bırakır */
+  async function offerRecovery() {
+    const items = (await api.listRecovery().catch(() => [] as string[])).flatMap((s) => {
+      try {
+        return [JSON.parse(s)];
+      } catch {
+        return [];
+      }
+    });
+    if (!items.length) return;
+    const r = await app.choose(t("recovery.title"), t("recovery.text", items.length), t("recovery.restore"), t("recovery.discard"));
+    if (r === "cancel") return;
+    for (const it of items) {
+      if (r === "ok") app.compose({ mode: "new", data: it, attachments: it.attachments ?? [], recoveryId: it.id });
+      else void api.removeRecovery(it.id).catch(() => {});
+    }
+  }
+
   async function notify(title: string, body: string) {
     try {
       await api.notify(title, body, app.setting("notify_sound", "1") === "1");
@@ -400,6 +418,7 @@
         app.accountDialog = { open: true, account: null, auto: true };
       }
       void askDefaultApp();
+      void offerRecovery();
     })();
 
     const handlers: [string, (e: Event) => void][] = [
