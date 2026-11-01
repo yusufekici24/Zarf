@@ -834,16 +834,25 @@ pub fn default_data_dir() -> PathBuf {
             return PathBuf::from(d);
         }
     }
+    // Birim testleri kullanıcının gerçek veri klasörüne asla yazmaz
+    if cfg!(test) {
+        return std::env::temp_dir().join(format!("lynora-test-data-{}", std::process::id()));
+    }
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("lynora")
 }
 
 /// Uygulamanın eski adıyla (MailNix) oluşturulmuş veriler yeni klasöre taşınır:
 /// ~/.local/share/mailnix/mailnix.db -> ~/.local/share/lynora/lynora.db (iletiler, hesaplar,
-/// ayarlar korunur). Yeni klasör zaten varsa dokunulmaz.
+/// ayarlar korunur). Yeni klasörde veritabanı varsa dokunulmaz.
 pub fn migrate_legacy_data_dir(new_dir: &std::path::Path, old_dir: &std::path::Path) {
-    if new_dir.exists() || !old_dir.join("mailnix.db").exists() {
+    if new_dir.join("lynora.db").exists() || !old_dir.join("mailnix.db").exists() {
         return;
+    }
+    // Veritabanı olmayan klasör (ör. açılışta yazılan crash.log) taşımayı engellemesin: yoksa
+    // kullanıcı verilerini kaybolmuş sanır. Silinmez, kenara alınır.
+    if new_dir.exists() {
+        let _ = std::fs::rename(new_dir, new_dir.with_extension("eski"));
     }
     if std::fs::rename(old_dir, new_dir).is_err() {
         return;
@@ -2778,7 +2787,23 @@ mod search_tests {
         assert_eq!(db.events_in_calendar(cal).len(), 1);
     }
 
-    /// Eski adla (MailNix) oluşturulmuş veri klasörü yeni ada taşınır; yeni klasör varsa dokunulmaz
+    #[test]
+    fn migration_is_not_blocked_by_a_dir_without_database() {
+        let root = std::env::temp_dir().join(format!("lynora-mig-empty-{}", std::process::id()));
+        let (old, new) = (root.join("mailnix"), root.join("lynora"));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(old.join("mailnix.db"), b"veri").unwrap();
+        std::fs::write(new.join("crash.log"), b"gunluk").unwrap();
+        migrate_legacy_data_dir(&new, &old);
+        assert_eq!(std::fs::read(new.join("lynora.db")).unwrap(), b"veri");
+        assert!(!old.exists());
+        assert_eq!(std::fs::read(root.join("lynora.eski/crash.log")).unwrap(), b"gunluk", "kenara alınmalı, silinmemeli");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Eski adla (MailNix) oluşturulmuş veri klasörü yeni ada taşınır; yeni klasörde veritabanı varsa dokunulmaz
     #[test]
     fn migrates_legacy_data_dir() {
         let root = std::env::temp_dir().join(format!("lynora-mig-{}", std::process::id()));
@@ -2795,7 +2820,7 @@ mod search_tests {
         assert!(new.join("lynora.db").exists() && !new.join("mailnix.db").exists());
         assert!(new.join(".key").exists() && new.join("photos").is_dir());
         assert_eq!(Db::open(new.join("lynora.db")).unwrap().setting("eski").as_deref(), Some("veri"));
-        // İkinci kez: yeni klasör var, eski (yeniden oluşmuş) klasöre dokunulmaz
+        // İkinci kez: yeni veritabanı var, eski (yeniden oluşmuş) klasöre dokunulmaz
         std::fs::create_dir_all(&old).unwrap();
         std::fs::write(old.join("mailnix.db"), b"x").unwrap();
         migrate_legacy_data_dir(&new, &old);
