@@ -56,7 +56,7 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 | Debian tabanlı dağıtımlar: Debian 12 / 13, Ubuntu 22.04 / 24.04, Pardus 23 / 25 ve türevleri | `Lynora_*_amd64.deb` |
 
 ```sh
-sudo apt install ./Lynora_1.0.54_amd64.deb      # bağımlılıklar otomatik kurulur
+sudo apt install ./Lynora_1.1.0_amd64.deb      # bağımlılıklar otomatik kurulur
 ```
 
 Paket Ubuntu 22.04 tabanında (glibc 2.35) derlenir. Bu yüzden daha yeni tüm Debian tabanlı dağıtımlarda sorunsuz çalışır.
