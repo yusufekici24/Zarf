@@ -61,4 +61,6 @@ npx svelte-check --threshold error
 packaging/build-packages.sh   # .deb: Docker ile Ubuntu 22.04 tabanında
 ```
 
-`.deb` CI'da yalnızca `v*` etiketinde ya da Actions > build > Run workflow ile üretilir.
+Sürüm paketi yerelde `npx tauri build --bundles deb` ile derlenip `gh release create` ile Releases'e yüklenir. Bu paket
+derlendiği makinenin glibc sürümüne bağlıdır. Eski dağıtımlar için Ubuntu 22.04 tabanlı paket Actions > build > Run workflow
+ile üretilir.

@@ -3,7 +3,6 @@ name: build
 on:
   push:
     branches: ["**"]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -33,13 +32,11 @@ jobs:
 
   package:
     # glibc 2.35 tabanı: Pardus 23/25, Debian 12/13, Ubuntu 22.04+ ile uyumlu
-    # .deb yalnızca sürüm etiketinde ya da elle (Actions > Run workflow) üretilir
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # Sürümler yerelde derlenip Releases'e elle yüklenir. Bu iş yalnızca elle başlatılır
+    # (Actions > Run workflow): eski dağıtımlarda çalışan paket gerektiğinde
+    if: github.event_name == 'workflow_dispatch'
     needs: test
     runs-on: ubuntu-22.04
-    # Sürüm yayımlama adımı paketi Releases'e yükler
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -63,8 +60,3 @@ jobs:
         with:
           name: lynora-linux-x64
           path: src-tauri/target/release/bundle/deb/*.deb
-      - name: Sürüm yayımla
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: src-tauri/target/release/bundle/deb/*.deb
