@@ -321,6 +321,7 @@
         else if (e.payload === "online" && prev === "disconnected") toast.success(t("net.back_online"), { id: "net", duration: 3000 });
       }));
       let pausedAt = 0;
+      unsub.push(await listen<{ title: string; body: string }>("mail://rule-notify", (e) => void notify(e.payload.title || t("rw.a_desktop_notify"), e.payload.body)));
       unsub.push(await listen<string>("mail://error", (e) => {
         // Hesap duraklatma bildirimi ayrıca (eylem düğmesiyle) gösterilir
         if (Date.now() - pausedAt < 4000) return;

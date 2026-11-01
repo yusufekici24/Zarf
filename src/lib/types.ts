@@ -269,6 +269,23 @@ export interface Rule {
   remote_id?: string | null;
   /** Outlook'ta oluşturulmuş, basit düzenleyiciye sığmayan kural */
   complex?: boolean;
+  /** Yerel kuralın tam modeli (LocalSpec, JSON) */
+  spec?: string;
+}
+
+/** Yerel kuralın koşulu ya da eylemi */
+export interface LocalPart {
+  kind: string;
+  op: string;
+  values: string[];
+}
+
+/** Bu bilgisayarda çalışan kuralın tam modeli */
+export interface LocalSpec {
+  conditions: LocalPart[];
+  exceptions: LocalPart[];
+  actions: LocalPart[];
+  match_any: boolean;
 }
 
 export interface Category {

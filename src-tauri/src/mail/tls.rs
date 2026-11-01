@@ -68,6 +68,15 @@ impl Write for MailStream {
     }
 }
 
+impl imap::extensions::idle::SetReadTimeout for MailStream {
+    /// IDLE bitince kitaplık zaman aşımını kaldırır: kopuk bağlantıda DONE yanıtını sonsuza
+    /// dek beklememek için süresiz okuma yerine kısa bir süre kullanılır
+    fn set_read_timeout(&mut self, timeout: Option<Duration>) -> imap::error::Result<()> {
+        MailStream::set_read_timeout(self, Some(timeout.unwrap_or(Duration::from_secs(40))));
+        Ok(())
+    }
+}
+
 /// Geçici ağ hatası mı (yeniden denemeye değer)? Uyku/VPN/Wi-Fi değişimi, sunucunun
 /// anlık reddi, yük dengeleyicinin SYN'i düşürmesi gibi durumlarda bağlantı birkaç saniye
 /// sonra kurulabilir; tek denemede hata göstermek "bağlanılamadı" uyarılarına yol açıyordu.

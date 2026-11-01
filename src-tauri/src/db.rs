@@ -111,6 +111,8 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("rules", "remote_id", "TEXT"),
     ("rules", "remote_xml", "TEXT DEFAULT ''"),
     ("rules", "complex", "INTEGER DEFAULT 0"),
+    // Yerel kuralın tam modeli (JSON): boşsa basit alan/işlem/değer kullanılır
+    ("rules", "spec", "TEXT DEFAULT ''"),
     ("calendars", "account_id", "INTEGER"),
     ("calendars", "remote_id", "TEXT"),
     ("events", "remote_id", "TEXT"),
@@ -752,6 +754,8 @@ pub struct Rule {
     pub complex: bool,
     #[serde(skip)]
     pub remote_xml: String,
+    /// Yerel kuralın tam modeli (bkz. rules::LocalSpec)
+    pub spec: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1046,6 +1050,14 @@ impl Db {
 
     pub fn setting_i64(&self, key: &str, default: i64) -> i64 {
         self.setting(key).and_then(|v| v.parse().ok()).unwrap_or(default)
+    }
+
+    /// Kullanıcının tüm adresleri (küçük harf): hesaplar ve takma adlar
+    pub fn my_addresses(&self) -> Vec<String> {
+        let mut me: Vec<String> = self.accounts().iter().map(|a| a.email.trim().to_lowercase()).collect();
+        let aliases = self.setting("identities").and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(&s).ok()).unwrap_or_default();
+        me.extend(aliases.iter().filter_map(|v| v.get("email").and_then(|e| e.as_str()).map(|e| e.trim().to_lowercase())));
+        me
     }
 
     pub fn set_setting(&self, key: &str, value: &str) {
@@ -2291,6 +2303,7 @@ impl Db {
                 remote_id: r.get("remote_id").unwrap_or(None),
                 complex: r.get::<_, Option<i64>>("complex").unwrap_or(None).unwrap_or(0) != 0,
                 remote_xml: r.get::<_, Option<String>>("remote_xml").unwrap_or(None).unwrap_or_default(),
+                spec: r.get::<_, Option<String>>("spec").unwrap_or(None).unwrap_or_default(),
             })
         })
         .unwrap()
@@ -2303,17 +2316,17 @@ impl Db {
         if r.id > 0 {
             c.execute(
                 "UPDATE rules SET name=?1, enabled=?2, account_id=?3, field=?4, op=?5, value=?6, \
-                 action=?7, action_arg=?8, stop=?9, remote_id=?11, complex=?12, remote_xml=?13 WHERE id=?10",
+                 action=?7, action_arg=?8, stop=?9, remote_id=?11, complex=?12, remote_xml=?13, spec=?14 WHERE id=?10",
                 params![r.name, r.enabled as i64, r.account_id, r.field, r.op, r.value, r.action,
-                    r.action_arg, r.stop as i64, r.id, r.remote_id, r.complex as i64, r.remote_xml],
+                    r.action_arg, r.stop as i64, r.id, r.remote_id, r.complex as i64, r.remote_xml, r.spec],
             )?;
             Ok(r.id)
         } else {
             c.execute(
-                "INSERT INTO rules(name, enabled, account_id, field, op, value, action, action_arg, stop, remote_id, complex, remote_xml) \
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+                "INSERT INTO rules(name, enabled, account_id, field, op, value, action, action_arg, stop, remote_id, complex, remote_xml, spec) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
                 params![r.name, r.enabled as i64, r.account_id, r.field, r.op, r.value, r.action,
-                    r.action_arg, r.stop as i64, r.remote_id, r.complex as i64, r.remote_xml],
+                    r.action_arg, r.stop as i64, r.remote_id, r.complex as i64, r.remote_xml, r.spec],
             )?;
             Ok(c.last_insert_rowid())
         }

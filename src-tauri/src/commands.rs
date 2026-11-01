@@ -828,8 +828,7 @@ pub async fn compose_prefill(state: State<'_, AppState>, mode: String, source_id
             if mode == "reply_all" {
                 // Outlook gibi: Kime = gönderen + özgün Kime alıcıları, Bilgi = özgün Bilgi alıcıları
                 // (kendi adreslerimiz ve yinelenenler çıkarılır)
-                let mut me: Vec<String> = state.db.accounts().iter().map(|a| a.email.to_lowercase()).collect();
-                me.extend(identity_emails(&state.db));
+                let me = state.db.my_addresses();
                 let mut seen: std::collections::HashSet<String> = mail::bare_addresses(&d.to).into_iter().map(|a| a.to_lowercase()).collect();
                 let mut keep = |list: &str| -> Vec<String> {
                     mail::split_addresses(list)
@@ -863,16 +862,6 @@ pub async fn compose_prefill(state: State<'_, AppState>, mode: String, source_id
     }
     Ok(d)
     })
-}
-
-/// Takma ad adresleri (ayarlardaki kimlikler): "tümünü yanıtla" kendimizi alıcı yapmasın
-fn identity_emails(db: &Db) -> Vec<String> {
-    db.setting("identities")
-        .and_then(|s| serde_json::from_str::<Vec<Value>>(&s).ok())
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|v| v.get("email").and_then(|e| e.as_str()).map(|e| e.trim().to_lowercase()))
-        .collect()
 }
 
 fn resolve_attachments(state: &AppState, m: &ComposedMail) -> R<Vec<(String, String, Vec<u8>)>> {
@@ -1896,15 +1885,27 @@ pub async fn refresh_server_rules(state: State<'_, AppState>) -> R<()> {
 #[tauri::command(async)]
 pub fn run_rules(state: State<AppState>, folder_id: i64) -> usize {
     let rules = state.db.rules(true);
+    let me = state.db.my_addresses();
     let mut n = 0;
     for row in state.db.messages(Some(folder_id), "", &MsgFilter::All) {
         let Some(m) = state.db.message(row.id) else { continue };
-        for (action, arg) in crate::rules::evaluate(&rules, &m, m.account_id) {
+        for (action, arg) in crate::rules::evaluate(&rules, &m, m.account_id, &me) {
             n += 1;
             match action.as_str() {
                 "mark_read" => state.mail.set_read(&[m.id], true),
+                "mark_unread" => state.mail.set_read(&[m.id], false),
                 "flag" => state.mail.set_flagged(&[m.id], true),
+                "unflag" => state.mail.set_flagged(&[m.id], false),
                 "important" => state.mail.set_importance(&[m.id], 2),
+                "importance" => state.mail.set_importance(&[m.id], crate::rules::importance_level(&arg)),
+                "permanent_delete" => state.mail.delete(&[m.id], true),
+                "copy" => {
+                    if let (Ok(fid), Some(raw)) = (arg.parse::<i64>(), state.raw_of(m.id)) {
+                        if !raw.is_empty() {
+                            state.mail.import_raw(fid, raw, true);
+                        }
+                    }
+                }
                 "category" => {
                     let mut c = split_list(&m.categories);
                     if !c.contains(&arg) {

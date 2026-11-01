@@ -88,7 +88,6 @@
   }
 
   let rules = $state<Rule[]>([]);
-  let rule = $state<Rule | null>(null);
   let arAccount = $state<number | null>(null);
   let arEnabled = $state(false);
   let arText = $state("");
@@ -130,33 +129,30 @@
       app.rulesPrefill = null;
       const ex = app.accounts.find((a) => a.kind === "exchange");
       if (ex) openWizard(0, ex.id, t("rules.from_name", addr), true, from);
-      else {
-        rule = blankRule();
-        rule.value = addr;
-        rule.name = t("rules.from_name", rule.value);
-      }
+      else openLocal(null, addr);
     }
     if (arAccount == null && app.accounts.length) pickAr(app.accounts[0].id);
   });
 
   // Exchange kuralları Kural Sihirbazı ile düzenlenir
-  let wizard = $state<{ open: boolean; id: number; account: number; name: string; enabled: boolean; from: string }>({ open: false, id: 0, account: 0, name: "", enabled: true, from: "" });
+  let wizard = $state<{ open: boolean; id: number; account: number; name: string; enabled: boolean; from: string; local: boolean; rule: Rule | null }>({ open: false, id: 0, account: 0, name: "", enabled: true, from: "", local: false, rule: null });
   function openWizard(id: number, account: number, name = "", enabled = true, from = "") {
-    wizard = { open: true, id, account, name, enabled, from };
+    wizard = { open: true, id, account, name, enabled, from, local: false, rule: null };
+  }
+  /** Bu bilgisayarda çalışan kural (IMAP, tüm hesaplar) */
+  function openLocal(r: Rule | null, from = "") {
+    const name = r?.name ?? (from ? t("rules.from_name", from) : "");
+    wizard = { open: true, id: r?.id ?? 0, account: 0, name, enabled: r?.enabled ?? true, from, local: true, rule: r };
   }
   const exchangeAccounts = $derived(app.accounts.filter((a) => a.kind === "exchange"));
   function newRule() {
     const ex = exchangeAccounts[0];
     if (ex) openWizard(0, ex.id);
-    else rule = blankRule();
+    else openLocal(null);
   }
   function editRule(r: Rule) {
     if (r.account_id != null && (r.remote_id || isExchange(r.account_id))) openWizard(r.id, r.account_id, r.name, r.enabled);
-    else rule = { ...r };
-  }
-
-  function blankRule(): Rule {
-    return { id: 0, name: "", enabled: true, account_id: null, field: "from", op: "contains", value: "", action: "move", action_arg: "", stop: false, remote_id: null, complex: false };
+    else openLocal(r);
   }
 
   function bool(key: string, def = false) {
@@ -226,20 +222,6 @@
     }
   }
 
-  async function saveRule() {
-    if (!rule) return;
-    if (!rule.name.trim()) rule.name = `${t(`rules.field_${rule.field}`)} ${t(`rules.op_${rule.op}`)} "${rule.value}"`;
-    const r = rule;
-    try {
-      await serverOp((force) => api.saveRule(r, force));
-      rules = await api.listRules();
-      rule = null;
-      if (isExchange(r.account_id)) toast.success(t("rules.saved_server"));
-    } catch (e) {
-      app.error(e);
-    }
-  }
-
   async function deleteRule(r: Rule) {
     try {
       await serverOp((force) => api.deleteRule(r.id, force));
@@ -258,12 +240,6 @@
     rules = await api.listRules();
   }
 
-  // Exchange hesabında yalnızca sunucunun desteklediği eylemler
-  const ruleActions = $derived(
-    isExchange(rule?.account_id) ? ["move", "mark_read", "category", "important", "delete", "junk", "forward"] : ["move", "mark_read", "flag", "category", "important", "delete", "junk", "forward", "notify"],
-  );
-  const ruleOps = $derived(isExchange(rule?.account_id) ? ["contains", "not_contains", "equals"] : ["contains", "not_contains", "equals", "starts", "ends"]);
-
   async function addCategory() {
     if (!newCatName.trim()) return;
     await api.saveCategory(null, newCatName.trim(), newCatColor);
@@ -278,10 +254,6 @@
       await app.loadCategories();
     }
   }
-
-  const allFolders = $derived(app.folderGroups.flatMap((g) => g.folders.map((f) => ({ id: f.id, account_id: f.account_id, label: `${g.account?.email ?? t("folder.local")} / ${f.display}` }))));
-  const ruleFolders = $derived(isExchange(rule?.account_id) ? allFolders.filter((f) => f.account_id === rule?.account_id) : allFolders);
-
 </script>
 
 <!-- Outlook Seçenekleri gibi: solda kategoriler, sağda başlıklı bölümler, altta Tamam / İptal -->
@@ -569,7 +541,7 @@
           <h3 class="text-lg font-semibold">{t("rules.title")}</h3>
           <div class="flex gap-2">
             {#if exchangeAccounts.length && app.accounts.some((a) => a.kind !== "exchange")}
-              <Button size="sm" variant="outline" onclick={() => (rule = blankRule())}>{t("rules.new_local")}</Button>
+              <Button size="sm" variant="outline" onclick={() => openLocal(null)}>{t("rules.new_local")}</Button>
             {/if}
             {#if exchangeAccounts.length > 1}
               {#each exchangeAccounts as a (a.id)}<Button size="sm" variant="outline" onclick={() => openWizard(0, a.id)}><Plus class="size-4" />{a.email}</Button>{/each}
@@ -579,46 +551,6 @@
           </div>
         </div>
         <p class="text-muted-foreground text-xs">{t("rules.help")}</p>
-        {#if rule}
-          <div class="grid gap-3 rounded-md border p-3">
-            <Input placeholder={t("rules.name")} bind:value={rule.name} />
-            <div class="flex flex-wrap items-center gap-2">
-              <span>{t("rules.if")}</span>
-              <select class="border-input h-9 rounded-md border bg-transparent px-2" bind:value={rule.field}>
-                {#each ["from", "to", "subject", "body", "any"] as f (f)}<option value={f}>{t(`rules.field_${f}`)}</option>{/each}
-              </select>
-              <select class="border-input h-9 rounded-md border bg-transparent px-2" bind:value={rule.op}>
-                {#each ruleOps as o (o)}<option value={o}>{t(`rules.op_${o}`)}</option>{/each}
-              </select>
-              <Input class="w-60" bind:value={rule.value} />
-            </div>
-            <div class="flex flex-wrap items-center gap-2">
-              <span>{t("rules.then")}</span>
-              <select class="border-input h-9 rounded-md border bg-transparent px-2" bind:value={rule.action}>
-                {#each ruleActions as a (a)}<option value={a}>{t(`rules.action_${a}`)}</option>{/each}
-              </select>
-              {#if rule.action === "move"}
-                <select class="border-input h-9 max-w-80 rounded-md border bg-transparent px-2" bind:value={rule.action_arg}>
-                  {#each ruleFolders as f (f.id)}<option value={String(f.id)}>{f.label}</option>{/each}
-                </select>
-              {:else if rule.action === "category"}
-                <select class="border-input h-9 rounded-md border bg-transparent px-2" bind:value={rule.action_arg}>
-                  {#each app.categories as c (c.name)}<option value={c.name}>{c.name}</option>{/each}
-                </select>
-              {:else if rule.action === "forward"}
-                <Input class="w-60" placeholder="ad@ornek.com" bind:value={rule.action_arg} />
-              {/if}
-            </div>
-            <div class="flex flex-wrap items-center gap-4">
-              <label class="flex items-center gap-2"><Switch bind:checked={rule.stop} />{t("rules.stop")}</label>
-              <select class="border-input h-9 rounded-md border bg-transparent px-2" bind:value={rule.account_id}>
-                <option value={null}>{t("rules.all_accounts")}</option>
-                {#each app.accounts as a (a.id)}<option value={a.id}>{a.email}</option>{/each}
-              </select>
-            </div>
-            <div class="flex gap-2"><Button onclick={saveRule}>{t("common.save")}</Button><Button variant="outline" onclick={() => (rule = null)}>{t("common.cancel")}</Button></div>
-          </div>
-        {/if}
         <div class="divide-y rounded-md border">
           {#each rules as r (r.id)}
             <div class="flex items-center gap-3 p-2">
@@ -629,7 +561,7 @@
                   {#if r.remote_id}<span class="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-normal text-blue-800 dark:bg-blue-950 dark:text-blue-200">Exchange</span>{/if}
                 </div>
                 <div class="text-muted-foreground text-xs">
-                  {#if r.complex}{t("rules.complex_editable")}{:else}{t(`rules.field_${r.field}`)} {t(`rules.op_${r.op}`)} “{r.value}” → {t(`rules.action_${r.action}`)}{/if}
+                  {#if r.spec}{t("rules.advanced")}{:else if r.complex}{t("rules.complex_editable")}{:else}{t(`rules.field_${r.field}`)} {t(`rules.op_${r.op}`)} “{r.value}” → {t(`rules.action_${r.action}`)}{/if}
                   {#if r.account_id} · {app.accounts.find((a) => a.id === r.account_id)?.email ?? ""}{/if}
                 </div>
               </div>
@@ -688,8 +620,10 @@
   name={wizard.name}
   enabled={wizard.enabled}
   prefillFrom={wizard.from}
+  local={wizard.local}
+  rule={wizard.rule}
   onsaved={async () => {
     rules = await api.listRules();
-    toast.success(t("rules.saved_server"));
+    if (!wizard.local) toast.success(t("rules.saved_server"));
   }}
 />

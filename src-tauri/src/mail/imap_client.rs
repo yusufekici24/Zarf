@@ -224,6 +224,15 @@ impl Imap {
         self.session.noop().is_ok()
     }
 
+    /// Seçili klasörde IDLE: klasör değişince true, süre dolunca false döner
+    pub fn idle_wait(&mut self, timeout: Duration) -> MailResult<bool> {
+        use imap::extensions::idle::{stop_on_any, WaitOutcome};
+        let mut handle = self.session.idle();
+        handle.timeout(timeout).keepalive(false);
+        let outcome = handle.wait_while(stop_on_any).map_err(ierr)?;
+        Ok(matches!(outcome, WaitOutcome::MailboxChanged))
+    }
+
     pub fn logout(mut self) {
         let _ = self.session.logout();
     }

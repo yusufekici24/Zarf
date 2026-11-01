@@ -523,7 +523,8 @@ impl Worker {
     fn ews_apply_rules(&mut self, rules: &[crate::db::Rule], m: &Message, account_id: i64) -> MailResult<bool> {
         let mut notify = true;
         let rid = m.remote_id.clone().unwrap_or_default();
-        for (action, arg) in crate::rules::evaluate(rules, m, Some(account_id)) {
+        let me = self.db.my_addresses();
+        for (action, arg) in crate::rules::evaluate(rules, m, Some(account_id), &me) {
             match action.as_str() {
                 "mark_read" => {
                     self.db.set_message_field(m.id, "is_read", 1);
@@ -531,12 +532,30 @@ impl Worker {
                     self.with_ews(account_id, move |e| e.set_read(&ids, true))?;
                     notify = false;
                 }
+                "mark_unread" => {
+                    self.db.set_message_field(m.id, "is_read", 0);
+                    let ids = vec![rid.clone()];
+                    self.with_ews(account_id, move |e| e.set_read(&ids, false))?;
+                }
                 "flag" => {
                     self.db.set_message_field(m.id, "is_flagged", 1);
                     let ids = vec![rid.clone()];
                     self.with_ews(account_id, move |e| e.set_flag(&ids, true))?;
                 }
+                "unflag" => {
+                    self.db.set_message_field(m.id, "is_flagged", 0);
+                    let ids = vec![rid.clone()];
+                    self.with_ews(account_id, move |e| e.set_flag(&ids, false))?;
+                }
                 "important" => self.db.set_message_field(m.id, "importance", 2),
+                "importance" => self.db.set_message_field(m.id, "importance", crate::rules::importance_level(&arg)),
+                "permanent_delete" => {
+                    let ids = vec![rid.clone()];
+                    self.with_ews(account_id, move |e| e.delete_items(&ids, true))?;
+                    self.db.delete_message(m.id);
+                    return Ok(false);
+                }
+                "desktop_notify" => (self.emit)("mail://rule-notify", json!({ "title": arg, "body": m.subject })),
                 "category" => {
                     let mut cats = crate::db::split_list(&m.categories);
                     if !cats.contains(&arg) {

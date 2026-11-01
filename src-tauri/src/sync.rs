@@ -372,17 +372,22 @@ impl MailService {
         }
     }
 
-    /// Exchange hesapları için anlık bildirim iş parçacıklarını başlatır (Outlook gibi
-    /// yeni posta sunucuya düştüğü anda gelir; zamanlayıcı yalnızca yedek denetimdir).
+    /// Anlık bildirim iş parçacıklarını başlatır: Exchange akış aboneliği, IMAP IDLE (Outlook
+    /// gibi yeni posta sunucuya düştüğü anda gelir; zamanlayıcı yalnızca yedek denetimdir).
     pub fn ensure_push(&self) {
-        for a in self.db.accounts().into_iter().filter(|a| a.is_exchange() && a.auth_state != "failed") {
+        for a in self.db.accounts().into_iter().filter(|a| (a.is_exchange() || !a.imap_host.trim().is_empty()) && a.auth_state != "failed") {
             let id = a.id;
+            let exchange = a.is_exchange();
             if !self.push_threads.lock().unwrap_or_else(|e| e.into_inner()).insert(id) {
                 continue;
             }
             let svc = self.clone();
             let _ = std::thread::Builder::new().name(format!("mailnix-push-{id}")).spawn(move || {
-                svc.push_loop(id);
+                if exchange {
+                    svc.push_loop(id);
+                } else {
+                    svc.imap_push_loop(id);
+                }
                 svc.push_live.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
                 svc.push_threads.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
             });
@@ -473,6 +478,73 @@ impl MailService {
                     std::thread::sleep(std::time::Duration::from_secs(backoff));
                     backoff = (backoff * 2).min(300);
                 }
+            }
+        }
+    }
+
+    /// IMAP IDLE: yeni posta sunucuya düştüğü anda Gelen Kutusu eşitlenir. Eşitleme bağlantısı
+    /// kilitlenmesin diye ayrı bağlantı kullanılır; reddedilen parola yeniden denenmez.
+    fn imap_push_loop(&self, account_id: i64) {
+        let mut backoff = 20u64;
+        loop {
+            let Some(acc) = self.db.account(account_id) else { return };
+            if acc.auth_state == "failed" {
+                return;
+            }
+            let Some(inbox) = self.db.folder_by_role(Some(account_id), "inbox") else {
+                std::thread::sleep(std::time::Duration::from_secs(backoff));
+                continue;
+            };
+            let Some(remote) = inbox.remote_name.clone() else { return };
+            let started = std::time::Instant::now();
+            let r = self.imap_idle(&acc, inbox.id, &remote);
+            self.push_live.lock().unwrap_or_else(|e| e.into_inner()).remove(&account_id);
+            match r {
+                Ok(true) => return,
+                // IDLE desteklemeyen sunucuya her turda yeniden bağlanılmaz: zamanlayıcı yeterli
+                Ok(false) => {
+                    while self.db.account(account_id).is_some() {
+                        std::thread::sleep(std::time::Duration::from_secs(3600));
+                    }
+                    return;
+                }
+                Err(e) if e.is_auth() => {
+                    self.db.set_account_auth(account_id, "failed", e.message());
+                    return;
+                }
+                Err(_) => {
+                    if started.elapsed().as_secs() > 300 {
+                        backoff = 20;
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(backoff));
+                    backoff = (backoff * 2).min(300);
+                }
+            }
+        }
+    }
+
+    /// Bağlantı kopana kadar Gelen Kutusu'nu izler. Döner: false sunucu IDLE desteklemiyor,
+    /// true hesap silindi ya da parolası reddedildi.
+    fn imap_idle(&self, acc: &crate::db::Account, inbox: i64, remote: &str) -> MailResult<bool> {
+        let mut imap = Imap::connect(acc, &acc.password_plain())?;
+        if !imap.has_cap("IDLE") {
+            imap.logout();
+            return Ok(false);
+        }
+        imap.select(remote)?;
+        self.push_live.lock().unwrap_or_else(|e| e.into_inner()).insert(acc.id);
+        // Bağlantı kopmuşken gelenleri kaçırmamak için bir kez denetle
+        self.sync_folder_ex(inbox, true);
+        loop {
+            // Süre kısa tutulur: kopan bağlantı (uyku, VPN) en geç bu kadar sürede anlaşılır
+            if imap.idle_wait(std::time::Duration::from_secs(9 * 60))? {
+                self.sync_folder_ex(inbox, true);
+            }
+            if mail::net::work_offline() {
+                return Err(MailError::net(t!("net.working_offline")));
+            }
+            if !self.db.account(acc.id).is_some_and(|a| a.auth_state != "failed") {
+                return Ok(true);
             }
         }
     }
@@ -1236,7 +1308,8 @@ impl Worker {
         let mut notify = true;
         let uid = m.uid.unwrap_or(0) as u32;
         let src_remote = folder.remote_name.clone().unwrap_or_default();
-        for (action, arg) in crate::rules::evaluate(rules, m, Some(account_id)) {
+        let me = self.db.my_addresses();
+        for (action, arg) in crate::rules::evaluate(rules, m, Some(account_id), &me) {
             match action.as_str() {
                 "mark_read" => {
                     self.db.set_message_field(m.id, "is_read", 1);
@@ -1245,13 +1318,49 @@ impl Worker {
                     imap.store_flag(&[uid], "\\Seen", true)?;
                     notify = false;
                 }
+                "mark_unread" => {
+                    self.db.set_message_field(m.id, "is_read", 0);
+                    let imap = self.imap(account_id)?;
+                    imap.select(&src_remote)?;
+                    imap.store_flag(&[uid], "\\Seen", false)?;
+                }
                 "flag" => {
                     self.db.set_message_field(m.id, "is_flagged", 1);
                     let imap = self.imap(account_id)?;
                     imap.select(&src_remote)?;
                     imap.store_flag(&[uid], "\\Flagged", true)?;
                 }
+                "unflag" => {
+                    self.db.set_message_field(m.id, "is_flagged", 0);
+                    let imap = self.imap(account_id)?;
+                    imap.select(&src_remote)?;
+                    imap.store_flag(&[uid], "\\Flagged", false)?;
+                }
                 "important" => self.db.set_message_field(m.id, "importance", 2),
+                "importance" => self.db.set_message_field(m.id, "importance", crate::rules::importance_level(&arg)),
+                "desktop_notify" => (self.emit)("mail://rule-notify", json!({ "title": arg, "body": m.subject })),
+                "copy" => {
+                    let dest = arg.parse::<i64>().ok().and_then(|id| self.db.folder(id));
+                    if let (Some(dest), Some(full)) = (dest, self.db.message(m.id)) {
+                        match dest.remote_name.as_deref().filter(|_| dest.account_id == Some(account_id)) {
+                            Some(remote) => self.imap(account_id)?.append(remote, &full.raw, full.is_read, false)?,
+                            None => {
+                                let mut copy = parse::parse(&full.raw).into_message();
+                                copy.folder_id = dest.id;
+                                copy.account_id = dest.account_id;
+                                copy.is_read = full.is_read;
+                                let _ = self.db.insert_message(&copy);
+                            }
+                        }
+                    }
+                }
+                "permanent_delete" => {
+                    let imap = self.imap(account_id)?;
+                    imap.select(&src_remote)?;
+                    imap.delete(&[uid])?;
+                    self.db.delete_message(m.id);
+                    return Ok(false);
+                }
                 "category" => {
                     let mut cats = crate::db::split_list(&self.db.message_row(m.id).map(|r| r.categories).unwrap_or_default());
                     if !arg.is_empty() && !cats.contains(&arg) {
@@ -1282,6 +1391,21 @@ impl Worker {
                                 imap.delete(&[uid])?;
                             }
                             return Ok(false);
+                        }
+                    }
+                }
+                "forward_attachment" if !arg.is_empty() => {
+                    if let (Some(acc), Some(full)) = (self.db.account(account_id), self.db.message(m.id)) {
+                        let out = mail::build::ComposedMail {
+                            to: arg.clone(),
+                            subject: mail::reply_subject(&full.subject, &t!("compose.fw_prefix")),
+                            text: t!("compose.forwarded"),
+                            importance: 1,
+                            ..Default::default()
+                        };
+                        let raw = mail::build::build_raw(Some(&acc), &out, &[("ileti.eml".to_string(), "message/rfc822".to_string(), full.raw.clone())], false);
+                        if let Err(e) = self.smtp_send(&acc, &mail::bare_addresses(&arg), &raw) {
+                            (self.emit)("mail://error", json!(e.message()));
                         }
                     }
                 }
