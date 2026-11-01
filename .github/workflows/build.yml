@@ -1,0 +1,70 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Sistem kitaplıkları
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev libssl-dev
+      - run: npm ci
+      - run: npm run build
+      - run: npx svelte-check --threshold error
+      - name: Birim testleri
+        working-directory: src-tauri
+        run: cargo test --lib
+
+  package:
+    # glibc 2.35 tabanı: Pardus 23/25, Debian 12/13, Ubuntu 22.04+ ile uyumlu
+    needs: test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Sistem kitaplıkları
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev libssl-dev patchelf rpm file
+      - run: npm ci
+      - name: Paketler
+        env:
+          MAILNIX_MS_CLIENT_ID: ${{ secrets.MAILNIX_MS_CLIENT_ID || secrets.LYNORA_MS_CLIENT_ID }}
+        run: npx tauri build --bundles deb,rpm,appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mailnix-linux-x64
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+      - name: Sürüm yayımla
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage

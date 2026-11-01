@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- .msg ileti dosyaları: shared-mime-info bu uzantıyı tanımlamıyor; içerik incelemesi
+     genel "OLE belgesi" (application/x-ole-storage) buluyor ve dosya varsayılan e-posta
+     uygulamasıyla açılmıyordu. Alt tür olduğu için uzantı eşleşmesi önceliklidir. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/vnd.ms-outlook">
+    <comment>Email message</comment>
+    <comment xml:lang="tr">E-posta iletisi</comment>
+    <sub-class-of type="application/x-ole-storage"/>
+    <generic-icon name="text-x-generic"/>
+    <glob pattern="*.msg" weight="80"/>
+  </mime-type>
+</mime-info>

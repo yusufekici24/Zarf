@@ -1,0 +1,365 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+@custom-variant data-open (&:where([data-state="open"]), &:where([data-open]:not([data-open="false"])));
+@custom-variant data-closed (&:where([data-state="closed"]), &:where([data-closed]:not([data-closed="false"])));
+@custom-variant data-checked (&:where([data-state="checked"]), &:where([data-checked]:not([data-checked="false"])));
+@custom-variant data-unchecked (&:where([data-state="unchecked"]), &:where([data-unchecked]:not([data-unchecked="false"])));
+@custom-variant data-selected (&:where([data-selected]:not([data-selected="false"])), &:where([data-state="active"]));
+@custom-variant data-active (&:where([data-state="active"]), &:where([data-active]:not([data-active="false"])));
+@custom-variant data-disabled (&:where([data-disabled]:not([data-disabled="false"])));
+@custom-variant data-highlighted (&:where([data-highlighted]:not([data-highlighted="false"])));
+@custom-variant data-horizontal (&:where([data-orientation="horizontal"]));
+@custom-variant data-vertical (&:where([data-orientation="vertical"]));
+@custom-variant data-inset (&:where([data-inset]:not([data-inset="false"])));
+@custom-variant data-placeholder (&:where([data-placeholder]:not([data-placeholder="false"])));
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.141 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.141 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.141 0.005 285.823);
+  --primary: #0f6cbd;
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.967 0.001 286.375);
+  --secondary-foreground: oklch(0.21 0.006 285.885);
+  --muted: oklch(0.967 0.001 286.375);
+  --muted-foreground: oklch(0.552 0.016 285.938);
+  --accent: oklch(0.967 0.001 286.375);
+  --accent-foreground: oklch(0.21 0.006 285.885);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.92 0.004 286.32);
+  --input: oklch(0.92 0.004 286.32);
+  --ring: oklch(0.705 0.015 286.067);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --radius: 0.5rem;
+  /* Outlook pencere zemini (başlık, şerit sekmeleri, bölme aralıkları) */
+  --chrome: #f0f0f0;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.141 0.005 285.823);
+  --sidebar-primary: oklch(0.21 0.006 285.885);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.967 0.001 286.375);
+  --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
+  --sidebar-border: oklch(0.92 0.004 286.32);
+  --sidebar-ring: oklch(0.705 0.015 286.067);
+}
+
+.dark {
+  --chrome: #1b1b1b;
+  --background: oklch(0.21 0.004 285.823);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.21 0.006 285.885);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.21 0.006 285.885);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.7 0.13 250);
+  --primary-foreground: oklch(0.18 0.02 260);
+  --secondary: oklch(0.274 0.006 286.033);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.274 0.006 286.033);
+  --muted-foreground: oklch(0.705 0.015 286.067);
+  --accent: oklch(0.274 0.006 286.033);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.552 0.016 285.938);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.21 0.006 285.885);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.274 0.006 286.033);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.552 0.016 285.938);
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --color-background: var(--background);
+  --color-chrome: var(--chrome);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    @apply bg-background text-foreground h-full overflow-hidden;
+    font-family: "Segoe UI Variable Text", "Segoe UI", "Noto Sans Variable", "Noto Sans", "Ubuntu", "Cantarell", "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
+    font-size: 14px;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  input,
+  textarea,
+  [contenteditable="true"],
+  .selectable {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+/* MailNix'e özgü yardımcı sınıflar */
+@layer components {
+  .nav-rail-btn {
+    @apply text-foreground/80 hover:bg-black/5 dark:hover:bg-white/10 relative flex size-10 items-center justify-center rounded-md;
+  }
+  .nav-rail-btn[data-active="true"] {
+    @apply text-primary bg-background shadow-sm;
+  }
+  .nav-rail-btn[data-active="true"]::before {
+    content: "";
+    @apply bg-primary absolute top-2 bottom-2 -left-1 w-[3px] rounded-full;
+  }
+  /* Outlook gibi beyaz, köşeleri yuvarlatılmış bölmeler */
+  .pane {
+    @apply bg-background overflow-hidden rounded-[4px] border shadow-sm;
+  }
+  .ribbon-btn {
+    @apply hover:bg-accent flex min-w-10 shrink-0 flex-col items-center justify-start gap-[3px] rounded px-[3px] pt-1 pb-0.5 text-[12px] leading-[14px] disabled:pointer-events-none disabled:opacity-40;
+  }
+  /* Yeni iletideki Gönder / Kimden / Kime / Bilgi: belirgin çerçeveli düğmeler (Outlook) */
+  .compose-btn {
+    @apply bg-background hover:bg-accent active:bg-accent/70 rounded-[4px] border border-[#8a8a8a] shadow-[0_1px_2px_rgba(0,0,0,0.06)] dark:border-white/30;
+  }
+  /* Kime / Bilgi / Konu alanlarının alt çizgisi: belirgin gri, odaklanınca mavi (Outlook) */
+  .compose-field {
+    @apply border-b border-[#a6a6a6] transition-[border-color,box-shadow] duration-100 focus-within:border-primary focus-within:shadow-[0_1px_0_var(--primary)] dark:border-white/30;
+  }
+  .ribbon-btn-sm {
+    @apply hover:bg-accent flex h-[22px] shrink-0 items-center gap-1 rounded px-1 text-[12px] whitespace-nowrap disabled:pointer-events-none disabled:opacity-40;
+  }
+  /* Şerit sığmayınca Outlook gibi kademeli sıkışır: önce küçük düğmelerin adları gizlenir,
+     büyük düğmelerin adları daralır; sonra sağdaki gruplar simgeli tek düğmeye katlanır */
+  .ribbon-panel[data-density="compact"] .ribbon-btn-sm .rb-label {
+    display: none !important;
+  }
+  .ribbon-panel[data-density="compact"] .ribbon-btn .rb-label {
+    max-width: 4.25rem !important;
+  }
+  .rb-folded-icon svg {
+    width: 32px !important;
+    height: 32px !important;
+  }
+}
+
+/* (katman dışında: düğmelerdeki Tailwind sınıflarını ezer) */
+  /* Basitleştirilmiş şerit: tek satır, simge ve ad yan yana, grup adları yok */
+  .ribbon-panel[data-density="simple"] {
+    align-items: center;
+  }
+  .ribbon-panel[data-density="simple"] [data-rb-group] {
+    flex-direction: row;
+    align-items: center;
+    padding: 0 4px;
+  }
+  .ribbon-panel[data-density="simple"] .rb-group-body {
+    align-items: center;
+  }
+  .ribbon-panel[data-density="simple"] .rb-group-label {
+    display: none;
+  }
+  .ribbon-panel[data-density="simple"] .rb-stack {
+    flex-direction: row;
+    align-items: center;
+    padding-top: 0;
+  }
+  .ribbon-panel[data-density="simple"] .ribbon-btn,
+  .ribbon-panel[data-density="simple"] .ribbon-btn-sm {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    height: 30px;
+    min-width: 0;
+    padding: 0 5px;
+    gap: 5px;
+    font-size: 13px;
+  }
+  .ribbon-panel[data-density="simple"] .ribbon-btn > svg:first-child,
+  .ribbon-panel[data-density="simple"] .ribbon-btn-sm > svg:first-child {
+    width: 18px !important;
+    height: 18px !important;
+  }
+  /* Basitleştirilmişte büyük düğmenin adı tek satır (iki satıra bölünmeden) */
+  .ribbon-panel[data-density="simple"] .ribbon-btn .rb-label {
+    display: none;
+  }
+  .ribbon-panel[data-density="simple"] .ribbon-btn .rb-label-full {
+    display: flex;
+  }
+  .ribbon-panel[data-density="simple"] .qs-gallery {
+    height: 30px;
+    margin-top: 0;
+    border: 0;
+    background: transparent;
+  }
+  .ribbon-panel[data-density="simple"] .qs-grid {
+    width: auto;
+    grid-template-rows: 1fr;
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    padding: 0;
+  }
+  .ribbon-panel[data-density="simple"] .qs-grid > :nth-child(n + 4),
+  .ribbon-panel[data-density="simple"] .qs-pager {
+    display: none;
+  }
+  .ribbon-panel[data-density="simple"] .qs-more {
+    border-top: 0;
+    padding: 0 4px;
+  }
+  .ribbon-panel[data-density="simple"] .qs-side {
+    border: 0;
+    width: auto;
+  }
+  /* "…" listesi: gruplar alt alta, düğmeler satır satır */
+  .ribbon-panel.ribbon-overflow[data-density] {
+    align-items: stretch;
+  }
+  .ribbon-panel.ribbon-overflow[data-density] [data-rb-group] {
+    flex-direction: column;
+    align-items: stretch;
+    border-right: 0;
+    padding: 2px 0;
+  }
+  .ribbon-panel.ribbon-overflow[data-density] [data-rb-group] + [data-rb-group] {
+    border-top: 1px solid var(--border);
+  }
+  .ribbon-panel.ribbon-overflow[data-density] .rb-group-body,
+  .ribbon-panel.ribbon-overflow[data-density] .rb-stack {
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: nowrap;
+  }
+  .ribbon-panel.ribbon-overflow[data-density] .rb-group-body > *,
+  .ribbon-panel.ribbon-overflow[data-density] .rb-stack > * {
+    justify-content: flex-start;
+  }
+  .ribbon-panel.ribbon-overflow[data-density] .ribbon-btn,
+  .ribbon-panel.ribbon-overflow[data-density] .ribbon-btn-sm {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .ribbon-panel.ribbon-overflow[data-density] .qs-gallery {
+    height: auto;
+  }
+  .ribbon-panel.ribbon-overflow[data-density] .qs-grid {
+    display: flex;
+    flex-direction: column;
+  }
+  .ribbon-panel.ribbon-overflow[data-density] .qs-grid > :nth-child(n + 4) {
+    display: flex;
+  }
+  .ribbon-panel.ribbon-overflow[data-density] .qs-side {
+    display: none;
+  }
+
+@layer components {
+  .ribbon-panel {
+    scrollbar-width: none;
+  }
+  .ribbon-panel::-webkit-scrollbar {
+    display: none;
+  }
+  /* Eski tek satırlık şerit grupları (takvim, kişiler...) */
+  .ribbon-group {
+    @apply border-border flex items-start gap-0.5 border-r pr-1 mr-1;
+  }
+  .folder-item {
+    @apply hover:bg-accent flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[13px];
+  }
+  .folder-item[data-selected="true"] {
+    @apply bg-primary/12 text-foreground font-semibold;
+  }
+  .drop-target {
+    @apply ring-primary ring-2;
+  }
+}
+
+/* Açık bir menü, panel, açılır liste ya da kişi kartı varken ileti gövdesi çerçevesi tıklama
+   almaz: tıklama alttaki bölmeye düşer ve açık olan kapanır. (WebKit, betiksiz çerçevedeki
+   tıklamaları ana sayfaya bildirmediğinden aksi halde menüler açık kalıyordu.) */
+/* (Belirteç +layout'ta tutulur; "body:has(...)" her tuş vuruşunda tüm belgenin stilini
+   yeniden denetlettiği için yazarken gecikme yapıyordu) */
+html[data-layer-open] iframe {
+  pointer-events: none;
+}
+
+/* Tüm metin giriş alanları ve açılır kutular 4px köşeli */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not(.compose-field),
+select,
+textarea,
+[data-slot="input"],
+[data-slot="textarea"],
+[data-slot="select-trigger"],
+[data-slot="input-group"] {
+  border-radius: 4px !important;
+}
+
+/* Onay/uyarı pencereleri (Outlook gibi) kapanırken animasyon beklemeden anında kaybolur */
+[data-slot="alert-dialog-overlay"][data-state="closed"],
+[data-slot="alert-dialog-overlay"][data-closed]:not([data-closed="false"]),
+[data-confirm-dialog][data-state="closed"],
+[data-confirm-dialog][data-closed]:not([data-closed="false"]) {
+  display: none !important;
+}

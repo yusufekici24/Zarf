@@ -1,0 +1,15 @@
+[Desktop Entry]
+Categories=Office;Email;Calendar;ContactManagement;
+Comment=E-posta, takvim, kişiler, görevler ve notlar
+Comment[tr]=E-posta, takvim, kişiler, görevler ve notlar
+Comment[en]=Email, calendar, contacts, tasks and notes
+Exec={{exec}} %U
+StartupWMClass={{exec}}
+Icon={{icon}}
+Name={{name}}
+GenericName=Kişisel Bilgi Yöneticisi
+GenericName[en]=Personal Information Manager
+Keywords=mail;email;e-posta;calendar;takvim;contacts;kişiler;msg;
+MimeType=x-scheme-handler/mailto;application/vnd.ms-outlook;message/rfc822;text/calendar;text/vcard;text/x-vcard;application/mbox;
+Terminal=false
+Type=Application

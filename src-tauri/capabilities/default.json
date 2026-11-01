@@ -1,0 +1,39 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Ana pencere ve ileti pencereleri izinleri",
+  "windows": [
+    "main",
+    "w-*",
+    "alerts",
+    "reminders"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-is-focused",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-is-maximized",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-focus",
+    "core:event:allow-emit",
+    "core:event:allow-emit-to",
+    "core:window:allow-is-minimized",
+    "core:window:allow-is-visible",
+    "core:window:allow-center",
+    "core:window:allow-set-size",
+    "core:window:allow-unminimize",
+    "core:window:allow-destroy",
+    "core:window:allow-set-title",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:webview:default",
+    "core:webview:allow-set-webview-zoom",
+    "dialog:default"
+  ]
+}

@@ -1,0 +1,136 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MailNix",
+  "version": "1.0.54",
+  "identifier": "app.mailnix.MailNix",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "MailNix",
+        "width": 1360,
+        "height": 860,
+        "minWidth": 900,
+        "minHeight": 560,
+        "center": true,
+        "dragDropEnabled": true,
+        "decorations": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self'; img-src 'self' data: blob: https: http:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src 'self' about: data: blob:; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "deb",
+      "appimage",
+      "rpm"
+    ],
+    "category": "Productivity",
+    "shortDescription": "Pardus için e-posta, takvim ve Exchange istemcisi",
+    "longDescription": "MailNix; Microsoft Exchange (EWS), IMAP/SMTP, takvim, kişiler, görevler ve notları tek uygulamada toplayan kişisel bilgi yöneticisidir. .msg ileti dosyalarını açar ve kaydeder, Kerberos ile parolasız kurumsal oturum açmayı destekler.",
+    "publisher": "MailNix",
+    "copyright": "GPL-3.0-or-later",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "msg"
+        ],
+        "mimeType": "application/vnd.ms-outlook",
+        "description": "İleti dosyası (.msg)",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "eml"
+        ],
+        "mimeType": "message/rfc822",
+        "description": "E-posta iletisi",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "ics"
+        ],
+        "mimeType": "text/calendar",
+        "description": "iCalendar",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "vcf"
+        ],
+        "mimeType": "text/vcard",
+        "description": "vCard",
+        "role": "Editor"
+      }
+    ],
+    "linux": {
+      "deb": {
+        "depends": [],
+        "section": "mail",
+        "desktopTemplate": "../packaging/mailnix.desktop",
+        "recommends": [
+          "libgssapi-krb5-2",
+          "fonts-crosextra-carlito",
+          "fonts-crosextra-caladea",
+          "fonts-liberation2",
+          "fonts-noto-core"
+        ],
+        "conflicts": [
+          "lynora"
+        ],
+        "replaces": [
+          "lynora"
+        ],
+        "provides": [
+          "lynora"
+        ],
+        "files": {
+          "/usr/share/mime/packages/mailnix.xml": "../packaging/mailnix-mime.xml"
+        },
+        "postInstallScript": "../packaging/postinst.sh"
+      },
+      "rpm": {
+        "desktopTemplate": "../packaging/mailnix.desktop",
+        "recommends": [
+          "krb5-libs",
+          "google-carlito-fonts",
+          "google-caladea-fonts",
+          "liberation-fonts"
+        ],
+        "conflicts": [
+          "lynora"
+        ],
+        "obsoletes": [
+          "lynora"
+        ],
+        "provides": [
+          "lynora"
+        ],
+        "files": {
+          "/usr/share/mime/packages/mailnix.xml": "../packaging/mailnix-mime.xml"
+        },
+        "postInstallScript": "../packaging/postinst.sh"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
+  }
+}
