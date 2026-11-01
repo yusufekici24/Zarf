@@ -21,6 +21,7 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 - Sık Kullanılanlar, klasör ağacı, arama klasörleri; konuşma görünümü; kurallar; kategoriler; bayrak ve takip.
 - **Anlık posta:** Exchange akış aboneliği ve IMAP IDLE ile yeni ileti sunucuya düştüğü anda gelir.
 - **Kurallar:** Exchange kuralları sunucuda çalışır. IMAP için yerel kurallar: çoklu koşul, ve/veya, düzenli ifade, özel durumlar.
+- **Kuralları Şimdi Uygula:** Yerel kurallar seçilen klasördeki mevcut iletilere uygulanır. Alt klasörler ve okunmuş/okunmamış seçilebilir. **Önizle** hiçbir şeyi değiştirmeden hangi iletiye ne yapılacağını gösterir; çalıştırma ilerleme çubuğuyla sürer ve iptal edilebilir.
 - **Şablonlar ve düzenleyici:** İleti şablonları, bul/değiştir, HTML kaynağı, emoji, yazım denetimi (`hunspell-tr`).
 - **Çökme kurtarma:** Yazılan ileti yerelde saklanır, uygulama çökerse açılışta geri yükleme önerilir.
 - **Güvenilir göndericiler:** Adres ya da alan adı; bu kaynaklardan gelen resimler sorulmadan iner.
@@ -32,12 +33,19 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 - Arama işleçleri: `kimden:ali konu:"aylık rapor" has:attachment is:unread after:2026-01-01`.
   İngilizce karşılıkları da çalışır: `from:`, `to:`, `subject:`, `body:`, `category:`, `before:`, `on:`.
 
+**Güvenlik**
+- **S/MIME ve OpenPGP:** İmzalı ve şifreli iletiler okunur: imza doğrulanır, şifreli ileti çözülür. Okuma bölmesindeki çubuk imzanın geçerli, güvenilmeyen ya da geçersiz olduğunu ve imzalayanı gösterir.
+- Yazarken **Seçenekler** sekmesinde *İmzala*, *Şifrele* ve yöntem seçimi. Şifreli iletiye yanıt otomatik şifrelenir, Gönderilmiş kopyasını siz de okuyabilirsiniz.
+- **Ayarlar → Güven Merkezi:** Kişisel S/MIME sertifikası (.p12/.pfx) içe aktarma, OpenPGP anahtarı seçimi, varsayılan imzalama. Alıcı sertifikaları imzalı iletilerden otomatik toplanır, elle de eklenebilir.
+- Çözülen içerik diske ve veritabanına yazılmaz. Özel anahtar şifreli saklanır, parolası anahtarlıktadır. `openssl` ve `gnupg` paketleri gerekir (paket önerir).
+
 **Dosyalar**
 - `.msg`, `.eml`, `.mbox`, `.ics`, `.vcf` açma ve içe aktarma; iletiyi `.msg`/`.eml` olarak kaydetme.
 - `.pst` içe aktarma (`pst-utils` paketi gerekir).
 
 **Diğer**
 - Takvim (Exchange takvimi ile eşitleme, yinelenen etkinlikler, hatırlatıcılar), kişiler ve gruplar, görevler, notlar. Görev, not ve kişi grupları Exchange ile çift yönlü eşitlenir.
+- **CalDAV ve CardDAV:** IMAP hesaplarında takvim ve kişiler Nextcloud, Radicale gibi sunucularla çift yönlü eşitlenir. Hesabın gelişmiş ayarlarına sunucu adresi yazılır, takvimler ve adres defterleri kendiliğinden bulunur. Yerelde değişen özellikler dışında sunucudaki nesne korunur.
 - **Yedekle / geri yükle:** Tüm veriler tek dosyada, isteğe bağlı parolayla AES-256-GCM şifreli (Dosya > Aç ve Dışarı Aktar).
 - Türkçe ve İngilizce arayüz. Yeni dil eklemek kolaydır (aşağıya bakın).
 
@@ -95,7 +103,7 @@ Testler:
 
 ```sh
 cd src-tauri && cargo test             # birim testleri
-# Gerçek sunuculara karşı uçtan uca testler (isteğe bağlı): tests/e2e_mail.rs içindeki açıklamalara bakın
+# Gerçek sunuculara karşı uçtan uca testler (isteğe bağlı): tests/e2e_mail.rs ve tests/e2e_dav.rs içindeki açıklamalara bakın
 ```
 
 ## Lisans
