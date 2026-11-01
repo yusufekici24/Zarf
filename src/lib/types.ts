@@ -122,6 +122,32 @@ export interface MessageView extends MessageRow {
   has_vcard: boolean;
   folder_role: string;
   external: boolean;
+  /** Güvenlik biçimi; boşsa imzasız ve şifresiz */
+  security: string;
+}
+
+export interface SecurityView {
+  method: string;
+  signed: boolean;
+  encrypted: boolean;
+  /** "good" | "untrusted" | "bad" | "no_key" | "error" | "" */
+  signature: string;
+  signer: string;
+  error: string;
+  /** Çözülen ileti (yalnızca bellekte) */
+  content: MessageView | null;
+}
+
+export interface CertInfo {
+  subject: string;
+  emails: string[];
+  expires: string;
+}
+
+export interface SecurityStatus {
+  gpg: boolean;
+  openssl: boolean;
+  keys: { fingerprint: string; uid: string }[];
 }
 
 export interface OutAttachment {
@@ -147,6 +173,8 @@ export interface ComposeData {
   importance: number;
   /** Taslakta seçili "Kimden" adresi (takma ad) */
   from_addr?: string;
+  /** Kaynak iletinin güvenlik biçimi */
+  security?: string;
   /** Yanıtlanan iletinin alıcıları: hangi takma ada geldiği buradan anlaşılır */
   recipients?: string;
 }

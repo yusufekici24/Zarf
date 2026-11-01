@@ -10,10 +10,10 @@
   import { app } from "$lib/stores/app.svelte";
   import { untrack } from "svelte";
   import { mail } from "$lib/stores/mail.svelte";
-  import { api } from "$lib/api";
+  import { api, errorText } from "$lib/api";
   import { t } from "$lib/i18n.svelte";
   import { avatarColor, displayName, fmtDateTime, fmtListDate, fmtSize, initials, splitNameAddr } from "$lib/format";
-  import type { MessageView } from "$lib/types";
+  import type { MessageView, SecurityView } from "$lib/types";
   import Reply from "@lucide/svelte/icons/reply";
   import ReplyAll from "@lucide/svelte/icons/reply-all";
   import Forward from "@lucide/svelte/icons/forward";
@@ -34,6 +34,10 @@
   import Download from "@lucide/svelte/icons/download";
   import ZoomIn from "@lucide/svelte/icons/zoom-in";
   import ZoomOut from "@lucide/svelte/icons/zoom-out";
+  import Lock from "@lucide/svelte/icons/lock";
+  import ShieldAlert from "@lucide/svelte/icons/shield-alert";
+  import ShieldCheck from "@lucide/svelte/icons/shield-check";
+  import { securityFailed, securityText, securityTrusted } from "$lib/security";
   import { open as openDialog, save as saveDialog } from "$lib/dialog";
   import { toast } from "svelte-sonner";
   import { people } from "$lib/stores/people.svelte";
@@ -93,6 +97,26 @@
       if (isTrustedSender(addr)) trusted = true;
       else if (addr) api.contactByEmail(addr).then((c) => { if (c && message?.id === m.id) trusted = true; });
     }
+  });
+
+  // İmza doğrulama ve şifre çözme iletinin açılmasını bekletmez
+  let sec = $state<SecurityView | null>(null);
+  let secBusy = $state(false);
+  $effect(() => {
+    const id = message?.id;
+    const kind = message?.security;
+    sec = null;
+    secBusy = !!kind;
+    if (!kind || id === undefined) return;
+    const shown = (s: SecurityView) => {
+      if (message?.id !== id) return;
+      sec = s;
+      secBusy = false;
+    };
+    api
+      .messageSecurity(id)
+      .then(shown)
+      .catch((e) => shown({ method: kind.startsWith("pgp") ? "pgp" : "smime", signed: kind.includes("signed"), encrypted: kind.includes("encrypted"), signature: "error", signer: "", error: errorText(e), content: null }));
   });
 
   function trustSender() {
@@ -161,7 +185,8 @@
     {mail.selected.length > 1 ? t("mail.n_selected", mail.selected.length) : t("mail.select_to_read")}
   </div>
 {:else}
-  {@const m = message}
+  {@const plain = sec?.content}
+  {@const m = plain ? { ...message, html: plain.html, text: plain.text, attachments: plain.attachments, has_remote: plain.has_remote, has_calendar: plain.has_calendar, has_vcard: plain.has_vcard } : message}
   {@const sender = splitNameAddr(m.sender)}
   {@const senderName = (sender.name && !sender.name.includes("@") ? sender.name : "") || (sender.addr && people.name(sender.addr)) || sender.addr || m.sender}
   {@const cats = m.categories ? m.categories.split(",").filter(Boolean) : []}
@@ -234,6 +259,17 @@
           <span class="flex-1">{t("mail.remote_blocked")}</span>
           <Button size="sm" variant="outline" class="h-6 text-xs" onclick={() => (allowRemote = true)}>{t("mail.load_images")}</Button>
           <Button size="sm" variant="outline" class="h-6 text-xs" onclick={trustSender}>{t("mail.trust_sender")}</Button>
+        </div>
+      {/if}
+      {#if secBusy}
+        <div class="bg-muted flex items-center gap-2 rounded-md px-3 py-1.5 text-xs">
+          <ShieldCheck class="size-4 shrink-0" />
+          <span class="flex-1">{t("sec.checking")}</span>
+        </div>
+      {:else if sec}
+        <div class="flex items-center gap-2 rounded-md px-3 py-1.5 text-xs {securityFailed(sec) ? 'bg-red-50 text-red-900 dark:bg-red-950 dark:text-red-100' : securityTrusted(sec) ? 'bg-blue-50 text-blue-900 dark:bg-blue-950 dark:text-blue-100' : 'bg-amber-50 text-amber-900 dark:bg-amber-950 dark:text-amber-100'}">
+          {#if securityFailed(sec)}<ShieldAlert class="size-4 shrink-0" />{:else if sec.encrypted}<Lock class="size-4 shrink-0" />{:else}<ShieldCheck class="size-4 shrink-0" />{/if}
+          <span class="selectable flex-1">{securityText(sec)}</span>
         </div>
       {/if}
       {#if m.has_calendar}

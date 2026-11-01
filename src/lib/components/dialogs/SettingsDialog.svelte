@@ -6,6 +6,7 @@
   import { ALERT_ACTIONS, ALERT_BUTTON_DEFAULTS } from "$lib/alerts";
   // Ayarlar: genel, posta, takvim, hesaplar, imzalar, otomatik yanıtlar, kurallar, kategoriler, hakkında.
   import * as Dialog from "$lib/components/ui/dialog";
+  import SecuritySettings from "./SecuritySettings.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import { Label } from "$lib/components/ui/label";
@@ -434,6 +435,8 @@
         {@render check("load_remote", t("settings.load_remote"))}
         {@render section(t("settings.sec_email_security"))}
         {@render check("plain_text_only", t("settings.plain_text_only"))}
+        {@render section(t("settings.sec_encryption"))}
+        <SecuritySettings {get} {set} />
         {@render section(t("settings.sec_trusted_senders"))}
         <div class="max-w-md space-y-1.5 py-1 pl-4 text-[13px]">
           <p class="text-muted-foreground text-xs">{t("settings.trusted_help")}</p>

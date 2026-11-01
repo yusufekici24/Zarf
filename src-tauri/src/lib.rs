@@ -2,6 +2,7 @@
 
 pub mod backup;
 pub mod commands;
+pub mod crypto;
 pub mod dav_sync;
 pub mod db;
 pub mod desktop;
@@ -265,6 +266,7 @@ pub fn run() {
                 external: Mutex::new(Default::default()),
                 next_external: AtomicI64::new(1),
                 rule_cancel: AtomicBool::new(false),
+                decrypted: Mutex::new(Default::default()),
             });
 
             // Ana pencere son kapandığı yerde ve boyutta açılır (gizliyken yerleştirilir)
@@ -499,6 +501,12 @@ pub fn run() {
             commands::list_rules,
             commands::save_rule,
             commands::delete_rule,
+            commands::message_security,
+            commands::security_status,
+            commands::smime_identity,
+            commands::smime_import,
+            commands::smime_remove,
+            commands::import_public_key,
             commands::preview_rules,
             commands::run_rules,
             commands::cancel_rule_run,

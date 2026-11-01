@@ -41,6 +41,10 @@ pub struct ComposedMail {
     pub from_name: String,
     /// Takma adın yanıt adresi (Reply-To)
     pub reply_to: String,
+    pub sign: bool,
+    pub encrypt: bool,
+    /// "smime" | "pgp"
+    pub security: String,
 }
 
 fn to_address(list: &str) -> Option<Address<'static>> {

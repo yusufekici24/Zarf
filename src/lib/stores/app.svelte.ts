@@ -32,6 +32,8 @@ interface PromptReq {
   title: string;
   label?: string;
   value: string;
+  /** Parola: yazılanlar görünmez */
+  secret?: boolean;
   resolve: (v: string | null) => void;
 }
 
@@ -203,9 +205,9 @@ class AppState {
     });
   }
 
-  prompt(title: string, label = "", value = ""): Promise<string | null> {
+  prompt(title: string, label = "", value = "", secret = false): Promise<string | null> {
     return new Promise((resolve) => {
-      this.promptReq = { title, label, value, resolve };
+      this.promptReq = { title, label, value, secret, resolve };
     });
   }
 

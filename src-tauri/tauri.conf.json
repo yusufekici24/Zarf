@@ -85,6 +85,8 @@
         "desktopTemplate": "../packaging/lynora.desktop",
         "recommends": [
           "libgssapi-krb5-2",
+          "gnupg",
+          "openssl",
           "hunspell-tr",
           "hunspell-en-us",
           "fonts-crosextra-carlito",

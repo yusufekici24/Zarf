@@ -120,7 +120,7 @@
     <form class="grid gap-2 px-5 pt-4 pb-5" onsubmit={(e) => { e.preventDefault(); closePrompt(promptValue); }}>
       {#if app.promptReq?.label}<Label for="prompt-input" class="text-[13px] font-normal">{app.promptReq.label}</Label>{/if}
       <!-- svelte-ignore a11y_autofocus -->
-      <Input id="prompt-input" class="h-8 rounded-[3px]" bind:value={promptValue} autofocus />
+      <Input id="prompt-input" type={app.promptReq?.secret ? "password" : "text"} class="h-8 rounded-[3px]" bind:value={promptValue} autofocus />
       <button type="submit" class="hidden">ok</button>
     </form>
     <div class="bg-chrome flex justify-end gap-2 border-t px-4 py-3">

@@ -1,8 +1,8 @@
 // Rust komutlarına ince, tipli sarmalayıcılar.
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  Account, CalEvent, Calendar, Category, ComposeData, Contact, ContactGroup, Discovery, Folder, FolderGroup,
-  MessageRow, MessageView, Note, Occurrence, Reminder, Rule, RuleReport, RuleRun, Task, RuleSpec, ListOrder,
+  Account, CalEvent, Calendar, Category, CertInfo, ComposeData, Contact, ContactGroup, Discovery, Folder, FolderGroup,
+  MessageRow, MessageView, Note, Occurrence, Reminder, Rule, RuleReport, RuleRun, SecurityStatus, SecurityView, Task, RuleSpec, ListOrder,
 } from "./types";
 
 export type BackupInfo = { app_version: string; created: string; accounts: string[]; counts: Record<string, number> };
@@ -202,6 +202,12 @@ export const api = {
   serverRuleSpec: (id: number) => invoke<RuleSpec>("server_rule_spec", { id }),
   saveServerRule: (id: number, accountId: number, name: string, enabled: boolean, spec: RuleSpec, force = false) =>
     invoke<void>("save_server_rule", { id, accountId, name, enabled, spec, force }),
+  messageSecurity: (id: number) => invoke<SecurityView>("message_security", { id }),
+  securityStatus: () => invoke<SecurityStatus>("security_status"),
+  smimeIdentity: (accountId: number) => invoke<CertInfo | null>("smime_identity", { accountId }),
+  smimeImport: (accountId: number, path: string, password: string) => invoke<CertInfo>("smime_import", { accountId, path, password }),
+  smimeRemove: (accountId: number) => invoke<void>("smime_remove", { accountId }),
+  importPublicKey: (path: string) => invoke<string[]>("import_public_key", { path }),
   previewRules: (run: RuleRun) => invoke<RuleReport>("preview_rules", { run }),
   runRules: (run: RuleRun) => invoke<RuleReport>("run_rules", { run }),
   cancelRuleRun: () => invoke<void>("cancel_rule_run"),

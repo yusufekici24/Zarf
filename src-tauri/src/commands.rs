@@ -4,7 +4,7 @@ use crate::db::*;
 use crate::mail::build::{build_raw, guess_mime, ComposedMail};
 use crate::mail::{self, parse};
 use crate::sync::MailService;
-use crate::{ical, msgfile, recurrence, t, util};
+use crate::{crypto, ical, msgfile, recurrence, t, util};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -21,6 +21,8 @@ pub struct AppState {
     pub next_external: AtomicI64,
     /// "Kuralları Şimdi Çalıştır" iptal isteği
     pub rule_cancel: AtomicBool,
+    /// Çözülmüş iletiler: ileti kimliği → ham veri. Yalnızca bellekte tutulur, diske yazılmaz.
+    pub decrypted: Mutex<HashMap<i64, Vec<u8>>>,
 }
 
 impl AppState {
@@ -39,6 +41,12 @@ impl AppState {
         }
         let db = self.db.clone();
         tauri::async_runtime::spawn_blocking(move || crate::ews_sync::ensure_content(&db, id)).await.ok().flatten()
+    }
+
+    /// Ekler ve alıntı için iletinin okunabilir içeriği: şifreli iletide çözülmüş hali
+    fn content_of(&self, id: i64) -> Option<Vec<u8>> {
+        let plain = self.decrypted.lock().unwrap().get(&id).cloned();
+        plain.or_else(|| self.raw_of(id))
     }
 
     fn add_external(&self, raw: Vec<u8>) -> i64 {
@@ -420,6 +428,8 @@ pub struct MessageView {
     has_vcard: bool,
     folder_role: String,
     external: bool,
+    /// Güvenlik biçimi (crypto::detect); boşsa imzasız ve şifresiz
+    security: String,
 }
 
 fn view_from_raw(id: i64, raw: &[u8], base: Option<Message>) -> MessageView {
@@ -428,7 +438,9 @@ fn view_from_raw(id: i64, raw: &[u8], base: Option<Message>) -> MessageView {
     static REMOTE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r#"(?i)(src|background)\s*=\s*["']?\s*(https?:)?//"#).unwrap());
     let has_remote = REMOTE.is_match(&html)
         || html.to_lowercase().contains("url(http");
-    let atts: Vec<parse::Attachment> = p.real_attachments().into_iter().cloned().collect();
+    // İmza dosyaları ek değildir: sonucu okuma bölmesindeki çubuk gösterir
+    let is_signature = |a: &parse::Attachment| a.mime.ends_with("pkcs7-signature") || a.mime == "application/pgp-signature";
+    let atts: Vec<parse::Attachment> = p.real_attachments().into_iter().filter(|a| !is_signature(a)).cloned().collect();
     let has_calendar = atts.iter().any(|a| a.mime == "text/calendar" || a.name.to_lowercase().ends_with(".ics"));
     let has_vcard = atts.iter().any(|a| a.mime.contains("vcard") || a.name.to_lowercase().ends_with(".vcf"));
     let message = base.unwrap_or_else(|| {
@@ -448,6 +460,7 @@ fn view_from_raw(id: i64, raw: &[u8], base: Option<Message>) -> MessageView {
         has_vcard,
         folder_role: String::new(),
         external: id < 0,
+        security: crypto::detect(raw).to_string(),
         message,
     }
 }
@@ -482,6 +495,7 @@ pub async fn get_message(state: State<'_, AppState>, id: i64) -> R<MessageView> 
                     has_vcard: false,
                     folder_role: String::new(),
                     external: false,
+                    security: String::new(),
                     message: m,
                 }
             } else {
@@ -493,6 +507,73 @@ pub async fn get_message(state: State<'_, AppState>, id: i64) -> R<MessageView> 
     })
     .await
     .map_err(err)?
+}
+
+#[derive(Serialize)]
+pub struct SecurityView {
+    #[serde(flatten)]
+    result: crypto::SecurityResult,
+    /// Çözülen ileti: okuma bölmesi gövde ve ekleri bununla değiştirir
+    content: Option<MessageView>,
+}
+
+/// İmzayı doğrular ya da iletiyi çözer. Parola sorusu kullanıcıyı bekleyebilir, bu yüzden
+/// iletinin açılmasını geciktirmez: okuma bölmesi sonucu ayrıca ister.
+#[tauri::command]
+pub async fn message_security(state: State<'_, AppState>, id: i64) -> R<SecurityView> {
+    let raw = state.raw_of_async(id).await.ok_or_else(|| t!("error.not_found"))?;
+    let row = state.db.message_row(id);
+    let account = row.as_ref().and_then(|m| m.account_id);
+    let base = state.db.message(id);
+    let (result, plain, content) = tauri::async_runtime::spawn_blocking(move || {
+        guarded(move || {
+            let result = crypto::process(&crypto::Smime::system(), &raw, account);
+            let plain = result.decrypted.as_ref().map(|d| crypto::rebuild(&raw, d));
+            let content = plain.as_ref().map(|p| view_from_raw(id, p, base));
+            Ok((result, plain, content))
+        })
+    })
+    .await
+    .map_err(err)??;
+    if let Some(p) = plain {
+        let mut map = state.decrypted.lock().unwrap();
+        // Açık kalan çözülmüş ileti sayısı sınırlı: bellekte birikmesin
+        if map.len() >= 64 {
+            map.clear();
+        }
+        map.insert(id, p);
+    }
+    Ok(SecurityView { result, content })
+}
+
+#[tauri::command(async)]
+pub fn security_status() -> Value {
+    json!({ "gpg": crypto::gpg_available(), "openssl": crypto::openssl_available(), "keys": crypto::list_secret_keys() })
+}
+
+#[tauri::command(async)]
+pub fn smime_identity(account_id: i64) -> Option<crypto::CertInfo> {
+    crypto::Smime::system().identity(account_id)
+}
+
+#[tauri::command(async)]
+pub fn smime_import(account_id: i64, path: String, password: String) -> R<crypto::CertInfo> {
+    crypto::Smime::system().import_pkcs12(account_id, &path, &password)
+}
+
+#[tauri::command(async)]
+pub fn smime_remove(account_id: i64) {
+    crypto::Smime::system().remove_identity(account_id);
+}
+
+/// Alıcı sertifikası ya da OpenPGP ortak anahtarı. Döner: sertifikadaki adresler (OpenPGP'de boş).
+#[tauri::command(async)]
+pub fn import_public_key(path: String) -> R<Vec<String>> {
+    let ext = Path::new(&path).extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    if matches!(ext.as_str(), "asc" | "gpg" | "pgp" | "key") {
+        return crypto::import_pgp_key(&path).map(|()| Vec::new());
+    }
+    crypto::Smime::system().import_certificate(&path)
 }
 
 #[tauri::command(async)]
@@ -609,7 +690,7 @@ pub fn block_sender(state: State<AppState>, ids: Vec<i64>) -> R<String> {
 }
 
 fn attachment(state: &AppState, msg_id: i64, index: usize) -> R<parse::Attachment> {
-    let raw = state.raw_of(msg_id).ok_or_else(|| t!("error.not_found"))?;
+    let raw = state.content_of(msg_id).ok_or_else(|| t!("error.not_found"))?;
     parse::parse(&raw).attachments.into_iter().find(|a| a.index == index).ok_or_else(|| t!("error.not_found"))
 }
 
@@ -623,7 +704,7 @@ pub async fn save_attachment(state: State<'_, AppState>, msg_id: i64, index: usi
 
 #[tauri::command(async)]
 pub fn save_all_attachments(state: State<AppState>, msg_id: i64, dir: String) -> R<usize> {
-    let raw = state.raw_of(msg_id).ok_or_else(|| t!("error.not_found"))?;
+    let raw = state.content_of(msg_id).ok_or_else(|| t!("error.not_found"))?;
     let p = parse::parse(&raw);
     let atts = p.real_attachments();
     for a in &atts {
@@ -776,6 +857,8 @@ pub struct ComposeData {
     from_addr: String,
     /// Yanıtlanan iletinin alıcıları: hangi takma ada geldiği buradan anlaşılır
     recipients: String,
+    /// Kaynak iletinin güvenlik biçimi: şifreli iletiye yanıt da şifreli gider
+    security: String,
 }
 
 fn quote_header(p: &parse::ParsedMail) -> String {
@@ -817,12 +900,21 @@ fn body_html_of(p: &parse::ParsedMail) -> String {
 
 #[tauri::command]
 pub async fn compose_prefill(state: State<'_, AppState>, mode: String, source_id: i64) -> R<ComposeData> {
-    let raw = state.raw_of_async(source_id).await;
+    let mut raw = state.raw_of_async(source_id).await;
+    let security = raw.as_deref().map_or("", crypto::detect);
+    // Şifreli iletide alıntı ve ekler çözülmüş içerikten gelir (açılmadan yanıtlansa da)
+    if security.contains("encrypted") || security == "smime-opaque" {
+        let cached = state.decrypted.lock().unwrap().contains_key(&source_id);
+        if !cached {
+            let _ = message_security(state.clone(), source_id).await;
+        }
+        raw = state.decrypted.lock().unwrap().get(&source_id).cloned().or(raw);
+    }
     guarded(move || {
     let raw = raw.ok_or_else(|| t!("error.not_found"))?;
     let p = parse::parse(&raw);
     let row = if source_id > 0 { state.db.message(source_id) } else { None };
-    let mut d = ComposeData { importance: 1, account_id: row.as_ref().and_then(|m| m.account_id), ..Default::default() };
+    let mut d = ComposeData { importance: 1, account_id: row.as_ref().and_then(|m| m.account_id), security: security.to_string(), ..Default::default() };
     match mode.as_str() {
         "draft" | "edit" => {
             d.to = p.to.clone();
@@ -991,7 +1083,12 @@ pub fn send_mail(state: State<AppState>, mut mail: ComposedMail) -> R<i64> {
         return Err(t!("error.no_recipients"));
     }
     let atts = resolve_attachments(&state, &mail)?;
-    let raw = build_raw(Some(&acc), &mail, &atts, true);
+    let mut raw = build_raw(Some(&acc), &mail, &atts, true);
+    if mail.sign || mail.encrypt {
+        let recipients = mail::bare_addresses(&format!("{}, {}, {}", mail.to, mail.cc, mail.bcc));
+        let key = state.db.setting(&format!("security.pgp_key.{account_id}")).unwrap_or_default();
+        raw = crypto::secure_message(&crypto::Smime::system(), &raw, &mail.security, mail.sign, mail.encrypt, &acc, &recipients, &key)?;
+    }
     let id = state.mail.send(account_id, raw, mail.send_at).ok_or("?")?;
     remember_recipients(&state.db, &mail);
     if let Some(d) = mail.draft_id {

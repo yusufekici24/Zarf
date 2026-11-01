@@ -54,6 +54,9 @@
   import Minus from "@lucide/svelte/icons/minus";
   import Users from "@lucide/svelte/icons/users";
   import MailCheck from "@lucide/svelte/icons/mail-check";
+  import Lock from "@lucide/svelte/icons/lock";
+  import Shield from "@lucide/svelte/icons/shield";
+  import ShieldCheck from "@lucide/svelte/icons/shield-check";
   import SpellCheck from "@lucide/svelte/icons/spell-check";
   import TextSelect from "@lucide/svelte/icons/text-select";
   import Search from "@lucide/svelte/icons/search";
@@ -81,7 +84,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { emitTo } from "@tauri-apps/api/event";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
   import { toast } from "svelte-sonner";
 
   let {
@@ -106,6 +109,20 @@
   let attachments = $state<OutAttachment[]>([]);
   let importance = $state(1);
   let readReceipt = $state(false);
+  // İmzala / Şifrele: varsayılanlar hesabın güvenlik ayarlarından gelir
+  let sign = $state(false);
+  let encrypt = $state(false);
+  let secMethod = $state<"smime" | "pgp">("smime");
+  /** Şifreli iletiye yanıt: kaynağın yöntemi korunur */
+  let secForced: "smime" | "pgp" | null = null;
+  $effect(() => {
+    const aid = accountId;
+    untrack(() => {
+      if (!aid) return;
+      secMethod = secForced ?? (app.setting(`security.method.${aid}`, "smime") === "pgp" ? "pgp" : "smime");
+      sign = app.setting(`security.sign.${aid}`, "0") === "1";
+    });
+  });
   let plain = $state(app.setting("compose_format", "html") === "plain");
   let inReplyTo = "";
   let references = "";
@@ -183,7 +200,14 @@
         importance = d.importance || 1;
         if (d.account_id && app.accounts.some((a) => a.id === d.account_id)) accountId = d.account_id;
         identity = identityByEmail(accountId, d.from_addr ?? "") ?? identityForReply(accountId, d.recipients ?? "");
-        if (req.mode !== "draft" && req.mode !== "edit") applySignature(accountId);
+        if (req.mode !== "draft" && req.mode !== "edit") {
+          applySignature(accountId);
+          if (d.security?.includes("encrypted")) {
+            encrypt = true;
+            secForced = d.security.startsWith("pgp") ? "pgp" : "smime";
+            secMethod = secForced;
+          }
+        }
       } else {
         const d = req.data ?? {};
         to = d.to ?? "";
@@ -292,13 +316,14 @@
 
   // Otomatik taslak kaydı
   const hasContent = () => !!(subject.trim() || to.trim() || currentHtml().replace(/<[^>]+>/g, "").trim());
+  // (Şifrele açıkken yapılmaz: yanıttaki çözülmüş alıntı sunucuya düz metin gitmesin)
   const autosave = setInterval(() => {
-    if (dirty && ready && hasContent()) void saveDraft(true);
+    if (dirty && ready && hasContent() && !encrypt) void saveDraft(true);
   }, 60000);
   // Çökme kurtarma: kaydedilmemiş içerik diske yazılır; gönderilince, taslak kaydedilince ya da
   // pencere kapanınca silinir. Uygulama çökerse açılışta geri yükleme önerilir.
   const recovery = setInterval(() => {
-    if (!dirty || !ready || !hasContent()) return;
+    if (!dirty || !ready || !hasContent() || encrypt) return;
     const data = { id: recoveryId, account_id: accountId, from_addr: identity?.email ?? "", to, cc, bcc, subject, html: currentHtml(), in_reply_to: inReplyTo, references, draft_id: draftId, importance, attachments: $state.snapshot(attachments), saved_at: Date.now() / 1000 };
     void api.saveRecovery(recoveryId, JSON.stringify(data)).catch(() => {});
   }, 20000);
@@ -444,6 +469,9 @@
       references,
       importance,
       read_receipt: readReceipt,
+      sign,
+      encrypt,
+      security: secMethod,
       send_at: sendAt,
       draft_id: draftId,
     };
@@ -486,7 +514,8 @@
     if (total > 25 * 1024 * 1024 && !(await app.confirm(t("compose.too_large"), t("compose.too_large_text", Math.round(total / 1048576)), sendOpts))) return;
     try {
       // Outlook'taki "Gönderimi geri al": ileti kısa bir süre giden kutusunda bekletilir
-      const undo = sendAt ? 0 : Number(app.setting("undo_send", "0")) || 0;
+      // (imzalı ya da şifreli ileti düzenlenemez: taslağa dönemeyeceği için bekletilmez)
+      const undo = sendAt || sign || encrypt ? 0 : Number(app.setting("undo_send", "0")) || 0;
       const p = payload();
       if (undo > 0) p.send_at = Math.floor(Date.now() / 1000) + undo + 30;
       const id = await api.sendMail(p);
@@ -891,6 +920,19 @@
           </RibbonGroup>
           <RibbonGroup label={t("ribbon.g_tracking")}>
             <RibbonButton small icon={MailCheck} label={t("compose.read_receipt")} active={readReceipt} onclick={() => (readReceipt = !readReceipt)} />
+          </RibbonGroup>
+          <RibbonGroup label={t("ribbon.g_security")}>
+            <RibbonStack>
+              <RibbonButton small icon={ShieldCheck} label={t("compose.sign")} active={sign} onclick={() => (sign = !sign)} />
+              <RibbonButton small icon={Lock} label={t("compose.encrypt")} active={encrypt} onclick={() => (encrypt = !encrypt)} />
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger>{#snippet child({ props })}<RibbonButton {...props} small icon={Shield} label={secMethod === "pgp" ? "OpenPGP" : "S/MIME"} menu />{/snippet}</DropdownMenu.Trigger>
+                <DropdownMenu.Content>
+                  <DropdownMenu.Item onclick={() => (secMethod = "smime")}>S/MIME</DropdownMenu.Item>
+                  <DropdownMenu.Item onclick={() => (secMethod = "pgp")}>OpenPGP</DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Root>
+            </RibbonStack>
           </RibbonGroup>
           <RibbonGroup label={t("ribbon.g_more_options")} last>
             <RibbonButton icon={Clock} label={t("compose.delay")} active={!!sendAt} onclick={openDelay} />
