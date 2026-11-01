@@ -317,7 +317,7 @@
   if (!windowed || e.defaultPrevented || wizard.open || app.accountDialog.open || app.confirmReq || app.promptReq) return;
   if (e.key === "Escape") cancel();
   // Outlook Seçenekleri: tek satırlı alandayken Enter = Tamam
-  else if (e.key === "Enter" && !e.isComposing && (e.target as HTMLElement)?.tagName === "INPUT" && !["checkbox", "radio"].includes((e.target as HTMLInputElement).type) && !rule) { e.preventDefault(); void commit(); }
+  else if (e.key === "Enter" && !e.isComposing && (e.target as HTMLElement)?.tagName === "INPUT" && !["checkbox", "radio"].includes((e.target as HTMLInputElement).type)) { e.preventDefault(); void commit(); }
 }} />
 {#if windowed}
   <!-- Ayrı pencere: başlık çubuğu sürüklenebilir -->
