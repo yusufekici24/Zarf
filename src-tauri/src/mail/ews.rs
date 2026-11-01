@@ -1597,7 +1597,8 @@ mod tests {
     fn task_xml_roundtrip() {
         let xml = r#"<Task><ItemId Id="abc"/><Subject>Rapor</Subject><Body>Satır 1&#13;
 Satır 2</Body><Categories><String>İş</String></Categories><Importance>High</Importance><ReminderIsSet>false</ReminderIsSet><DueDate>2026-03-15T09:00:00Z</DueDate><PercentComplete>50</PercentComplete><Status>InProgress</Status></Task>"#;
-        let t = task_from_xml(&xml::parse(xml.as_bytes()).unwrap());
+        let doc = xml::parse(xml.as_bytes()).unwrap();
+        let t = task_from_xml(doc.find("Task").unwrap());
         assert_eq!(t.title, "Rapor");
         assert_eq!(t.notes, "Satır 1\nSatır 2");
         assert_eq!((t.priority, t.percent, t.status.as_str()), (2, 50, "in_progress"));
@@ -1627,7 +1628,8 @@ Satır 2</Body><Categories><String>İş</String></Categories><Importance>High</I
         assert!(x.contains("<t:Name>Ali Veli</t:Name><t:EmailAddress>ali@x.com</t:EmailAddress>"));
         assert!(x.contains("<t:Name>veli@y.com</t:Name><t:EmailAddress>veli@y.com</t:EmailAddress>"));
         let xml = r#"<DistributionList><ItemId Id="g1"/><DisplayName>Ekip</DisplayName><Members><Member><Mailbox><Name>Ali Veli</Name><EmailAddress>ali@x.com</EmailAddress></Mailbox></Member><Member><Mailbox><Name>veli@y.com</Name><EmailAddress>veli@y.com</EmailAddress></Mailbox></Member></Members></DistributionList>"#;
-        let g = group_from_xml(&xml::parse(xml.as_bytes()).unwrap());
+        let doc = xml::parse(xml.as_bytes()).unwrap();
+        let g = group_from_xml(doc.find("DistributionList").unwrap());
         assert_eq!(g.name, "Ekip");
         assert_eq!(g.members, "Ali Veli <ali@x.com>, veli@y.com");
     }
@@ -1635,7 +1637,8 @@ Satır 2</Body><Categories><String>İş</String></Categories><Importance>High</I
     #[test]
     fn note_uses_first_line_as_subject() {
         assert_eq!(note_subject("Alışveriş\nsüt\nekmek"), "Alışveriş");
-        let n = note_from_xml(&xml::parse(r#"<Message><ItemId Id="n1"/><Subject>Konu</Subject><Body> </Body></Message>"#.as_bytes()).unwrap());
+        let doc = xml::parse(br#"<Message><ItemId Id="n1"/><Subject>Konu</Subject><Body> </Body></Message>"#).unwrap();
+        let n = note_from_xml(doc.find("Message").unwrap());
         assert_eq!(n.body, "Konu");
     }
 
