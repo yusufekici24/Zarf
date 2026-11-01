@@ -288,7 +288,7 @@
         <RibbonGroup label={t("ribbon.g_actions")}>
           <RibbonButton icon={MailOpen} label={t("folder.mark_all_read")} disabled={!f} onclick={() => f && api.markFolderRead(f.id)} />
           <RibbonButton icon={Eraser} label={t("folder.empty")} disabled={!f} onclick={() => f && window.dispatchEvent(new CustomEvent("lynora:empty-folder", { detail: f.id }))} />
-          <RibbonButton icon={ListFilter} label={t("rules.run_now")} disabled={!f} onclick={async () => f && app.info(t("rules.applied", await api.runRules(f.id)))} />
+          <RibbonButton icon={ListFilter} label={t("rules.run_now")} disabled={!f} onclick={() => f && (app.runRulesFolder = f.id)} />
         </RibbonGroup>
         <RibbonGroup label={t("folder.favorites")} last>
           <RibbonButton icon={Star} label={f?.favorite ? t("folder.remove_favorite") : t("folder.add_favorite")} disabled={!f} onclick={async () => { if (f) { await api.setFolderFavorite(f.id, !f.favorite); await app.loadFolders(); } }} />

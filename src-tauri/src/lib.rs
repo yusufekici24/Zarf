@@ -23,7 +23,7 @@ pub mod secret;
 pub mod splash;
 
 use commands::AppState;
-use std::sync::atomic::AtomicI64;
+use std::sync::atomic::{AtomicBool, AtomicI64};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Emitter, Manager};
@@ -263,6 +263,7 @@ pub fn run() {
                 mail: mail.clone(),
                 external: Mutex::new(Default::default()),
                 next_external: AtomicI64::new(1),
+                rule_cancel: AtomicBool::new(false),
             });
 
             // Ana pencere son kapandığı yerde ve boyutta açılır (gizliyken yerleştirilir)
@@ -497,7 +498,9 @@ pub fn run() {
             commands::list_rules,
             commands::save_rule,
             commands::delete_rule,
+            commands::preview_rules,
             commands::run_rules,
+            commands::cancel_rule_run,
             commands::list_categories,
             commands::save_category,
             commands::delete_category,

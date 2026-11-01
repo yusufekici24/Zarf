@@ -318,6 +318,21 @@ export interface Reminder {
 
 export type ModuleName = "mail" | "calendar" | "contacts" | "tasks" | "notes";
 
+export interface RuleRun {
+  folder_id: number;
+  subfolders: boolean;
+  read: "all" | "read" | "unread";
+  rule_ids: number[];
+}
+
+export interface RuleReport {
+  scanned: number;
+  matched: number;
+  applied: number;
+  cancelled: boolean;
+  hits: { id: number; subject: string; sender: string; date: number; actions: [string, string][] }[];
+}
+
 export interface RulePart {
   kind: string;
   values: string[];

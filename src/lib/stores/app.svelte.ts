@@ -61,6 +61,8 @@ class AppState {
   accountDialog = $state<{ open: boolean; account: Account | null; auto?: boolean }>({ open: false, account: null });
   settingsDialog = $state<{ open: boolean; tab: string }>({ open: false, tab: "general" });
   rulesPrefill = $state<{ from: string } | null>(null);
+  /** "Kuralları Şimdi Çalıştır" penceresinin klasörü */
+  runRulesFolder = $state<number | null>(null);
   confirmReq = $state<ConfirmReq | null>(null);
   promptReq = $state<PromptReq | null>(null);
   /** Diğer modüllerden "yeni öğe" isteği (ör. e-postadan toplantı) */

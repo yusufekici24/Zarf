@@ -5,11 +5,11 @@ use crate::mail::build::{build_raw, guess_mime, ComposedMail};
 use crate::mail::{self, parse};
 use crate::sync::MailService;
 use crate::{ical, msgfile, recurrence, t, util};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Mutex;
 use tauri::State;
 
@@ -19,6 +19,8 @@ pub struct AppState {
     /// Dosyadan açılan (veritabanında olmayan) iletiler: negatif kimlik → ham veri
     pub external: Mutex<HashMap<i64, Vec<u8>>>,
     pub next_external: AtomicI64,
+    /// "Kuralları Şimdi Çalıştır" iptal isteği
+    pub rule_cancel: AtomicBool,
 }
 
 impl AppState {
@@ -2010,54 +2012,170 @@ pub async fn refresh_server_rules(state: State<'_, AppState>) -> R<()> {
     .map_err(err)
 }
 
-/// Kuralları seçili klasördeki mevcut iletilere uygular (yalnızca yerel eylemler).
-#[tauri::command(async)]
-pub fn run_rules(state: State<AppState>, folder_id: i64) -> usize {
-    let rules = state.db.rules(true);
-    let me = state.db.my_addresses();
-    let mut n = 0;
-    for row in state.db.messages(Some(folder_id), "", &MsgFilter::All) {
-        let Some(m) = state.db.message(row.id) else { continue };
-        for (action, arg) in crate::rules::evaluate(&rules, &m, m.account_id, &me) {
-            n += 1;
-            match action.as_str() {
-                "mark_read" => state.mail.set_read(&[m.id], true),
-                "mark_unread" => state.mail.set_read(&[m.id], false),
-                "flag" => state.mail.set_flagged(&[m.id], true),
-                "unflag" => state.mail.set_flagged(&[m.id], false),
-                "important" => state.mail.set_importance(&[m.id], 2),
-                "importance" => state.mail.set_importance(&[m.id], crate::rules::importance_level(&arg)),
-                "permanent_delete" => state.mail.delete(&[m.id], true),
-                "copy" => {
-                    if let (Ok(fid), Some(raw)) = (arg.parse::<i64>(), state.raw_of(m.id)) {
-                        if !raw.is_empty() {
-                            state.mail.import_raw(fid, raw, true);
-                        }
-                    }
-                }
-                "category" => {
-                    let mut c = split_list(&m.categories);
-                    if !c.contains(&arg) {
-                        c.push(arg.clone());
-                    }
-                    state.mail.set_categories(&[m.id], &c);
-                }
-                "move" => {
-                    if let Ok(fid) = arg.parse() {
-                        state.mail.move_messages(&[m.id], fid);
-                    }
-                }
-                "delete" => state.mail.delete(&[m.id], false),
-                "junk" => {
-                    if let Some(f) = state.db.folder_by_role_or_local(m.account_id, "junk") {
-                        state.mail.move_messages(&[m.id], f.id);
-                    }
-                }
-                _ => n -= 1,
-            }
+/// "Kuralları Şimdi Çalıştır" seçenekleri
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub struct RuleRun {
+    folder_id: i64,
+    /// Alt klasörler de taranır
+    subfolders: bool,
+    /// "all" | "read" | "unread"
+    read: String,
+    /// Çalıştırılacak kurallar (boşsa tüm etkin yerel kurallar)
+    rule_ids: Vec<i64>,
+}
+
+#[derive(Serialize)]
+pub struct RuleHit {
+    id: i64,
+    subject: String,
+    sender: String,
+    date: f64,
+    /// (eylem, argüman); klasör kimlikleri adına çevrilmiştir
+    actions: Vec<(String, String)>,
+}
+
+#[derive(Serialize, Default)]
+pub struct RuleReport {
+    scanned: usize,
+    matched: usize,
+    /// Uygulanan eylem sayısı (önizlemede 0)
+    applied: usize,
+    cancelled: bool,
+    /// Eşleşen iletiler (en çok RULE_HITS_MAX)
+    hits: Vec<RuleHit>,
+}
+
+const RULE_HITS_MAX: usize = 500;
+/// "Şimdi çalıştır"ın uyguladığı eylemler: iletme ve bildirim yalnızca yeni gelen iletilerde çalışır
+const RULE_RUN_ACTIONS: &[&str] =
+    &["mark_read", "mark_unread", "flag", "unflag", "important", "importance", "permanent_delete", "copy", "category", "move", "delete", "junk"];
+
+/// Taranacak klasörler: seçilen klasör ve istenirse tüm alt klasörleri
+fn rule_folders(db: &Db, run: &RuleRun) -> Vec<i64> {
+    let mut ids = vec![run.folder_id];
+    if run.subfolders {
+        let all = db.folder(run.folder_id).map(|f| db.folders(f.account_id)).unwrap_or_default();
+        let mut i = 0;
+        while i < ids.len() {
+            let parent = ids[i];
+            let kids: Vec<i64> = all.iter().filter(|f| f.parent_id == Some(parent) && !ids.contains(&f.id)).map(|f| f.id).collect();
+            ids.extend(kids);
+            i += 1;
         }
     }
-    n
+    ids
+}
+
+fn apply_rule_action(state: &AppState, m: &Message, action: &str, arg: &str) {
+    match action {
+        "mark_read" => state.mail.set_read(&[m.id], true),
+        "mark_unread" => state.mail.set_read(&[m.id], false),
+        "flag" => state.mail.set_flagged(&[m.id], true),
+        "unflag" => state.mail.set_flagged(&[m.id], false),
+        "important" => state.mail.set_importance(&[m.id], 2),
+        "importance" => state.mail.set_importance(&[m.id], crate::rules::importance_level(arg)),
+        "permanent_delete" => state.mail.delete(&[m.id], true),
+        "copy" => {
+            if let (Ok(fid), Some(raw)) = (arg.parse::<i64>(), state.raw_of(m.id)) {
+                if !raw.is_empty() {
+                    state.mail.import_raw(fid, raw, true);
+                }
+            }
+        }
+        "category" => {
+            let mut c = split_list(&m.categories);
+            if !c.iter().any(|x| x == arg) {
+                c.push(arg.to_string());
+            }
+            state.mail.set_categories(&[m.id], &c);
+        }
+        "move" => {
+            if let Ok(fid) = arg.parse() {
+                state.mail.move_messages(&[m.id], fid);
+            }
+        }
+        "delete" => state.mail.delete(&[m.id], false),
+        "junk" => {
+            if let Some(f) = state.db.folder_by_role_or_local(m.account_id, "junk") {
+                state.mail.move_messages(&[m.id], f.id);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Önizleme ve çalıştırma aynı taramayı kullanır: önizlemenin gösterdiği, çalıştırmanın yaptığıdır.
+/// `apply` değilse hiçbir şey değiştirilmez. Yalnızca yerel kurallar: Exchange kuralları sunucuda çalışır.
+fn scan_rules(state: &AppState, app: &tauri::AppHandle, run: &RuleRun, apply: bool) -> RuleReport {
+    use tauri::Emitter;
+    state.rule_cancel.store(false, Ordering::SeqCst);
+    let rules: Vec<Rule> = state.db.rules(true).into_iter().filter(|r| r.remote_id.is_none() && (run.rule_ids.is_empty() || run.rule_ids.contains(&r.id))).collect();
+    let me = state.db.my_addresses();
+    let content = crate::rules::needs_content(&rules);
+    let ids: Vec<i64> = rule_folders(&state.db, run).into_iter().flat_map(|f| state.db.message_ids_in_folder(f, run.read == "unread")).collect();
+    let total = ids.len();
+    let mut rep = RuleReport::default();
+    for (i, id) in ids.into_iter().enumerate() {
+        if state.rule_cancel.load(Ordering::SeqCst) {
+            rep.cancelled = true;
+            break;
+        }
+        if i % 20 == 0 {
+            let _ = app.emit("rules://progress", json!({ "done": i, "total": total, "matched": rep.matched }));
+        }
+        // Gövdesi inmemiş Exchange iletisi: gövde koşulu ancak içerik inince değerlendirilebilir
+        if content && state.db.needs_content(id) {
+            let _ = state.raw_of(id);
+        }
+        let Some(m) = state.db.message(id) else { continue };
+        rep.scanned += 1;
+        if run.read == "read" && !m.is_read {
+            continue;
+        }
+        let actions: Vec<(String, String)> =
+            crate::rules::evaluate(&rules, &m, m.account_id, &me).into_iter().filter(|(a, _)| RULE_RUN_ACTIONS.contains(&a.as_str())).collect();
+        if actions.is_empty() {
+            continue;
+        }
+        rep.matched += 1;
+        if apply {
+            for (action, arg) in &actions {
+                apply_rule_action(state, &m, action, arg);
+                rep.applied += 1;
+            }
+        }
+        if rep.hits.len() < RULE_HITS_MAX {
+            let named = actions
+                .into_iter()
+                .map(|(a, arg)| {
+                    let folder = matches!(a.as_str(), "move" | "copy").then(|| arg.parse::<i64>().ok().and_then(|f| state.db.folder(f))).flatten();
+                    let shown = folder.map(|f| f.name).unwrap_or(arg);
+                    (a, shown)
+                })
+                .collect();
+            rep.hits.push(RuleHit { id: m.id, subject: m.subject.clone(), sender: m.sender.clone(), date: m.date, actions: named });
+        }
+    }
+    let _ = app.emit("rules://progress", json!({ "done": total, "total": total, "matched": rep.matched }));
+    rep
+}
+
+/// Hiçbir şeyi değiştirmeden hangi iletilere ne yapılacağını döndürür
+#[tauri::command(async)]
+pub fn preview_rules(state: State<AppState>, app: tauri::AppHandle, run: RuleRun) -> RuleReport {
+    scan_rules(&state, &app, &run, false)
+}
+
+/// Kuralları seçili klasördeki mevcut iletilere uygular
+#[tauri::command(async)]
+pub fn run_rules(state: State<AppState>, app: tauri::AppHandle, run: RuleRun) -> RuleReport {
+    scan_rules(&state, &app, &run, true)
+}
+
+#[tauri::command(async)]
+pub fn cancel_rule_run(state: State<AppState>) {
+    state.rule_cancel.store(true, Ordering::SeqCst);
 }
 
 #[tauri::command(async)]

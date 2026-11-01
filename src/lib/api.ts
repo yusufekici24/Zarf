@@ -2,7 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Account, CalEvent, Calendar, Category, ComposeData, Contact, ContactGroup, Discovery, Folder, FolderGroup,
-  MessageRow, MessageView, Note, Occurrence, Reminder, Rule, Task, RuleSpec, ListOrder,
+  MessageRow, MessageView, Note, Occurrence, Reminder, Rule, RuleReport, RuleRun, Task, RuleSpec, ListOrder,
 } from "./types";
 
 export type BackupInfo = { app_version: string; created: string; accounts: string[]; counts: Record<string, number> };
@@ -202,7 +202,9 @@ export const api = {
   serverRuleSpec: (id: number) => invoke<RuleSpec>("server_rule_spec", { id }),
   saveServerRule: (id: number, accountId: number, name: string, enabled: boolean, spec: RuleSpec, force = false) =>
     invoke<void>("save_server_rule", { id, accountId, name, enabled, spec, force }),
-  runRules: (folderId: number) => invoke<number>("run_rules", { folderId }),
+  previewRules: (run: RuleRun) => invoke<RuleReport>("preview_rules", { run }),
+  runRules: (run: RuleRun) => invoke<RuleReport>("run_rules", { run }),
+  cancelRuleRun: () => invoke<void>("cancel_rule_run"),
   listCategories: () => invoke<Category[]>("list_categories"),
   saveCategory: (oldName: string | null, name: string, color: string) => invoke<void>("save_category", { oldName, name, color }),
   deleteCategory: (name: string) => invoke<void>("delete_category", { name }),

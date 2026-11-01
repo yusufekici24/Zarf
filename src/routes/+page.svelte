@@ -29,6 +29,7 @@
     notes: () => import("$lib/components/notes/NotesView.svelte"),
   };
   const lazyAccountDialog = () => import("$lib/components/dialogs/AccountDialog.svelte");
+  const lazyRunRules = () => import("$lib/components/dialogs/RunRulesDialog.svelte");
 
   // Ayarlar ayrı pencerede açılır (Outlook Seçenekleri gibi): ana penceredeki istekler oraya
   $effect(() => {
@@ -563,6 +564,7 @@
   </Dialog.Root>
 
   {#await lazyAccountDialog() then m}<m.default />{/await}
+  {#if app.runRulesFolder !== null}{#await lazyRunRules() then m}<m.default />{/await}{/if}
   <DialogHost />
   <ContactCard />
 {/if}

@@ -104,9 +104,6 @@
     };
   });
 
-  async function runRules(f: Folder) {
-    toast.success(t("rules.applied", await api.runRules(f.id)));
-  }
 </script>
 
 {#snippet folderRow(f: Folder, folders: Folder[], depth: number, fav = false)}
@@ -222,7 +219,7 @@
       <ContextMenu.Separator />
       <ContextMenu.Item onclick={() => api.markFolderRead(f.id)}>{t("folder.mark_all_read")}</ContextMenu.Item>
       <ContextMenu.Item onclick={() => empty(f)}>{t("folder.empty")}</ContextMenu.Item>
-      <ContextMenu.Item onclick={() => runRules(f)}>{t("rules.run_now")}</ContextMenu.Item>
+      <ContextMenu.Item onclick={() => (app.runRulesFolder = f.id)}>{t("rules.run_now")}</ContextMenu.Item>
       <ContextMenu.Separator />
       {#if f.account_id}<ContextMenu.Item onclick={() => api.syncFolder(f.id)}>{t("folder.sync")}</ContextMenu.Item>{/if}
       <ContextMenu.Item onclick={() => importFiles(f)}>{t("folder.import")}</ContextMenu.Item>

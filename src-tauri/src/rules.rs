@@ -130,6 +130,14 @@ pub fn matches(rule: &Rule, m: &Message) -> bool {
     }
 }
 
+/// Kuralların değerlendirilmesi için iletinin tam içeriği (gövde, boyut) gerekiyor mu
+pub fn needs_content(rules: &[Rule]) -> bool {
+    rules.iter().any(|r| match serde_json::from_str::<LocalSpec>(&r.spec) {
+        Ok(s) => s.conditions.iter().chain(&s.exceptions).any(|p| matches!(p.kind.as_str(), "body" | "subject_or_body" | "size_range" | "is_meeting_request")),
+        Err(_) => !matches!(r.field.as_str(), "from" | "to" | "subject"),
+    })
+}
+
 /// Eşleşen kuralların (eylem, argüman) listesi. `me`: kullanıcının adresleri (küçük harf).
 pub fn evaluate(rules: &[Rule], m: &Message, account_id: Option<i64>, me: &[String]) -> Vec<(String, String)> {
     let mut out = Vec::new();
@@ -213,6 +221,17 @@ mod tests {
             "actions": [{"kind": "flag"}],
         }));
         assert!(evaluate(&[except], &m, None, &me).is_empty());
+    }
+
+    #[test]
+    fn content_needed_only_for_body_conditions() {
+        let simple = |field: &str| Rule { enabled: true, field: field.into(), ..Default::default() };
+        assert!(!needs_content(&[simple("from"), simple("subject")]));
+        assert!(needs_content(&[simple("body")]));
+        assert!(needs_content(&[simple("any")]));
+        assert!(!needs_content(&[rule(serde_json::json!({"conditions": [{"kind": "from", "values": ["x"]}]}))]));
+        assert!(needs_content(&[rule(serde_json::json!({"exceptions": [{"kind": "subject_or_body", "values": ["x"]}]}))]));
+        assert!(needs_content(&[rule(serde_json::json!({"conditions": [{"kind": "size_range", "values": ["1", ""]}]}))]));
     }
 
     #[test]
