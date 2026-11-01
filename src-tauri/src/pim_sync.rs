@@ -12,7 +12,7 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet};
 
 /// Arka plan gönderimi: bağlantı yoksa kayıt kirli kalır, sonraki eşitlemede denenir
-fn quiet(r: MailResult<()>) -> MailResult<()> {
+pub(crate) fn quiet(r: MailResult<()>) -> MailResult<()> {
     match r {
         Err(e) if e.is_net() => Ok(()),
         other => other,

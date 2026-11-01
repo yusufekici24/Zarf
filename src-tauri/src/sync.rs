@@ -5,6 +5,7 @@
 //! arayüze bildirilir.
 
 use crate::db::{now, Db, Folder, Message};
+use crate::mail::dav::{Dav, Kind};
 use crate::mail::imap_client::{flags_contain, Imap};
 use crate::mail::{self, parse, MailError, MailResult};
 use crate::t;
@@ -319,6 +320,15 @@ impl MailService {
         let Some(acc) = self.db.account(account_id) else { return };
         let front = acc.is_exchange();
         self.submit_keyed(format!("acc:{account_id}"), front, t!("status.syncing", acc.name), move |w| w.sync_account(account_id));
+        self.sync_dav(account_id);
+    }
+
+    /// Takvim ve kişiler arka planda eşitlenir; posta sunucusundan bağımsızdır
+    pub fn sync_dav(&self, account_id: i64) {
+        if self.db.account(account_id).is_some_and(|a| !a.caldav_url.trim().is_empty() || !a.carddav_url.trim().is_empty()) {
+            // Takvim sunucusuna ulaşılamaması postayı "bağlantı kesildi" durumuna düşürmez
+            self.bg.push(Some(format!("dav:{account_id}")), false, String::new(), Box::new(move |w: &mut Worker| crate::pim_sync::quiet(w.dav_sync_account(account_id))));
+        }
     }
 
     /// Klasörü hemen eşitler (kullanıcı tıkladığında; kuyruğun önüne alınır).
@@ -994,6 +1004,9 @@ impl MailService {
     // ------------------------------------------------------------------ Exchange takvim / toplantı
     /// Exchange takvimindeki etkinliği sunucuya yazar (oluştur/güncelle) ve yeniden eşitler.
     pub fn push_event(&self, account_id: i64, event_id: i64) {
+        if !self.is_ews(Some(account_id)) {
+            return self.dav_push_event(account_id, event_id);
+        }
         self.submit(String::new(), move |w| {
             let Some(e) = w.db.event(event_id) else { return Ok(()) };
             match e.remote_id.clone() {
@@ -1083,6 +1096,15 @@ impl MailService {
                 false
             }
         };
+        for (url, kind, name) in [(&account.caldav_url, Kind::Calendar, "CalDAV"), (&account.carddav_url, Kind::Contacts, "CardDAV")] {
+            if !url.trim().is_empty() {
+                let found = Dav::for_account(account, url, Some(password)).and_then(|mut d| d.discover(kind));
+                lines.push(match found {
+                    Ok(v) => format!("✔ {}", t!("account.test_dav_ok", name, v.len())),
+                    Err(e) => format!("✘ {name}: {e}"),
+                });
+            }
+        }
         (imap_ok, smtp_ok, lines.join("\n"))
     }
 }

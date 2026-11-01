@@ -53,7 +53,7 @@
     return {
       id: 0, name: "", email: "", display_name: "", imap_host: "", imap_port: 993, imap_security: "ssl", smtp_host: "", smtp_port: 465, smtp_security: "ssl",
       username: "", signature: "", sync_limit: 500, auto_reply_enabled: false, auto_reply_text: "", kind: "imap", auth_method: "password", ews_url: "",
-      auth_state: "ok", auth_error: "",
+      caldav_url: "", carddav_url: "", auth_state: "ok", auth_error: "",
     };
   }
 
@@ -383,6 +383,14 @@
                 {#each SEC as [v, l] (v)}<option value={v}>{t(l)}</option>{/each}
               </select>
             </div>
+            <div class="font-semibold">{t("account.dav_title")}</div>
+            <div class="grid grid-cols-[140px_1fr] items-center gap-2">
+              <Label>CalDAV</Label>
+              <Input bind:value={a.caldav_url} placeholder="https://bulut.ornek.com/remote.php/dav" />
+              <Label>CardDAV</Label>
+              <Input bind:value={a.carddav_url} placeholder="https://bulut.ornek.com/remote.php/dav" />
+            </div>
+            <p class="text-muted-foreground text-xs">{t("account.dav_hint")}</p>
           {/if}
           <div class="grid grid-cols-[140px_1fr] items-center gap-2">
             <Label>{t("account.sync_limit")}</Label>

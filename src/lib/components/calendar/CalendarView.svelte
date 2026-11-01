@@ -248,7 +248,7 @@
   /** Yeni etkinliğin takvimi: varsayılan hesabın Exchange takvimi (Outlook gibi; toplantı
    *  istekleri ve oda rezervasyonu Exchange üzerinden gider), yoksa ilk kendi takvimi */
   function defaultCalendarId(): number {
-    const own = calendars.filter((c) => !c.kind && !c.owner);
+    const own = calendars.filter((c) => (!c.kind || c.kind === "dav") && !c.owner);
     const acc = app.defaultAccountId();
     return (own.find((c) => c.account_id === acc) ?? own.find((c) => c.account_id) ?? own[0] ?? calendars[0])?.id ?? 1;
   }
@@ -349,7 +349,7 @@
   let editingReadonly = $state(false);
   function openEvent(e: CalEvent, occStart: number | null) {
     // Salt okunur öğeler de çift tıklamayla açılır (paylaşılan izin kadar ayrıntıyla)
-    editingReadonly = e.id < 0 || calendars.find((c) => c.id === e.calendar_id)?.kind === "internet";
+    editingReadonly = e.id < 0 || (!!e.master_id && !e.remote_id) || calendars.find((c) => c.id === e.calendar_id)?.kind === "internet";
     tip = null;
     if (!editingReadonly) {
       const meeting = !!(e.attendees || e.optional_attendees || e.resources);

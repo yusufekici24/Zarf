@@ -2,6 +2,7 @@
 
 pub mod backup;
 pub mod commands;
+pub mod dav_sync;
 pub mod db;
 pub mod desktop;
 pub mod ews_sync;

@@ -1334,12 +1334,27 @@ pub fn contact_by_email(state: State<AppState>, email: String) -> Option<Contact
 
 #[tauri::command(async)]
 pub fn save_contact(state: State<AppState>, contact: Contact) -> R<i64> {
-    state.db.save_contact(&contact).map_err(err)
+    let mut c = contact;
+    // Yeni kişi, adres defteri eşitlenen ilk hesaba yazılır (görev ve notlarla aynı düzen)
+    if c.id == 0 && c.account_id.is_none() {
+        c.account_id = state.db.accounts().into_iter().find(|a| !a.carddav_url.trim().is_empty()).map(|a| a.id);
+    }
+    let id = state.db.save_contact(&c).map_err(err)?;
+    if let Some(acc) = c.account_id.and_then(|a| state.db.account(a)).filter(|a| !a.carddav_url.trim().is_empty()) {
+        state.mail.dav_push_contact(acc.id, id);
+    }
+    Ok(id)
 }
 
 #[tauri::command(async)]
 pub fn delete_contacts(state: State<AppState>, ids: Vec<i64>) {
     for id in ids {
+        if let Some((account, href)) = state.db.contact(id).and_then(|c| Some((c.account_id?, c.remote_id?))) {
+            if state.db.account(account).is_some_and(|a| !a.carddav_url.trim().is_empty()) {
+                state.db.add_tombstone(crate::dav_sync::CONTACT_TOMBS, account, &href);
+                state.mail.dav_flush(crate::dav_sync::CONTACT_TOMBS, account);
+            }
+        }
         state.db.delete_contact(id);
     }
 }
@@ -1591,6 +1606,10 @@ fn calendar_account(db: &Db, calendar_id: i64) -> Option<i64> {
     db.calendars().into_iter().find(|c| c.id == calendar_id).and_then(|c| c.account_id)
 }
 
+fn dav_calendar_account(db: &Db, calendar_id: i64) -> Option<i64> {
+    db.calendars().into_iter().find(|c| c.id == calendar_id && c.kind == "dav").and_then(|c| c.account_id)
+}
+
 #[tauri::command(async)]
 pub fn save_event(state: State<AppState>, event: Event) -> R<i64> {
     let mut e = event;
@@ -1600,6 +1619,11 @@ pub fn save_event(state: State<AppState>, event: Event) -> R<i64> {
     // Takvim değiştirilirse sunucu kimliği geçersizdir
     if let Some(old) = (e.id > 0).then(|| state.db.event(e.id)).flatten() {
         if old.calendar_id != e.calendar_id {
+            // CalDAV'da eski takvimdeki kaynak silinir; Exchange öğeyi sunucuda kendisi taşır
+            if let (Some(acc), Some(href)) = (dav_calendar_account(&state.db, old.calendar_id), &old.remote_id) {
+                state.db.add_tombstone(crate::dav_sync::EVENT_TOMBS, acc, href);
+                state.mail.dav_flush(crate::dav_sync::EVENT_TOMBS, acc);
+            }
             e.remote_id = None;
             e.master_id = None;
         }
@@ -1614,7 +1638,8 @@ pub fn save_event(state: State<AppState>, event: Event) -> R<i64> {
 /// mode: "series" (tümü) veya "one" (yalnızca bu yineleme)
 #[tauri::command(async)]
 pub fn delete_event(state: State<AppState>, id: i64, mode: String, occurrence_start: Option<f64>) -> R<()> {
-    if let Some(e) = state.db.event(id) {
+    let dav = state.db.event(id).and_then(|e| dav_calendar_account(&state.db, e.calendar_id));
+    if let Some(e) = state.db.event(id).filter(|_| dav.is_none()) {
         if let (Some(acc), Some(rid)) = (calendar_account(&state.db, e.calendar_id), e.remote_id.clone()) {
             let series = mode == "series" && e.master_id.is_some();
             state.db.delete_event(id);
@@ -1632,9 +1657,16 @@ pub fn delete_event(state: State<AppState>, id: i64, mode: String, occurrence_st
                 ex.push(d);
                 e.exdates = ex.join(",");
                 state.db.save_event(&e).map_err(err)?;
+                if let Some(acc) = dav {
+                    state.mail.push_event(acc, id);
+                }
                 return Ok(());
             }
         }
+    }
+    if let (Some(acc), Some(href)) = (dav, state.db.event(id).and_then(|e| e.remote_id)) {
+        state.db.add_tombstone(crate::dav_sync::EVENT_TOMBS, acc, &href);
+        state.mail.dav_flush(crate::dav_sync::EVENT_TOMBS, acc);
     }
     state.db.delete_event(id);
     Ok(())

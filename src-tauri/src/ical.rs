@@ -2,6 +2,7 @@
 
 use crate::db::{Contact, Event, Task};
 use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
+use std::collections::{BTreeMap, HashSet};
 
 fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace(';', "\\;").replace(',', "\\,").replace('\r', "").replace('\n', "\\n")
@@ -307,8 +308,15 @@ pub fn export_tasks_ics(tasks: &[Task]) -> String {
 #[derive(Default, Debug)]
 pub struct IcsImport {
     pub events: Vec<Event>,
+    /// `events` ile aynı sırada: etkinlik bir serinin tek oluşumuysa o oluşumun günü
+    pub overrides: Vec<Option<String>>,
     pub tasks: Vec<Task>,
     pub method: String,
+}
+
+/// Zaman damgası → yerel gün ("YYYY-MM-DD", `exdates` biçimi)
+fn local_day(ts: f64) -> String {
+    chrono::Local.timestamp_opt(ts as i64, 0).single().map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default()
 }
 
 pub fn parse_ics(text: &str) -> IcsImport {
@@ -317,6 +325,7 @@ pub fn parse_ics(text: &str) -> IcsImport {
     let mut todo: Option<Task> = None;
     let mut in_alarm = false;
     let mut has_end = false;
+    let mut recurrence_id = None;
     for line in unfold(text) {
         let (name, params, value) = parse_line(&line);
         let upper = value.to_uppercase();
@@ -325,6 +334,7 @@ pub fn parse_ics(text: &str) -> IcsImport {
             ("BEGIN", "VEVENT") => {
                 cur = Some(Event { reminder_minutes: -1, ..Event::new_default() });
                 has_end = false;
+                recurrence_id = None;
             }
             ("END", "VEVENT") => {
                 if let Some(mut e) = cur.take() {
@@ -333,6 +343,7 @@ pub fn parse_ics(text: &str) -> IcsImport {
                             e.end = e.start + if e.all_day { 86400.0 } else { 3600.0 };
                         }
                         out.events.push(e);
+                        out.overrides.push(recurrence_id.take());
                     }
                 }
             }
@@ -377,6 +388,7 @@ pub fn parse_ics(text: &str) -> IcsImport {
                 }
                 match name.as_str() {
                     "UID" => e.uid = value.clone(),
+                    "RECURRENCE-ID" => recurrence_id = parse_dt(&value, &params).map(|(t, _)| local_day(t)),
                     "SUMMARY" => e.title = unescape(&value),
                     "LOCATION" => e.location = unescape(&value),
                     "DESCRIPTION" => e.description = unescape(&value),
@@ -463,6 +475,108 @@ pub fn parse_ics(text: &str) -> IcsImport {
         }
     }
     out
+}
+
+/// CalDAV kaynağı: ana etkinlik ve taşınmış tek oluşumları. Taşınan gün seride atlanır.
+pub fn dav_event(text: &str) -> Option<(Event, Vec<Event>)> {
+    let ics = parse_ics(text);
+    let mut master = None;
+    let mut moved = Vec::new();
+    let mut days = Vec::new();
+    for (e, rid) in ics.events.into_iter().zip(ics.overrides) {
+        match rid {
+            None if master.is_none() => master = Some(e),
+            Some(day) => {
+                days.push(day);
+                moved.push(e);
+            }
+            None => {}
+        }
+    }
+    // Yalnızca tek oluşum içeren kaynak (seriyi başkası tutuyor): tek etkinlik gibi gösterilir
+    let mut master = master.or_else(|| (!moved.is_empty()).then(|| moved.remove(0)))?;
+    let mut ex = crate::db::split_list(&master.exdates);
+    ex.extend(days);
+    master.exdates = ex.join(",");
+    Some((master, moved))
+}
+
+/// "item1.TEL;TYPE=CELL:…" → "TEL"
+fn prop_name(line: &str) -> String {
+    let head = line.split([':', ';']).next().unwrap_or("");
+    head.rsplit('.').next().unwrap_or(head).to_uppercase()
+}
+
+/// Bileşenin özellikleri ada göre gruplanır; VALARM blokları tek özellik sayılır
+fn prop_groups(lines: &[String], component: &str) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut alarm = false;
+    for l in lines {
+        let up = l.to_uppercase();
+        if up == format!("BEGIN:{component}") || up == format!("END:{component}") {
+            continue;
+        }
+        alarm |= up == "BEGIN:VALARM";
+        out.entry(if alarm { "VALARM".to_string() } else { prop_name(l) }).or_default().push(l.clone());
+        alarm &= up != "END:VALARM";
+    }
+    out
+}
+
+/// Sunucudaki nesnede yalnızca `old` ile `new` arasında değişen özellikleri günceller. Böylece
+/// uygulamanın modelinde karşılığı olmayan her şey (karmaşık yineleme, üçüncü telefon, fotoğraf,
+/// saat dilimi, taşınmış oluşumlar) düzenlemeden sonra da sunucuda kalır.
+pub fn merge_changes(raw: &str, component: &str, old: &[String], new: &[String]) -> String {
+    let (old, new) = (prop_groups(old, component), prop_groups(new, component));
+    let changed: HashSet<&String> = old.keys().chain(new.keys()).filter(|k| old.get(*k) != new.get(*k) && k.as_str() != "UID").collect();
+    let lines = unfold(raw);
+    let is = |l: &str, what: &str| l.trim().eq_ignore_ascii_case(what);
+    // Ana bileşen: RECURRENCE-ID taşımayan ilk bileşen
+    let start = lines.iter().enumerate().position(|(i, l)| {
+        is(l, &format!("BEGIN:{component}"))
+            && !lines[i..].iter().take_while(|x| !is(x, &format!("END:{component}"))).any(|x| prop_name(x) == "RECURRENCE-ID")
+    });
+    let Some(start) = start else { return raw.to_string() };
+    let mut out = Vec::with_capacity(lines.len());
+    let mut inside = false;
+    let mut alarm = false;
+    for (i, l) in lines.iter().enumerate() {
+        if i == start {
+            inside = true;
+        } else if inside && is(l, &format!("END:{component}")) {
+            inside = false;
+            out.extend(new.iter().filter(|(k, _)| changed.contains(k)).flat_map(|(_, v)| v.iter().cloned()));
+        } else if inside {
+            alarm |= is(l, "BEGIN:VALARM");
+            let key = if alarm { "VALARM".to_string() } else { prop_name(l) };
+            alarm &= !is(l, "END:VALARM");
+            if changed.contains(&key) {
+                continue;
+            }
+        }
+        out.push(l.clone());
+    }
+    out.iter().map(|l| fold(l)).collect::<Vec<_>>().join("\r\n") + "\r\n"
+}
+
+/// Sunucuya yazılacak iCalendar metni
+pub fn dav_event_body(e: &Event, raw: &str) -> String {
+    match dav_event(raw) {
+        Some((old, _)) => merge_changes(raw, "VEVENT", &event_to_vevent(&old, None), &event_to_vevent(e, None)),
+        None => export_ics(std::slice::from_ref(e), None, None),
+    }
+}
+
+/// Sunucuya yazılacak vCard metni
+pub fn dav_contact_body(c: &Contact, raw: &str) -> String {
+    match parse_vcf(raw).into_iter().next() {
+        Some(old) => merge_changes(raw, "VCARD", &contact_to_vcard(&old), &contact_to_vcard(c)),
+        None => {
+            let mut lines = contact_to_vcard(c);
+            lines.insert(2, format!("UID:{}", uuid::Uuid::new_v4()));
+            lines.iter().map(|l| fold(l)).collect::<Vec<_>>().join("\r\n") + "\r\n"
+        }
+    }
 }
 
 /// Toplantı davetine iMIP yanıtı (METHOD:REPLY) üretir.
@@ -747,6 +861,76 @@ pub fn export_csv_contacts(contacts: &[Contact]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SERIES: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Sunucu//TR\r\nBEGIN:VTIMEZONE\r\nTZID:Europe/Istanbul\r\nEND:VTIMEZONE\r\n\
+BEGIN:VEVENT\r\nUID:seri-1\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20260105T070000Z\r\nDTEND:20260105T080000Z\r\nSUMMARY:Toplantı\r\n\
+RRULE:FREQ=MONTHLY;BYDAY=2MO;COUNT=6\r\nX-OZEL:korunmali\r\nATTENDEE;PARTSTAT=ACCEPTED:mailto:ali@x.com\r\n\
+BEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:-PT10M\r\nEND:VALARM\r\nEND:VEVENT\r\n\
+BEGIN:VEVENT\r\nUID:seri-1\r\nRECURRENCE-ID:20260209T070000Z\r\nDTSTART:20260210T090000Z\r\nDTEND:20260210T100000Z\r\nSUMMARY:Taşındı\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    #[test]
+    fn dav_event_splits_moved_occurrence() {
+        let (master, moved) = dav_event(SERIES).unwrap();
+        assert_eq!((master.title.as_str(), master.uid.as_str()), ("Toplantı", "seri-1"));
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].title, "Taşındı");
+        assert_eq!(master.exdates, local_day(parse_dt("20260209T070000Z", &[]).unwrap().0));
+    }
+
+    #[test]
+    fn merge_keeps_what_the_model_does_not_hold() {
+        let (old, _) = dav_event(SERIES).unwrap();
+        let mut e = old.clone();
+        e.title = "Yeni başlık".into();
+        let body = dav_event_body(&e, SERIES);
+        let (back, moved) = dav_event(&body).unwrap();
+        assert_eq!(back.title, "Yeni başlık");
+        assert_eq!(moved.len(), 1, "taşınan oluşum korunmalı");
+        for keep in ["RRULE:FREQ=MONTHLY;BYDAY=2MO;COUNT=6", "X-OZEL:korunmali", "ATTENDEE;PARTSTAT=ACCEPTED:mailto:ali@x.com", "ACTION:AUDIO", "TZID:Europe/Istanbul", "PRODID:-//Sunucu//TR", "UID:seri-1"] {
+            assert!(body.contains(keep), "{keep} kayboldu:\n{body}");
+        }
+        assert!(!body.contains("SUMMARY:Toplantı"));
+        assert!(body.contains("SUMMARY:Taşındı"), "taşınan oluşumun başlığı değişmemeli");
+        assert_eq!(body.matches("SUMMARY:Yeni başlık").count(), 1);
+        // Hiçbir şey değişmediyse damga dışında metin aynı kalır
+        let same = dav_event_body(&old, SERIES);
+        assert!(same.contains("RRULE:FREQ=MONTHLY;BYDAY=2MO;COUNT=6") && same.contains("SUMMARY:Toplantı"));
+    }
+
+    #[test]
+    fn merge_replaces_only_changed_groups() {
+        let (old, _) = dav_event(SERIES).unwrap();
+        let mut e = old.clone();
+        e.reminder_minutes = 30;
+        e.recurrence = "weekly".into();
+        e.recur_until = None;
+        let body = dav_event_body(&e, SERIES);
+        assert!(body.contains("TRIGGER:-PT30M") && !body.contains("ACTION:AUDIO"), "{body}");
+        assert!(body.contains("RRULE:FREQ=WEEKLY") && !body.contains("BYDAY=2MO"), "{body}");
+        assert!(body.contains("X-OZEL:korunmali"));
+    }
+
+    #[test]
+    fn new_event_is_a_complete_calendar() {
+        let e = Event { title: "Yeni".into(), start: 1_800_000_000.0, end: 1_800_003_600.0, uid: "u1".into(), ..Event::new_default() };
+        let body = dav_event_body(&e, "");
+        assert!(body.starts_with("BEGIN:VCALENDAR") && body.contains("UID:u1") && body.trim_end().ends_with("END:VCALENDAR"));
+    }
+
+    #[test]
+    fn contact_merge_keeps_extra_fields() {
+        let raw = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:k1\r\nN:Yılmaz;Ali;;;\r\nFN:Ali Yılmaz\r\nEMAIL;TYPE=INTERNET:ali@x.com\r\nTEL;TYPE=CELL:111\r\nTEL;TYPE=WORK:222\r\nTEL;TYPE=FAX:333\r\nPHOTO;ENCODING=b;TYPE=JPEG:AAAA\r\nitem1.X-ABLABEL:Özel\r\nEND:VCARD\r\n";
+        let mut c = parse_vcf(raw).remove(0);
+        c.job_title = "Müdür".into();
+        let body = dav_contact_body(&c, raw);
+        for keep in ["UID:k1", "TEL;TYPE=FAX:333", "PHOTO;ENCODING=b;TYPE=JPEG:AAAA", "item1.X-ABLABEL:Özel", "TITLE:Müdür"] {
+            assert!(body.contains(keep), "{keep} kayboldu:\n{body}");
+        }
+        // Yeni kişi UID ile yazılır
+        let new = dav_contact_body(&Contact { first_name: "Ayşe".into(), ..Default::default() }, "");
+        assert!(new.contains("UID:") && new.contains("FN:Ayşe"), "{new}");
+        assert_eq!(parse_vcf(&new)[0].first_name, "Ayşe");
+    }
 
     #[test]
     fn ics_roundtrip() {

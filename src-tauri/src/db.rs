@@ -2,6 +2,7 @@
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -96,6 +97,14 @@ CREATE TABLE IF NOT EXISTS recipients (
 /// Sonradan eklenen sütunlar (eski veritabanlarını yükseltmek için).
 const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("accounts", "kind", "TEXT DEFAULT 'imap'"),
+    ("accounts", "caldav_url", "TEXT DEFAULT ''"),
+    ("accounts", "carddav_url", "TEXT DEFAULT ''"),
+    ("events", "etag", "TEXT DEFAULT ''"),
+    ("events", "dav_raw", "TEXT DEFAULT ''"),
+    ("events", "dirty", "INTEGER DEFAULT 0"),
+    ("contacts", "etag", "TEXT DEFAULT ''"),
+    ("contacts", "dav_raw", "TEXT DEFAULT ''"),
+    ("contacts", "dirty", "INTEGER DEFAULT 0"),
     ("accounts", "auth_method", "TEXT DEFAULT 'password'"),
     ("accounts", "ews_url", "TEXT DEFAULT ''"),
     ("accounts", "auth_state", "TEXT DEFAULT 'ok'"),
@@ -188,6 +197,10 @@ pub struct Account {
     pub oauth_token: String,
     /// Paylaşılan posta kutusu: kimliği kullanılan ana hesap
     pub shared_of: Option<i64>,
+    /// Takvim sunucusu (boşsa takvim eşitlenmez)
+    pub caldav_url: String,
+    /// Adres defteri sunucusu
+    pub carddav_url: String,
 }
 
 impl Account {
@@ -224,6 +237,8 @@ impl Account {
             auth_error: r.get::<_, Option<String>>("auth_error")?.unwrap_or_default(),
             oauth_token: r.get::<_, Option<String>>("oauth_token")?.unwrap_or_default(),
             shared_of: r.get("shared_of").unwrap_or(None),
+            caldav_url: r.get::<_, Option<String>>("caldav_url")?.unwrap_or_default(),
+            carddav_url: r.get::<_, Option<String>>("carddav_url")?.unwrap_or_default(),
         })
     }
 
@@ -611,8 +626,10 @@ pub struct Calendar {
     pub owner: String,
     /// Grup: "" (Takvimlerim) | "team" | "other" | "shared"
     pub grp: String,
-    /// "" yerel/Exchange | "remote" başkasının takvimi (salt okunur) | "birthdays"
+    /// "" yerel/Exchange | "dav" CalDAV | "remote" başkasının takvimi (salt okunur) | "birthdays"
     pub kind: String,
+    /// CalDAV koleksiyonunun adresi
+    pub remote_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -837,6 +854,22 @@ pub fn migrate_legacy_data_dir(new_dir: &std::path::Path, old_dir: &std::path::P
             let _ = std::fs::rename(&from, new_dir.join(format!("lynora.db{ext}")));
         }
     }
+}
+
+/// CalDAV/CardDAV nesnesinin sunucu durumu
+#[derive(Clone, Debug, Default)]
+pub struct DavState {
+    pub etag: String,
+    /// Sunucudaki özgün metin: yazarken yalnızca değişen özellikler güncellenir
+    pub raw: String,
+    pub dirty: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DavRow {
+    pub id: i64,
+    pub etag: String,
+    pub dirty: bool,
 }
 
 /// İleti listesi sıralaması
@@ -1134,11 +1167,12 @@ impl Db {
                  imap_security=?6, smtp_host=?7, smtp_port=?8, smtp_security=?9, username=?10, \
                  password=?11, signature=?12, sync_limit=?13, auto_reply_enabled=?14, \
                  auto_reply_text=?15, kind=?17, auth_method=?18, ews_url=?19, auth_state=?20, auth_error=?21, \
-                 oauth_token=?22, shared_of=?23 WHERE id=?16",
+                 oauth_token=?22, shared_of=?23, caldav_url=?24, carddav_url=?25 WHERE id=?16",
                 params![a.name, a.email, a.display_name, a.imap_host, a.imap_port, a.imap_security,
                     a.smtp_host, a.smtp_port, a.smtp_security, a.username, a.password, a.signature,
                     a.sync_limit, a.auto_reply_enabled as i64, a.auto_reply_text, a.id, a.kind,
-                    a.auth_method, a.ews_url, a.auth_state, a.auth_error, a.oauth_token, a.shared_of],
+                    a.auth_method, a.ews_url, a.auth_state, a.auth_error, a.oauth_token, a.shared_of,
+                    a.caldav_url, a.carddav_url],
             )?;
             Ok(a.id)
         } else {
@@ -1146,15 +1180,15 @@ impl Db {
                 "INSERT INTO accounts(name, email, display_name, imap_host, imap_port, imap_security, \
                  smtp_host, smtp_port, smtp_security, username, password, signature, sync_limit, \
                  auto_reply_enabled, auto_reply_text, created, kind, auth_method, ews_url, auth_state, \
-                 auth_error, oauth_token, shared_of) \
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
+                 auth_error, oauth_token, shared_of, caldav_url, carddav_url) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25)",
                 params![a.name, a.email, a.display_name, a.imap_host, a.imap_port, a.imap_security,
                     a.smtp_host, a.smtp_port, a.smtp_security, a.username, a.password, a.signature,
                     a.sync_limit, a.auto_reply_enabled as i64, a.auto_reply_text, now(),
                     if a.kind.is_empty() { "imap" } else { a.kind.as_str() },
                     if a.auth_method.is_empty() { "password" } else { a.auth_method.as_str() },
                     a.ews_url, if a.auth_state.is_empty() { "ok" } else { a.auth_state.as_str() },
-                    a.auth_error, a.oauth_token, a.shared_of],
+                    a.auth_error, a.oauth_token, a.shared_of, a.caldav_url, a.carddav_url],
             )?;
             Ok(c.last_insert_rowid())
         }
@@ -1183,6 +1217,10 @@ impl Db {
             [id],
         )?;
         c.execute("DELETE FROM folders WHERE account_id = ?1", [id])?;
+        // Sunucudan eşitlenen takvim ve kişiler hesapla gider
+        c.execute("DELETE FROM events WHERE calendar_id IN (SELECT id FROM calendars WHERE account_id = ?1 AND kind = 'dav')", [id])?;
+        c.execute("DELETE FROM calendars WHERE account_id = ?1 AND kind = 'dav'", [id])?;
+        c.execute("DELETE FROM contacts WHERE account_id = ?1 AND account_id IN (SELECT id FROM accounts WHERE carddav_url != '')", [id])?;
         c.execute("DELETE FROM accounts WHERE id = ?1", [id])?;
         Ok(())
     }
@@ -2118,7 +2156,7 @@ impl Db {
     // ------------------------------------------------------------------ takvim
     pub fn calendars(&self) -> Vec<Calendar> {
         let c = self.rconn();
-        let mut st = c.prepare("SELECT id, name, color, visible, account_id, owner, grp, kind FROM calendars ORDER BY id").unwrap();
+        let mut st = c.prepare("SELECT id, name, color, visible, account_id, owner, grp, kind, remote_id FROM calendars ORDER BY id").unwrap();
         st.query_map([], |r| {
             Ok(Calendar {
                 id: r.get(0)?,
@@ -2129,6 +2167,7 @@ impl Db {
                 owner: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
                 grp: r.get::<_, Option<String>>(6)?.unwrap_or_default(),
                 kind: r.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                remote_id: r.get(8)?,
             })
         })
         .unwrap()
@@ -2146,8 +2185,8 @@ impl Db {
             Ok(cal.id)
         } else {
             c.execute(
-                "INSERT INTO calendars(name, color, visible, account_id, owner, grp, kind) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![cal.name, cal.color, cal.visible as i64, cal.account_id, cal.owner, cal.grp, cal.kind],
+                "INSERT INTO calendars(name, color, visible, account_id, owner, grp, kind, remote_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![cal.name, cal.color, cal.visible as i64, cal.account_id, cal.owner, cal.grp, cal.kind, cal.remote_id],
             )?;
             Ok(c.last_insert_rowid())
         }
@@ -2249,6 +2288,98 @@ impl Db {
 
     pub fn delete_event(&self, id: i64) {
         let _ = self.conn().execute("DELETE FROM events WHERE id = ?1", [id]);
+    }
+
+    // ------------------------------------------------------------------ CalDAV / CardDAV
+    fn dav_state(&self, table: &str, id: i64) -> DavState {
+        self.rconn()
+            .query_row(&format!("SELECT etag, dav_raw, dirty FROM {table} WHERE id = ?1"), [id], |r| {
+                Ok(DavState {
+                    etag: r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                    raw: r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    dirty: r.get::<_, Option<i64>>(2)?.unwrap_or(0) != 0,
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    fn set_dav_state(&self, table: &str, id: i64, etag: &str, raw: &str) {
+        let _ = self.conn().execute(&format!("UPDATE {table} SET etag = ?1, dav_raw = ?2, dirty = 0 WHERE id = ?3"), params![etag, raw, id]);
+    }
+
+    /// Sunucudaki adres → (kimlik, ETag, kirli mi)
+    fn dav_index(&self, sql: &str, owner: i64) -> HashMap<String, DavRow> {
+        let c = self.rconn();
+        let mut st = c.prepare(sql).unwrap();
+        st.query_map([owner], |r| {
+            let row = DavRow { id: r.get(1)?, etag: r.get::<_, Option<String>>(2)?.unwrap_or_default(), dirty: r.get::<_, Option<i64>>(3)?.unwrap_or(0) != 0 };
+            Ok((r.get(0)?, row))
+        })
+        .unwrap()
+        .flatten()
+        .collect()
+    }
+
+    pub fn event_dav(&self, id: i64) -> DavState {
+        self.dav_state("events", id)
+    }
+
+    pub fn set_event_dav(&self, id: i64, etag: &str, raw: &str) {
+        self.set_dav_state("events", id, etag, raw);
+    }
+
+    pub fn mark_event_dirty(&self, id: i64) {
+        let _ = self.conn().execute("UPDATE events SET dirty = 1 WHERE id = ?1", [id]);
+    }
+
+    /// Yerelde değişip sunucuya henüz gönderilemeyen etkinlikler
+    pub fn dirty_events(&self, calendar_id: i64) -> Vec<Event> {
+        let c = self.rconn();
+        let mut st = c.prepare("SELECT * FROM events WHERE calendar_id = ?1 AND dirty = 1").unwrap();
+        st.query_map([calendar_id], Event::from_row).unwrap().flatten().collect()
+    }
+
+    pub fn dav_events_index(&self, calendar_id: i64) -> HashMap<String, DavRow> {
+        self.dav_index("SELECT remote_id, id, etag, dirty FROM events WHERE calendar_id = ?1 AND remote_id IS NOT NULL", calendar_id)
+    }
+
+    pub fn event_by_remote(&self, calendar_id: i64, href: &str) -> Option<i64> {
+        self.rconn().query_row("SELECT id FROM events WHERE calendar_id = ?1 AND remote_id = ?2", params![calendar_id, href], |r| r.get(0)).ok()
+    }
+
+    pub fn set_event_remote(&self, id: i64, href: &str) {
+        let _ = self.conn().execute("UPDATE events SET remote_id = ?1 WHERE id = ?2", params![href, id]);
+    }
+
+    /// Serinin taşınmış tek oluşum satırları (bkz. dav_sync::dav_store_event)
+    pub fn delete_event_overrides(&self, calendar_id: i64, href: &str) {
+        let _ = self.conn().execute("DELETE FROM events WHERE calendar_id = ?1 AND master_id = ?2 AND remote_id IS NULL", params![calendar_id, href]);
+    }
+
+    pub fn contact_dav(&self, id: i64) -> DavState {
+        self.dav_state("contacts", id)
+    }
+
+    pub fn set_contact_dav(&self, id: i64, etag: &str, raw: &str) {
+        self.set_dav_state("contacts", id, etag, raw);
+    }
+
+    pub fn mark_contact_dirty(&self, id: i64) {
+        let _ = self.conn().execute("UPDATE contacts SET dirty = 1 WHERE id = ?1", [id]);
+    }
+
+    pub fn dirty_contacts(&self, account_id: i64) -> Vec<Contact> {
+        let c = self.rconn();
+        let mut st = c.prepare("SELECT * FROM contacts WHERE account_id = ?1 AND dirty = 1").unwrap();
+        st.query_map([account_id], Contact::from_row).unwrap().flatten().collect()
+    }
+
+    pub fn dav_contacts_index(&self, account_id: i64) -> HashMap<String, DavRow> {
+        self.dav_index("SELECT remote_id, id, etag, dirty FROM contacts WHERE account_id = ?1 AND remote_id IS NOT NULL", account_id)
+    }
+
+    pub fn set_contact_remote(&self, id: i64, href: &str) {
+        let _ = self.conn().execute("UPDATE contacts SET remote_id = ?1 WHERE id = ?2", params![href, id]);
     }
 
     // ------------------------------------------------------------------ görevler
@@ -2620,6 +2751,31 @@ mod search_tests {
         let db = Db::open_memory().unwrap();
         let n: bool = db.rconn().query_row("SELECT lyn_match('Ahmet Emre AYDIN', 'ahmet emre aydin', 1)", [], |r| r.get(0)).unwrap();
         assert!(n);
+    }
+
+    #[test]
+    fn dav_state_and_index() {
+        let db = Db::open_memory().unwrap();
+        let cal = db.save_calendar(&Calendar { name: "İş".into(), kind: "dav".into(), remote_id: Some("/c/".into()), ..Default::default() }).unwrap();
+        assert_eq!(db.calendars().into_iter().find(|c| c.id == cal).unwrap().remote_id.as_deref(), Some("/c/"));
+        let id = db.save_event(&Event { calendar_id: cal, start: 1.0, end: 2.0, remote_id: Some("/c/1.ics".into()), ..Event::new_default() }).unwrap();
+        db.set_event_dav(id, "\"e1\"", "RAW");
+        assert_eq!(db.event_dav(id).raw, "RAW");
+        assert!(db.dirty_events(cal).is_empty());
+        db.mark_event_dirty(id);
+        assert_eq!(db.dirty_events(cal).len(), 1);
+        let idx = db.dav_events_index(cal);
+        assert!(idx["/c/1.ics"].dirty && idx["/c/1.ics"].etag == "\"e1\"");
+        // Yazılınca kirli işareti kalkar; arayüzden gelen kayıt sunucu durumuna dokunmaz
+        db.set_event_dav(id, "\"e2\"", "RAW2");
+        let mut e = db.event(id).unwrap();
+        e.title = "x".into();
+        db.save_event(&e).unwrap();
+        assert_eq!((db.event_dav(id).etag.as_str(), db.event_dav(id).dirty), ("\"e2\"", false));
+        // Serinin taşınmış oluşumu seriyle birlikte yenilenir, seri satırı silinmez
+        db.save_event(&Event { calendar_id: cal, start: 1.0, end: 2.0, master_id: Some("/c/1.ics".into()), ..Event::new_default() }).unwrap();
+        db.delete_event_overrides(cal, "/c/1.ics");
+        assert_eq!(db.events_in_calendar(cal).len(), 1);
     }
 
     /// Eski adla (MailNix) oluşturulmuş veri klasörü yeni ada taşınır; yeni klasör varsa dokunulmaz

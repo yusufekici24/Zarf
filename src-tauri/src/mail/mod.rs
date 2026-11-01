@@ -3,6 +3,7 @@
 
 pub mod address;
 pub mod build;
+pub mod dav;
 pub mod discover;
 pub mod dns;
 pub mod ews;

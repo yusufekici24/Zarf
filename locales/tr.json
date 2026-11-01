@@ -1469,5 +1469,11 @@
   "rules.run_cancelled": "İptal edildi.",
   "rules.run_more": "ve {0} ileti daha",
   "rules.run_confirm_title": "İletiler silinecek",
-  "rules.run_confirm_text": "Seçili kurallardan bazıları iletileri siliyor ve bu işlem sunucuya da yansır. Emin değilseniz önce Önizle'yi kullanın."
+  "rules.run_confirm_text": "Seçili kurallardan bazıları iletileri siliyor ve bu işlem sunucuya da yansır. Emin değilseniz önce Önizle'yi kullanın.",
+  "account.dav_title": "Takvim ve kişiler (isteğe bağlı)",
+  "account.dav_hint": "Sunucu adresini ya da doğrudan takvim veya adres defteri adresini yazın. Boş bırakılırsa eşitlenmez.",
+  "account.test_dav_ok": "{0}: {1} koleksiyon bulundu",
+  "error.dav_auth": "Sunucu kullanıcı adını ya da parolayı kabul etmedi.",
+  "error.dav_status": "Sunucu isteği reddetti (HTTP {0}).",
+  "error.dav_none": "Bu adreste takvim ya da adres defteri bulunamadı."
 }

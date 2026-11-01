@@ -1469,5 +1469,11 @@
   "rules.run_cancelled": "Cancelled.",
   "rules.run_more": "and {0} more messages",
   "rules.run_confirm_title": "Messages will be deleted",
-  "rules.run_confirm_text": "Some of the selected rules delete messages and this also applies on the server. If you are not sure, use Preview first."
+  "rules.run_confirm_text": "Some of the selected rules delete messages and this also applies on the server. If you are not sure, use Preview first.",
+  "account.dav_title": "Calendar and contacts (optional)",
+  "account.dav_hint": "Enter the server address or the direct calendar or address book address. Leave empty to skip syncing.",
+  "account.test_dav_ok": "{0}: {1} collections found",
+  "error.dav_auth": "The server rejected the user name or password.",
+  "error.dav_status": "The server refused the request (HTTP {0}).",
+  "error.dav_none": "No calendar or address book was found at this address."
 }

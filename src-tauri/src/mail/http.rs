@@ -103,6 +103,8 @@ pub struct Client {
     /// bağlantı başına çalışır: aynı bağlantıda sonraki istekler el sıkışmasız gider
     /// (Outlook da böyle yapar; her istekte 2-3 gidiş-dönüş yerine 1).
     authed_gen: Option<u64>,
+    /// Bir sonraki isteklerin ek başlıkları (WebDAV: Depth, If-Match…)
+    pub extra_headers: Vec<(String, String)>,
 }
 
 impl Client {
@@ -115,6 +117,7 @@ impl Client {
             resolved: None,
             conn_gen: 0,
             authed_gen: None,
+            extra_headers: Vec::new(),
         }
     }
 
@@ -195,6 +198,7 @@ impl Client {
         if !content_type.is_empty() {
             base.push(("Content-Type".to_string(), content_type.to_string()));
         }
+        base.extend(self.extra_headers.iter().cloned());
         let auth = self.resolved.clone().unwrap_or_else(|| self.auth.clone());
         match auth {
             Auth::None => self.send_once(method, url, &base, body),

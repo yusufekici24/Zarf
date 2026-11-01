@@ -23,6 +23,8 @@ export interface Account {
   /** "password" | "kerberos" | "ntlm" | "oauth" */
   auth_method: string;
   ews_url: string;
+  caldav_url?: string;
+  carddav_url?: string;
   /** "ok" | "failed" (kimlik hatasında duraklatıldı) */
   auth_state: string;
   auth_error: string;
@@ -191,8 +193,10 @@ export interface Calendar {
   owner?: string;
   /** "" Takvimlerim | "team" | "other" | "shared" */
   grp?: string;
-  /** "" | "remote" (salt okunur) | "birthdays" */
+  /** "" | "dav" (CalDAV) | "remote" (salt okunur) | "birthdays" */
   kind?: string;
+  /** CalDAV koleksiyonunun adresi */
+  remote_id?: string | null;
 }
 
 export interface CalEvent {
