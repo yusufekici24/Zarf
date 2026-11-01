@@ -27,9 +27,13 @@
   import Mail from "@lucide/svelte/icons/mail";
   import Server from "@lucide/svelte/icons/server";
   import BookUser from "@lucide/svelte/icons/book-user";
+  import Archive from "@lucide/svelte/icons/archive";
+  import ArchiveRestore from "@lucide/svelte/icons/archive-restore";
+  import BackupDialog from "$lib/components/dialogs/BackupDialog.svelte";
   import { fmtDateTime } from "$lib/format";
 
   let page = $state("info");
+  let backupMode = $state<"backup" | "restore" | null>(null);
   let accountId = $state<number | null>(null);
   const account = $derived(app.accounts.find((a) => a.id === accountId) ?? app.accounts[0] ?? null);
   const group = $derived(app.folderGroups.find((g) => g.account?.id === account?.id));
@@ -160,6 +164,10 @@
       <BackstageTile icon={MailPlus} label={t("bs.import_mail")} title={t("bs.import_mail_title")} text={t("bs.import_mail_text")} onclick={() => { close(); void importMail(); }} />
       <BackstageTile icon={CalendarPlus} label={t("bs.import_calendar")} title={t("bs.import_calendar_title")} text={t("bs.import_calendar_text")} onclick={() => { close(); app.module = "calendar"; }} />
       <BackstageTile icon={Contact} label={t("bs.import_contacts")} title={t("bs.import_contacts_title")} text={t("bs.import_contacts_text")} onclick={() => { close(); app.module = "contacts"; }} />
+      <BackstageTile icon={Archive} label={t("backup.create")} title={t("backup.create_title")} text={t("backup.create_text")} iconClass="text-[#0f6cbd]" onclick={() => (backupMode = "backup")} />
+      <BackstageTile icon={ArchiveRestore} label={t("backup.restore")} title={t("backup.restore_title")} text={t("backup.restore_text")} iconClass="text-[#c25e00]" onclick={() => (backupMode = "restore")} />
     {/if}
   {/snippet}
 </Backstage>
+
+{#if backupMode}<BackupDialog mode={backupMode} onclose={() => (backupMode = null)} />{/if}

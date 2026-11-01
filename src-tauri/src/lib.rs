@@ -1,5 +1,6 @@
 //! MailNix — Pardus için Outlook benzeri kişisel bilgi yöneticisi.
 
+pub mod backup;
 pub mod commands;
 pub mod db;
 pub mod desktop;
@@ -442,6 +443,11 @@ pub fn run() {
             commands::import_external_message,
             commands::send_read_receipt,
             commands::compose_prefill,
+            commands::create_backup,
+            commands::backup_is_encrypted,
+            commands::prepare_restore,
+            commands::cancel_restore,
+            commands::finish_restore,
             commands::save_recovery,
             commands::list_recovery,
             commands::remove_recovery,

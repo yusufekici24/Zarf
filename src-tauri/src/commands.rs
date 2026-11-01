@@ -1007,6 +1007,38 @@ pub fn address_book(state: State<AppState>) -> Vec<(String, String)> {
     state.db.address_book()
 }
 
+// ======================================================================= yedekleme
+#[tauri::command(async)]
+pub fn create_backup(state: State<AppState>, path: String, password: String) -> R<Value> {
+    crate::backup::create(&state.db, Path::new(&path), &password, env!("CARGO_PKG_VERSION"))
+}
+
+#[tauri::command(async)]
+pub fn backup_is_encrypted(path: String) -> R<bool> {
+    crate::backup::is_encrypted(Path::new(&path))
+}
+
+#[tauri::command(async)]
+pub fn prepare_restore(path: String, password: String) -> R<Value> {
+    crate::backup::prepare(Path::new(&path), &password)
+}
+
+#[tauri::command(async)]
+pub fn cancel_restore() {
+    crate::backup::cancel();
+}
+
+/// Geri yüklemeyi onaylar ve uygulamayı yeniden başlatır: veritabanı bağlantısı yokken yerine
+/// konur. Yeni süreç kısa bekler ki çalışan örnek kapanmış olsun (ikinci örnek olarak açılmasın).
+#[tauri::command(async)]
+pub fn finish_restore(app: tauri::AppHandle) -> R<()> {
+    crate::backup::confirm()?;
+    let exe = std::env::current_exe().map_err(err)?;
+    std::process::Command::new("sh").arg("-c").arg("sleep 1; exec \"$0\"").arg(exe).spawn().map_err(err)?;
+    app.exit(0);
+    Ok(())
+}
+
 // ======================================================================= çökme kurtarma
 fn recovery_dir() -> std::path::PathBuf {
     crate::db::default_data_dir().join("recovery")

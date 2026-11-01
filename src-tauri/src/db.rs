@@ -854,6 +854,7 @@ impl Db {
             }
         }
         let _ = std::fs::create_dir_all(&dir);
+        crate::backup::apply_pending(&dir);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1050,6 +1051,16 @@ impl Db {
 
     pub fn setting_i64(&self, key: &str, default: i64) -> i64 {
         self.setting(key).and_then(|v| v.parse().ok()).unwrap_or(default)
+    }
+
+    /// Veritabanının tutarlı kopyası (uygulama çalışırken de alınabilir)
+    pub fn snapshot_to(&self, path: &std::path::Path) -> Result<()> {
+        self.conn().execute("VACUUM INTO ?1", params![path.to_string_lossy().to_string()]).map(|_| ())
+    }
+
+    /// Yedek özeti için kayıt sayısı; `table` koddaki sabit bir addır
+    pub fn table_count(&self, table: &str) -> i64 {
+        self.rconn().query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap_or(0)
     }
 
     /// Kullanıcının tüm adresleri (küçük harf): hesaplar ve takma adlar

@@ -5,6 +5,7 @@ import type {
   MessageRow, MessageView, Note, Occurrence, Reminder, Rule, Task, RuleSpec, ListOrder,
 } from "./types";
 
+export type BackupInfo = { app_version: string; created: string; accounts: string[]; counts: Record<string, number> };
 export type MeetingOcc = { title: string; start: number; end: number; show_as: string; all_day: boolean; location: string };
 
 export const api = {
@@ -117,6 +118,11 @@ export const api = {
   cancelOutbox: (id: number) => invoke<number>("cancel_outbox", { id }),
   retryOutbox: (id: number) => invoke<void>("retry_outbox", { id }),
   addressBook: () => invoke<[string, string][]>("address_book"),
+  createBackup: (path: string, password: string) => invoke<BackupInfo>("create_backup", { path, password }),
+  backupIsEncrypted: (path: string) => invoke<boolean>("backup_is_encrypted", { path }),
+  prepareRestore: (path: string, password: string) => invoke<BackupInfo>("prepare_restore", { path, password }),
+  cancelRestore: () => invoke<void>("cancel_restore"),
+  finishRestore: () => invoke<void>("finish_restore"),
   saveRecovery: (id: string, payload: string) => invoke<void>("save_recovery", { id, payload }),
   listRecovery: () => invoke<string[]>("list_recovery"),
   removeRecovery: (id: string) => invoke<void>("remove_recovery", { id }),
