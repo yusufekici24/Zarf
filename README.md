@@ -37,18 +37,14 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 
 | Dağıtım | Paket |
 |---|---|
-| Pardus 23 / 25, Debian 12 / 13, Ubuntu 22.04 / 24.04 ve türevleri | `mailnix_*.deb` |
-| Fedora, openSUSE vb. | `mailnix-*.rpm` |
-| Herhangi bir dağıtım (bağımlılıklar içinde) | `MailNix_*.AppImage` |
+| Pardus 23 / 25, Debian 12 / 13, Ubuntu 22.04 / 24.04 ve türevleri | `MailNix_*_amd64.deb` |
 
 ```sh
-sudo apt install ./mailnix_1.0.48_amd64.deb      # bağımlılıklar otomatik kurulur
-# veya
-chmod +x MailNix_1.0.48_amd64.AppImage && ./MailNix_1.0.48_amd64.AppImage
+sudo apt install ./MailNix_1.0.54_amd64.deb      # bağımlılıklar otomatik kurulur
 ```
 
-Paketler Ubuntu 22.04 tabanında (glibc 2.35) derlenir. Bu yüzden daha yeni tüm Pardus/Debian/Ubuntu sürümlerinde sorunsuz çalışır.
-`.deb` paketi sistemdeki WebKitGTK 4.1 ve GTK 3 kitaplıklarını kullanır. AppImage bunları kendi içinde taşır.
+Paket Ubuntu 22.04 tabanında (glibc 2.35) derlenir. Bu yüzden daha yeni tüm Pardus/Debian/Ubuntu sürümlerinde sorunsuz çalışır.
+`.deb` paketi sistemdeki WebKitGTK 4.1 ve GTK 3 kitaplıklarını kullanır.
 
 ## Kurumsal kullanım (Exchange + Active Directory)
 
@@ -77,7 +73,7 @@ Sistem geneli için `/usr/share/mailnix/locales/` kullanılır. Dil, **Ayarlar �
 sudo apt install libwebkit2gtk-4.1-dev build-essential curl file libssl-dev librsvg2-dev libayatana-appindicator3-dev
 npm install
 npm run tauri dev                      # geliştirme
-packaging/build-packages.sh            # .deb/.rpm/.AppImage (Docker ile Ubuntu 22.04 tabanında) → dist/
+packaging/build-packages.sh            # .deb (Docker ile Ubuntu 22.04 tabanında) → dist/
 ```
 
 Testler:

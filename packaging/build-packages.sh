@@ -1,7 +1,7 @@
 #!/bin/bash
-# MailNix paketlerini (.deb, .rpm, .AppImage) en eski desteklenen tabanda derler.
+# MailNix .deb paketini en eski desteklenen tabanda derler.
 #
-# Paketler Ubuntu 22.04 (glibc 2.35) içinde derlenir; böylece
+# Paket Ubuntu 22.04 (glibc 2.35) içinde derlenir; böylece
 # Pardus 23/25, Debian 12/13, Ubuntu 22.04/24.04 ve sonrasında çalışır.
 #
 # Kullanım:  packaging/build-packages.sh            (Docker gerekir)
@@ -41,7 +41,7 @@ if [ -n "${HTTPS_PROXY:-}" ]; then
 fi
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
-  build-essential curl ca-certificates file pkg-config xz-utils patchelf rpm desktop-file-utils \
+  build-essential curl ca-certificates file pkg-config xz-utils patchelf desktop-file-utils \
   libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
   librsvg2-dev libayatana-appindicator3-dev libssl-dev libdbus-1-dev >/dev/null
 
@@ -58,15 +58,8 @@ fi
 
 cd /src
 export CARGO_TARGET_DIR=/cache/target
-# linuxdeploy bir AppImage; kapsayıcıda FUSE olmadığından açılarak çalıştırılır
-export APPIMAGE_EXTRACT_AND_RUN=1
-# appimagetool çalışma zamanını kendi indirir; vekil sunucu arkasında önceden indirip veriyoruz
-if [ ! -s /cache/runtime-x86_64 ]; then
-  curl -fsSL -o /cache/runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64 || rm -f /cache/runtime-x86_64
-fi
-[ -s /cache/runtime-x86_64 ] && export LDAI_RUNTIME_FILE=/cache/runtime-x86_64
 npm ci --no-audit --no-fund
-npx tauri build --bundles deb,rpm,appimage --verbose > /cache/tauri-build.log 2>&1 || { grep -iv "^\s*\(compiling\|running\)" /cache/tauri-build.log | tail -40; exit 1; }
+npx tauri build --bundles deb --verbose > /cache/tauri-build.log 2>&1 || { grep -iv "^\s*\(compiling\|running\)" /cache/tauri-build.log | tail -40; exit 1; }
 B=/cache/target/release/bundle
 VER=$(node -p "require('/src/src-tauri/tauri.conf.json').version")
 DEB=$B/deb/MailNix_${VER}_amd64.deb
@@ -92,6 +85,6 @@ dpkg-deb --root-owner-group -Zxz -b "$R" "$DEB" >/dev/null
 rm -rf "$R"
 
 rm -rf /src/dist/*
-cp "$DEB" $B/rpm/MailNix-${VER}-1.x86_64.rpm $B/appimage/MailNix_${VER}_amd64.AppImage /src/dist/ 2>/dev/null || true
+cp "$DEB" /src/dist/
 dpkg-deb -f /src/dist/MailNix_${VER}_amd64.deb Depends
 ls -la /src/dist

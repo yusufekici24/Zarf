@@ -31,9 +31,7 @@
   "bundle": {
     "active": true,
     "targets": [
-      "deb",
-      "appimage",
-      "rpm"
+      "deb"
     ],
     "category": "Productivity",
     "shortDescription": "Pardus için e-posta, takvim ve Exchange istemcisi",
@@ -105,31 +103,6 @@
           "/usr/share/mime/packages/mailnix.xml": "../packaging/mailnix-mime.xml"
         },
         "postInstallScript": "../packaging/postinst.sh"
-      },
-      "rpm": {
-        "desktopTemplate": "../packaging/mailnix.desktop",
-        "recommends": [
-          "krb5-libs",
-          "google-carlito-fonts",
-          "google-caladea-fonts",
-          "liberation-fonts"
-        ],
-        "conflicts": [
-          "lynora"
-        ],
-        "obsoletes": [
-          "lynora"
-        ],
-        "provides": [
-          "lynora"
-        ],
-        "files": {
-          "/usr/share/mime/packages/mailnix.xml": "../packaging/mailnix-mime.xml"
-        },
-        "postInstallScript": "../packaging/postinst.sh"
-      },
-      "appimage": {
-        "bundleMediaFramework": false
       }
     }
   }
