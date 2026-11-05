@@ -16,7 +16,7 @@
   import { app } from "$lib/stores/app.svelte";
   import { i18n, t } from "$lib/i18n.svelte";
   import type { Account, Rule } from "$lib/types";
-  import { initials } from "$lib/format";
+  import { fmtSize, initials } from "$lib/format";
   import { SCALES, autoScale } from "$lib/zoom";
   import { COMMON_FONTS, FONT_SIZES, fontCss, fontStack, parseFont, type FontKey, type FontSpec } from "$lib/fonts";
   import TypeIcon from "@lucide/svelte/icons/type";
@@ -101,6 +101,26 @@
   async function addTrusted() {
     const v = await app.prompt(t("settings.trusted_add"), t("settings.trusted_label"));
     if (v) await addTrustedSender(v);
+  }
+
+  // Veritabanı boyutu ve sıkıştırma (Gelişmiş → Veritabanı)
+  let storage = $state<{ size: number; free: number; incremental: boolean } | null>(null);
+  let compacting = $state(false);
+  $effect(() => {
+    if (app.settingsDialog.open && tab === "advanced") void api.storageInfo().then((s) => (storage = s)).catch(() => {});
+  });
+  async function compactDb() {
+    if (!(await app.confirm(t("settings.compact_confirm_title"), t("settings.compact_confirm_text"), { ok: t("settings.compact") }))) return;
+    compacting = true;
+    try {
+      const r = await api.compactDatabase();
+      toast.success(t("settings.compact_done", fmtSize(r.before), fmtSize(r.after)));
+      storage = await api.storageInfo();
+    } catch (e) {
+      app.error(e);
+    } finally {
+      compacting = false;
+    }
   }
 
   // Varsayılan e-posta uygulaması (Genel → Başlangıç)
@@ -429,6 +449,12 @@
         {@render section(t("settings.sec_display"))}
         {@render check("hw_accel", t("settings.hw_accel"), true)}
         <p class="text-muted-foreground py-1 pl-10 text-[12px]">{t("settings.hw_accel_help")}</p>
+        {@render section(t("settings.sec_storage"))}
+        <div class="py-1 pl-4 text-[13px]" data-testid="storage">
+          {#if storage}<div>{t("settings.storage_size", fmtSize(storage.size), fmtSize(storage.free))}</div>{/if}
+          <button class="mt-1.5 h-[26px] rounded-[3px] border border-[#8a8a8a] px-3 text-[13px] hover:bg-[#e5f1fb] disabled:opacity-50 dark:border-white/30 dark:hover:bg-white/10" disabled={compacting} onclick={compactDb}>{compacting ? t("settings.compacting") : t("settings.compact")}</button>
+          <p class="text-muted-foreground py-1 text-[12px]">{storage?.incremental ? t("settings.compact_help_auto") : t("settings.compact_help")}</p>
+        </div>
       {:else if tab === "trust"}
         {@render intro(t("settings.trust_intro"))}
         {@render section(t("settings.sec_download"))}

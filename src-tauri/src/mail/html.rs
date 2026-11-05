@@ -62,15 +62,50 @@ pub fn text_to_html(text: &str) -> String {
     linked.replace('\n', "<br>\n")
 }
 
-/// Görüntülemeden önce betik ve olay işleyicilerini temizler
-/// (arayüz ayrıca HTML'i korumalı bir iframe içinde gösterir).
+/// Görüntülemeden önce HTML'i izin listesiyle temizler (ammonia, tarayıcıyla aynı HTML5
+/// ayrıştırıcısı): yalnızca bilinen biçim etiketleri ve öznitelikleri kalır. Betik, olay
+/// işleyicisi, form, iframe, gömülü nesne, <base>, <meta>, <link> ve javascript: bağlantıları
+/// her yazımıyla (kodlanmış, bölünmüş, büyük/küçük harf) gider. E-postanın görünüşü için stiller
+/// (öznitelik ve <style> blokları), sınıflar, eski tablo/yazı tipi öznitelikleri ve gömülü
+/// görseller (cid:, data:) korunur. Arayüz ayrıca HTML'i betiksiz, CSP'li bir iframe'de gösterir.
 pub fn sanitize(html: &str) -> String {
-    static S1: OnceLock<Regex> = OnceLock::new();
-    static S2: OnceLock<Regex> = OnceLock::new();
-    static S3: OnceLock<Regex> = OnceLock::new();
-    let s = re(&S1, r"(?is)<(script|iframe|object|embed|applet|form|meta[^>]*refresh)[^>]*>(.*?</(script|iframe|object|embed|applet|form)>)?").replace_all(html, "");
-    let s = re(&S2, r#"(?i)\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)"#).replace_all(&s, "");
-    re(&S3, r#"(?i)(href|src)\s*=\s*(["']?)\s*javascript:"#).replace_all(&s, "$1=$2#").to_string()
+    static CLEANER: OnceLock<ammonia::Builder<'static>> = OnceLock::new();
+    static BODY: OnceLock<Regex> = OnceLock::new();
+    let cleaner = CLEANER.get_or_init(|| {
+        let mut b = ammonia::Builder::default();
+        b.add_tags(["font", "center", "big", "nobr", "style"])
+            .rm_clean_content_tags(["style"])
+            // Başlık etiketi gider ama metni iletinin başında görünmesin
+            .add_clean_content_tags(["title"])
+            .add_generic_attributes([
+                "style", "class", "id", "dir", "align", "valign", "width", "height", "bgcolor", "color", "border",
+                "cellpadding", "cellspacing", "face", "size", "colspan", "rowspan", "nowrap", "background",
+            ])
+            .add_tag_attributes("a", ["name", "target"])
+            .add_tag_attributes("img", ["border", "hspace", "vspace"])
+            .add_url_schemes(["cid", "data"])
+            // data: yalnızca görsellerde (bağlantı data:text/html sayfası açamasın)
+            .attribute_filter(|_, attr, value| {
+                let data = value.trim_start().get(..5).is_some_and(|p| p.eq_ignore_ascii_case("data:"));
+                if data && attr != "src" {
+                    None
+                } else {
+                    Some(value.into())
+                }
+            });
+        b
+    });
+    // Bültenlerin arka planı çoğu zaman <body bgcolor/style>'dadır: temizlikte gövde etiketi
+    // gideceği için öznitelikleri içeriği saran bir kapsayıcıya taşınır (onlar da süzülür)
+    let wrapped;
+    let src = match re(&BODY, r"(?is)<body\b([^>]*)>").captures(html).map(|c| c[1].to_string()) {
+        Some(attrs) if !attrs.trim().is_empty() => {
+            wrapped = format!("<div{attrs}>{html}</div>");
+            wrapped.as_str()
+        }
+        _ => html,
+    };
+    cleaner.clean(src).to_string()
 }
 
 #[cfg(test)]
@@ -84,5 +119,63 @@ mod tests {
         assert_eq!(text_to_html("a<b\nhttp://x.com"), "a&lt;b<br>\n<a href=\"http://x.com\">http://x.com</a>");
         let s = sanitize(r#"<p onclick="x()">a</p><script>alert(1)</script><a href="javascript:x">l</a>"#);
         assert!(!s.contains("onclick") && !s.contains("script") && !s.contains("javascript"));
+    }
+
+    /// Eski düzenli ifade temizleyicisinin kaçırdığı yazımlar da gider
+    #[test]
+    fn sanitize_strips_evasions() {
+        for evil in [
+            r#"<img/onerror=alert(1) src=x>"#,
+            r#"<img src=x OnError = "alert(1)">"#,
+            r#"<a href="jav&#x61;script:alert(1)">x</a>"#,
+            r#"<a href="  JaVaScRiPt:alert(1)">x</a>"#,
+            r#"<a href="java&#09;script:alert(1)">x</a>"#,
+            r#"<scr<script>ipt>alert(1)</script>"#,
+            r#"<svg onload=alert(1)><circle/></svg>"#,
+            r#"<math><mtext><img src=x onerror=alert(1)></mtext></math>"#,
+            r#"<iframe src="https://kotu.example"></iframe>"#,
+            r#"<object data="x.swf"></object><embed src="x.swf">"#,
+            r#"<form action="https://kotu.example"><input name=p type=password><button>Gir</button></form>"#,
+            r#"<meta http-equiv="refresh" content="0;url=https://kotu.example">"#,
+            r#"<base href="https://kotu.example/">"#,
+            r#"<link rel=stylesheet href="https://kotu.example/a.css">"#,
+            r#"<a href="data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==">x</a>"#,
+            r##"<body onload="alert(1)" bgcolor="#fff">x</body>"##,
+        ] {
+            let s = sanitize(evil).to_lowercase();
+            for bad in ["onerror", "onload", "javascript", "<script", "alert(1)</", "<iframe", "<object", "<embed", "<form", "<input", "<meta", "<base", "<link", "data:text", "<svg"] {
+                assert!(!s.contains(bad), "{evil} → {s}");
+            }
+        }
+    }
+
+    /// E-postanın görünüşü korunur: stiller, Word sınıfları, eski öznitelikler, gömülü görseller
+    #[test]
+    fn sanitize_keeps_mail_formatting() {
+        let src = r##"<html><head><title>Bülten</title><style><!-- p.MsoNormal {margin:0cm; font-family:"Calibri"} --></style></head>
+<body bgcolor="#eeeeee" style="margin:0"><table width="600" cellpadding="4" cellspacing="0" border="0" bgcolor="#ffffff" align="center"><tr><td valign="top" style="color:#333">
+<p class="MsoNormal"><font face="Arial" color="red" size="2">Merhaba</font></p>
+<img src="cid:logo@x" width="120" alt="logo"><img src="data:image/png;base64,iVBORw0KGgo=" alt="g">
+<a href="https://ornek.com.tr/kampanya" target="_blank"><table><tr><td>Düğme</td></tr></table></a>
+<a href="mailto:destek@ornek.com.tr">destek</a><center><b>son</b></center></td></tr></table></body></html>"##;
+        let s = sanitize(src);
+        for keep in [
+            "p.MsoNormal {margin:0cm",
+            r##"bgcolor="#eeeeee""##,
+            r#"style="margin:0""#,
+            r#"width="600""#,
+            r#"cellpadding="4""#,
+            r#"class="MsoNormal""#,
+            r#"<font face="Arial" color="red" size="2">"#,
+            r#"src="cid:logo@x""#,
+            r#"src="data:image/png;base64,iVBORw0KGgo=""#,
+            r#"href="mailto:destek@ornek.com.tr""#,
+            "<center>",
+        ] {
+            assert!(s.contains(keep), "{keep} kaybolmuş:\n{s}");
+        }
+        assert!(!s.contains("Bülten"), "başlık metni gövdede görünmemeli");
+        // Ön yüzdeki düğme düzeltmesi (bağlantının içindeki tablo) ham kalıbı görmeye devam eder
+        assert!(regex::Regex::new(r"(?s)<a\b[^>]*>(?:(?:[^<]|<[^/]|</[^a])*?)<table").unwrap().is_match(&s), "{s}");
     }
 }

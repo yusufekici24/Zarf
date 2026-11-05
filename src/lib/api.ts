@@ -16,6 +16,8 @@ export const api = {
   setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
   startupArgs: () => invoke<string[]>("startup_args"),
   appInfo: () => invoke<{ version: string; data_dir: string; readpst: boolean }>("app_info"),
+  storageInfo: () => invoke<{ size: number; free: number; incremental: boolean }>("storage_info"),
+  compactDatabase: () => invoke<{ before: number; after: number }>("compact_database"),
 
   // hesaplar
   listAccounts: () => invoke<Account[]>("list_accounts"),

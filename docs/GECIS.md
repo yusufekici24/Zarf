@@ -31,9 +31,8 @@ arka uçla gözden geçirildi. Exchange, Nextcloud ve çalışan Tauri uygulamas
 Lynora'nın kendi eksikleri:
 
 - Kişiler, Görevler ve Notlar şeritleri eski stilde, Giriş ve Yardım sekmeleri var
-- HTML temizleme üç düzenli ifadeden ibaret, asıl koruma CSP ve sandbox (`bleach` benzeri izin listesi gerekli)
 - Yinelenen etkinlikler beş kalıpla sınırlı
-- Arayüz testi yok
+- Arayüz testleri (`tests/ui`, sahte arka uçla) yalnızca posta ana ekranını ve Seçenekler → Veritabanı bölümünü kapsıyor
 
 ## Bilinen sınırlar
 

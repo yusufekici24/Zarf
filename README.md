@@ -38,6 +38,10 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 - Yazarken **Seçenekler** sekmesinde *İmzala*, *Şifrele* ve yöntem seçimi. Şifreli iletiye yanıt otomatik şifrelenir, Gönderilmiş kopyasını siz de okuyabilirsiniz.
 - **Ayarlar → Güven Merkezi:** Kişisel S/MIME sertifikası (.p12/.pfx) içe aktarma, OpenPGP anahtarı seçimi, varsayılan imzalama. Alıcı sertifikaları imzalı iletilerden otomatik toplanır, elle de eklenebilir.
 - Çözülen içerik diske ve veritabanına yazılmaz. Özel anahtar şifreli saklanır, parolası anahtarlıktadır. `openssl` ve `gnupg` paketleri gerekir (paket önerir).
+- **HTML temizleme:** Gelen HTML iletiler tarayıcıyla aynı HTML5 ayrıştırıcısı ve izin listesiyle temizlenir (ammonia).
+  Betik, olay işleyicisi, form, iframe, gömülü nesne, `<base>`, `<meta>` ve `javascript:` bağlantıları her yazımıyla
+  (kodlanmış, bölünmüş, büyük/küçük harf) atılır. Biçim korunur: stiller, Word/Outlook sınıfları, tablolar, gömülü görseller.
+  İleti ayrıca betik çalıştıramayan, içerik güvenlik politikalı (CSP) bir çerçevede gösterilir.
 
 **Dosyalar**
 - `.msg`, `.eml`, `.mbox`, `.ics`, `.vcf` açma ve içe aktarma; iletiyi `.msg`/`.eml` olarak kaydetme.
@@ -49,6 +53,41 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 - **Yedekle / geri yükle:** Tüm veriler tek dosyada, isteğe bağlı parolayla AES-256-GCM şifreli (Dosya > Aç ve Dışarı Aktar).
 - Türkçe ve İngilizce arayüz. Yeni dil eklemek kolaydır (aşağıya bakın).
 
+## Performans ve veritabanı
+
+- **Hızlı liste:** İleti gövdeleri ve özgün iletiler ayrı tabloda tutulur. Klasör açmak, kaydırmak ve sıralamak posta
+  kutusunun boyutundan bağımsızdır. Arka plan eşitlemesi listeyi yalnızca gerçekten bir şey değiştiğinde yeniler.
+- **Tam metin arama dizini (SQLite FTS5):** Arama konu, kişiler, gövde, kategori ve ek adlarında dizinden yapılır.
+  Türkçe harf ve aksan farkı gözetilmez (`AYDIN` ~ `aydın` ~ `aydin`, `Şükrü` ~ `sukru`), sözcük başları eşleşir.
+  Dizin içeriği ikinci kez saklamaz, yalnızca sözcükleri tutar (veritabanının yaklaşık %10'u).
+- **Konuşma görünümü:** "RE:/YNT:/Fw:" önekleri atılmış konu ayrı bir sütunda ve dizinde tutulur. Konuşmaları
+  listelemek, konuya göre sıralamak ve bir konuşmayı açmak tüm iletileri taramaz.
+- **Veritabanını küçültme:** **Seçenekler → Gelişmiş → Veritabanı** bölümü dosya boyutunu ve silinen postaların
+  bıraktığı kullanılmayan alanı gösterir. *Veritabanını sıkıştır* bu alanı geri alır; diskte yeterli yer yoksa başlamaz.
+  Sıkıştırmadan sonra (yeni kurulumlarda baştan) kullanılmayan alan arka planda kendiliğinden geri verilir.
+- **Yavaş sorgu günlüğü:** 200 ms'yi aşan veritabanı işlemleri `~/.local/share/lynora/slow-queries.log` dosyasına
+  yazılır. Yalnızca SQL metni yazılır, ileti içeriği ve adresler yazılmaz; dosya 1 MB'ı aşınca `.1` olarak kenara alınır.
+  Yavaşlık bildirirken bu dosyayı ekleyin.
+
+Sentetik posta kutularında ölçülen süreler:
+
+| İşlem | Önce | 1.3.0 |
+|---|---|---|
+| Klasörü açma, ilk sayfa (6 bin ileti, 1,5 GB) | 186 ms | 1–2 ms |
+| Tüm kutularda arama (30 bin ileti, 1 GB) | 1–5 sn | 3–50 ms |
+| Konuşma görünümü (30 bin ileti) | 130 ms | 9–12 ms |
+| Bir konuşmayı açma (30 bin ileti) | 127 ms | < 0,1 ms |
+
+İki harflik önek araması (ör. `ka`) çok sayıda sözcüğü kapsadığı için yaklaşık 0,2 sn sürer.
+
+### Sürüm yükseltme
+
+1.1.0 ve öncesinden yükseltince veritabanı ilk açılışta **bir kez** yeni düzene geçer. Bu sırada açılış ekranında
+"Veritabanı yeni sürüme hazırlanıyor (yalnızca bir kez)…" yazar (1,5 GB'lık posta kutusunda birkaç saniye). Geçiş
+yarıda kesilirse sonraki açılışta kaldığı yerden sürer, dosya büyümez. Arama dizini eski iletiler için arka planda
+kurulur (30 bin iletide birkaç saniye); bitene kadar arama eski yöntemle çalışır. Yeni düzene geçen veritabanını
+eski sürümler açamaz: geri dönmek için yükseltmeden önce alınmış bir yedek gerekir.
+
 ## Kurulum
 
 | Dağıtım | Paket |
@@ -56,7 +95,7 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 | Ubuntu 24.04 ve sonrası, Debian 13 ve türevleri (glibc 2.39+) | `Lynora_*_amd64.deb` |
 
 ```sh
-sudo apt install ./Lynora_1.1.0_amd64.deb      # bağımlılıklar otomatik kurulur
+sudo apt install ./Lynora_1.3.0_amd64.deb      # bağımlılıklar otomatik kurulur
 ```
 
 Paketler GitHub **Releases** sayfasında yayımlanır. Debian 12, Ubuntu 22.04 ve Pardus 23 gibi eski dağıtımlar için
@@ -104,6 +143,7 @@ Testler:
 
 ```sh
 cd src-tauri && cargo test             # birim testleri
+npm run test:ui                        # arayüz testleri (Playwright, sahte arka uçla; sistemdeki Google Chrome kullanılır)
 # Gerçek sunuculara karşı uçtan uca testler (isteğe bağlı): tests/e2e_mail.rs ve tests/e2e_dav.rs içindeki açıklamalara bakın
 ```
 

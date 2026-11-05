@@ -1178,6 +1178,7 @@ impl Worker {
         if self.db.account(account_id).map(|a| a.is_exchange()).unwrap_or(false) {
             return self.ews_sync_account(account_id);
         }
+        let before = self.db.total_changes();
         self.sync_folder_list(account_id)?;
         let mut new = Vec::new();
         for f in self.db.folders(Some(account_id)) {
@@ -1189,7 +1190,10 @@ impl Worker {
                 Err(e) => (self.emit)("mail://error", json!(e.message())),
             }
         }
-        self.emit_changed(None);
+        // Hiçbir şey değişmediyse arayüz yenilenmez
+        if !new.is_empty() || self.db.total_changes() != before {
+            self.emit_changed(None);
+        }
         self.emit_new(new);
         Ok(())
     }

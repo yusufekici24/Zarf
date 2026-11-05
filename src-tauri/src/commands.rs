@@ -2653,6 +2653,26 @@ pub fn app_info() -> Value {
     })
 }
 
+/// Veritabanı boyutu ve içindeki kullanılmayan alan (Seçenekler → Gelişmiş → Veritabanı)
+#[tauri::command(async)]
+pub fn storage_info(state: State<AppState>) -> Value {
+    let (size, free, incremental) = state.db.storage_info();
+    json!({ "size": size, "free": free, "incremental": incremental })
+}
+
+/// Veritabanını sıkıştırır. Geçici kopya ve günlük için diskte veritabanının iki katı kadar boş
+/// yer aranır (yoksa hiç başlanmaz; yarıda dolan disk de veritabanını bozmaz, VACUUM bölünmez).
+#[tauri::command(async)]
+pub fn compact_database(state: State<AppState>) -> R<Value> {
+    let (size, ..) = state.db.storage_info();
+    let need = size.max(0) as u64 * 2;
+    if state.db.free_disk_space().is_some_and(|free| free < need) {
+        return Err(t!("settings.compact_nospace", format!("{:.1} GB", need as f64 / 1e9)));
+    }
+    let (before, after) = state.db.compact().map_err(|e| e.to_string())?;
+    Ok(json!({ "before": before, "after": after }))
+}
+
 /// Ön yüz hatalarını standart hata çıktısına yazar (sorun giderme için).
 #[tauri::command(async)]
 pub fn frontend_log(level: String, message: String) {

@@ -32,7 +32,9 @@ class MailState {
   searchAll = $state(false);
   /** İlişkili Bul öncesindeki "tüm posta kutuları" seçimi (arama temizlenince geri yüklenir) */
   searchAllPrev: boolean | null = null;
-  messages = $state<MessageRow[]>([]);
+  /** Satırlar hiç yerinde değiştirilmez (her değişiklik yeni dizi atar): derin vekil gerekmez,
+   *  binlerce satırda okuma ve atama ucuz kalır */
+  messages = $state.raw<MessageRow[]>([]);
   selected = $state<number[]>([]);
   anchor = $state<number | null>(null);
   current = $state<MessageView | null>(null);
@@ -180,7 +182,7 @@ class MailState {
       const want = keep ? Math.min(Math.max(PAGE, this.messages.length), 5000) : PAGE;
       const r = await this.query(0, want);
       if (seq !== this.loadSeq) return;
-      this.messages = r.rows;
+      this.messages = keep ? this.reuse(r.rows) : r.rows;
       this.total = r.total;
       this.localDone = r.rows.length < want;
       if (app.search.trim()) void this.searchServer();
@@ -194,6 +196,18 @@ class MailState {
     } finally {
       if (seq === this.loadSeq) this.loading = false;
     }
+  }
+
+  /** Yenilemede değişmeyen satırlar eski nesnesiyle kalır: listede yeniden biçimlenmez ve çizilmez */
+  private reuse(rows: MessageRow[]): MessageRow[] {
+    if (!this.messages.length) return rows;
+    const old = new Map(this.messages.map((m) => [m.id, m]));
+    return rows.map((r) => {
+      const o = old.get(r.id);
+      if (!o) return r;
+      for (const k in r) if (r[k as keyof MessageRow] !== o[k as keyof MessageRow]) return r;
+      return o;
+    });
   }
 
   /** Eşitleme olayları için birleştirilmiş, gecikmeli yenileme (en fazla ~3/sn). */

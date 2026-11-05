@@ -216,8 +216,12 @@ impl Worker {
     /// Hesap eşitleme: klasör listesi, sonra her klasör ayrı iş olarak (Gelen Kutusu önce),
     /// ardından takvim ve kişiler. Böylece kullanıcının tıkladığı klasör araya girebilir.
     pub fn ews_sync_account(&mut self, account_id: i64) -> MailResult<()> {
+        // Arayüz (klasör ağacı ve liste) yalnızca gerçekten bir şey değiştiyse yenilenir
+        let before = self.db.total_changes();
         self.ews_sync_folder_list(account_id)?;
-        self.emit_changed(None);
+        if self.db.total_changes() != before {
+            self.emit_changed(None);
+        }
         let mut folders: Vec<Folder> = self.db.folders(Some(account_id)).into_iter().filter(|f| f.remote_name.is_some()).collect();
         let rank = |f: &Folder| match f.role.as_deref() {
             Some("inbox") => 0,
@@ -230,8 +234,11 @@ impl Worker {
             let fid = f.id;
             let job = move |w: &mut Worker| {
                 let Some(f) = w.db.folder(fid) else { return Ok(()) };
+                let before = w.db.total_changes();
                 let new = w.ews_sync_folder(account_id, &f)?;
-                w.emit_changed(Some(fid));
+                if !new.is_empty() || w.db.total_changes() != before {
+                    w.emit_changed(Some(fid));
+                }
                 w.emit_new(new);
                 Ok(())
             };

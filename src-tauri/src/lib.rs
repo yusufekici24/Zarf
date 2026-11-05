@@ -169,7 +169,14 @@ pub fn run() {
         return;
     }
     i18n::init(None);
-    let db = db::Db::open_default().expect("veritabanı açılamadı");
+    // Önceki sürümün veritabanı bir kez yeni düzene taşınır (büyük posta kutusunda sürebilir:
+    // bu sırada açılış ekranı görünür, uygulama açılmıyor sanılmaz)
+    let db = if db::Db::needs_upgrade(&db::default_data_dir().join("lynora.db")) {
+        splash::wait_with_splash(&t!("splash.upgrading"), db::Db::open_default)
+    } else {
+        db::Db::open_default()
+    }
+    .expect("veritabanı açılamadı");
     oauth::init(db.clone());
     // Eski sürümlerin karıştırılmış parolaları/belirteçleri güvenli biçime taşınır
     // (anahtarlık kilit açma sorabileceği için açılışı bekletmez)
@@ -318,6 +325,33 @@ pub fn run() {
                     while dba.backfill_att_names(100) > 0 {
                         std::thread::sleep(Duration::from_millis(300));
                     }
+                })
+                .ok();
+
+            // Arama dizini eski iletiler için bir kez, arka planda ve parça parça kurulur
+            // (yeni iletiler zaten dizinlenir; bitene kadar arama dizinsiz sürer)
+            let dbs = db.clone();
+            std::thread::Builder::new()
+                .name("lynora-search-index".into())
+                .spawn(move || {
+                    std::thread::sleep(Duration::from_secs(8));
+                    while dbs.build_search_index(200) {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                })
+                .ok();
+
+            // Silinen postaların boşalttığı alan (artımlı küçültme kipindeki veritabanında) saatte
+            // bir, parça parça dosyadan geri verilir
+            let dbv = db.clone();
+            std::thread::Builder::new()
+                .name("lynora-reclaim".into())
+                .spawn(move || loop {
+                    std::thread::sleep(Duration::from_secs(600));
+                    while dbv.reclaim_free_space(2000) > 0 {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    std::thread::sleep(Duration::from_secs(3000));
                 })
                 .ok();
 
@@ -519,6 +553,8 @@ pub fn run() {
             windows::set_window_kind,
             commands::dismiss_reminder,
             commands::app_info,
+            commands::storage_info,
+            commands::compact_database,
             commands::system_identity,
             commands::discover_account,
             commands::suggest_recipients,

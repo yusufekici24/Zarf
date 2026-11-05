@@ -8,7 +8,26 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 pub type Result<T> = rusqlite::Result<T>;
 
-const SCHEMA: &str = r#"
+/// İleti tablosunun sütunları: yalnızca küçük alanlar. Gövdeler ve özgün ileti `message_content`
+/// tablosundadır: satırın ortasındaki büyük bir alanın ardındaki sütunu (ör. remote_id) okumak
+/// için SQLite tüm taşma sayfalarını yürür; liste ve taramalar böylece ileti boyutundan bağımsızdır.
+/// 1.2.0 geçişi yeni tabloyu da bununla kurar.
+macro_rules! messages_columns {
+    () => {
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,
+    folder_id INTEGER NOT NULL, account_id INTEGER, uid INTEGER,
+    message_id TEXT DEFAULT '', in_reply_to TEXT DEFAULT '', refs TEXT DEFAULT '',
+    subject TEXT DEFAULT '', sender TEXT DEFAULT '', to_addr TEXT DEFAULT '',
+    cc TEXT DEFAULT '', bcc TEXT DEFAULT '', date REAL DEFAULT 0,
+    snippet TEXT DEFAULT '', is_read INTEGER DEFAULT 0, is_flagged INTEGER DEFAULT 0,
+    is_draft INTEGER DEFAULT 0, is_answered INTEGER DEFAULT 0, importance INTEGER DEFAULT 1,
+    categories TEXT DEFAULT '', has_attachments INTEGER DEFAULT 0, pending TEXT DEFAULT '',
+    FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE CASCADE"
+    };
+}
+
+const SCHEMA: &str = concat!(
+    r#"
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,21 +44,16 @@ CREATE TABLE IF NOT EXISTS folders (
     parent_id INTEGER, uidvalidity INTEGER DEFAULT 0, position INTEGER DEFAULT 100,
     FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
 );
-CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    folder_id INTEGER NOT NULL, account_id INTEGER, uid INTEGER,
-    message_id TEXT DEFAULT '', in_reply_to TEXT DEFAULT '', refs TEXT DEFAULT '',
-    subject TEXT DEFAULT '', sender TEXT DEFAULT '', to_addr TEXT DEFAULT '',
-    cc TEXT DEFAULT '', bcc TEXT DEFAULT '', date REAL DEFAULT 0,
-    snippet TEXT DEFAULT '', body_text TEXT DEFAULT '', body_html TEXT DEFAULT '',
-    raw BLOB, is_read INTEGER DEFAULT 0, is_flagged INTEGER DEFAULT 0,
-    is_draft INTEGER DEFAULT 0, is_answered INTEGER DEFAULT 0, importance INTEGER DEFAULT 1,
-    categories TEXT DEFAULT '', has_attachments INTEGER DEFAULT 0, pending TEXT DEFAULT '',
-    FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE CASCADE
-);
+CREATE TABLE IF NOT EXISTS messages ("#,
+    messages_columns!(),
+    r#");
 CREATE INDEX IF NOT EXISTS idx_messages_folder ON messages(folder_id, date);
 CREATE INDEX IF NOT EXISTS idx_messages_uid ON messages(folder_id, uid);
 CREATE INDEX IF NOT EXISTS idx_messages_mid ON messages(message_id);
+CREATE TABLE IF NOT EXISTS message_content (
+    id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    body_text TEXT NOT NULL DEFAULT '', body_html TEXT NOT NULL DEFAULT '', raw BLOB
+);
 CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     first_name TEXT DEFAULT '', last_name TEXT DEFAULT '', display_name TEXT DEFAULT '',
@@ -92,7 +106,155 @@ CREATE TABLE IF NOT EXISTS dismissed_reminders (key TEXT PRIMARY KEY, until REAL
 CREATE TABLE IF NOT EXISTS recipients (
     email TEXT PRIMARY KEY, name TEXT DEFAULT '', count INTEGER DEFAULT 0, last_used REAL DEFAULT 0
 );
-"#;
+"#
+);
+
+/// Aramada ileti gövdesi (WHERE içinde `FROM messages` satırına göre)
+const BODY_TEXT_SQL: &str = "(SELECT body_text FROM message_content WHERE message_content.id = messages.id)";
+
+/// Tam metin arama dizini (FTS5). Metinler aramayla aynı katlamayla (`lyn_fold`: büyük/küçük
+/// harf, Türkçe İ/ı, aksan) dizinlenir; içerik ikinci kez saklanmaz, yalnızca dizin tutulur.
+/// Böyle bir dizinden satır, dizinlenmiş değerleri yeniden verilerek ('delete' komutu) çıkarılır:
+/// tetikleyiciler bu yüzden eski değerleri katlar (ileti silinirken gövdesi henüz yerindedir;
+/// gövde UPSERT ile yazılır, eskisi görülür). `contentless_delete` kipi bu iş yükünde (her
+/// iletide çıkar + ekle) dizin büyüdükçe çok yavaşlıyor (30 bin iletide ileti başına 1 ms'den
+/// 26 ms'ye); bu yol sabit kalır (~0,5 ms). Eski iletiler `build_search_index` ile arka planda
+/// eklenir: henüz eklenmemiş aralıktaki (`fts_build`) iletileri tetikleyiciler atlar, kurucu
+/// onları o anki hâlleriyle ekler. Sütun adları aramadaki alan adlarıdır.
+/// Katlama ya da sözcük ayırma değişirse FTS_VERSION artırılır: dizin baştan kurulur.
+const FTS_VERSION: &str = "1";
+macro_rules! fts_row {
+    ($m:literal, $body:literal) => {
+        concat!(
+            "lyn_fold(", $m, ".subject), lyn_fold(", $m, ".sender), lyn_fold(", $m, ".to_addr), lyn_fold(", $m, ".cc), lyn_fold(",
+            $body, "), lyn_fold(", $m, ".categories), lyn_fold(", $m, ".att_names)"
+        )
+    };
+}
+macro_rules! fts_insert {
+    () => {
+        "INSERT INTO message_fts(rowid, subject, sender, to_addr, cc, body_text, categories, att_names)"
+    };
+}
+macro_rules! fts_delete {
+    () => {
+        "INSERT INTO message_fts(message_fts, rowid, subject, sender, to_addr, cc, body_text, categories, att_names)"
+    };
+}
+/// Satır dizinin bakımında mı (arka plan kurulumunun henüz gelmediği aralıkta değil)
+macro_rules! fts_live {
+    ($id:literal) => {
+        concat!("NOT EXISTS (SELECT 1 FROM fts_build WHERE ", $id, " > pos AND ", $id, " <= last)")
+    };
+}
+const FTS_TRIGGERS: &[&str] = &["message_fts_ins", "message_fts_upd", "message_fts_del", "message_fts_body", "message_fts_body_upd"];
+const FTS_SCHEMA: &str = concat!(
+    r#"
+CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(
+    subject, sender, to_addr, cc, body_text, categories, att_names, content = '',
+    tokenize = "unicode61 remove_diacritics 0 categories 'L* N* Co M*'"
+);
+CREATE TABLE IF NOT EXISTS fts_build (pos INTEGER NOT NULL, last INTEGER NOT NULL);
+CREATE TRIGGER IF NOT EXISTS message_fts_ins AFTER INSERT ON messages WHEN "#,
+    fts_live!("new.id"),
+    " BEGIN\n    ",
+    fts_insert!(),
+    " VALUES (new.id, ",
+    fts_row!("new", "''"),
+    r#");
+END;
+CREATE TRIGGER IF NOT EXISTS message_fts_upd AFTER UPDATE OF subject, sender, to_addr, cc, categories, att_names ON messages
+WHEN (old.subject IS NOT new.subject OR old.sender IS NOT new.sender OR old.to_addr IS NOT new.to_addr
+    OR old.cc IS NOT new.cc OR old.categories IS NOT new.categories OR old.att_names IS NOT new.att_names) AND "#,
+    fts_live!("new.id"),
+    " BEGIN\n    ",
+    fts_delete!(),
+    " VALUES ('delete', old.id, ",
+    fts_row!("old", "(SELECT body_text FROM message_content WHERE id = old.id)"),
+    ");\n    ",
+    fts_insert!(),
+    " VALUES (new.id, ",
+    fts_row!("new", "(SELECT body_text FROM message_content WHERE id = new.id)"),
+    r#");
+END;
+CREATE TRIGGER IF NOT EXISTS message_fts_del BEFORE DELETE ON messages WHEN "#,
+    fts_live!("old.id"),
+    " BEGIN\n    ",
+    fts_delete!(),
+    " VALUES ('delete', old.id, ",
+    fts_row!("old", "(SELECT body_text FROM message_content WHERE id = old.id)"),
+    r#");
+END;
+CREATE TRIGGER IF NOT EXISTS message_fts_body AFTER INSERT ON message_content WHEN "#,
+    fts_live!("new.id"),
+    " BEGIN\n    ",
+    fts_delete!(),
+    " SELECT 'delete', m.id, ",
+    fts_row!("m", "''"),
+    " FROM messages m WHERE m.id = new.id;\n    ",
+    fts_insert!(),
+    " SELECT m.id, ",
+    fts_row!("m", "new.body_text"),
+    r#" FROM messages m WHERE m.id = new.id;
+END;
+CREATE TRIGGER IF NOT EXISTS message_fts_body_upd AFTER UPDATE OF body_text ON message_content
+WHEN old.body_text IS NOT new.body_text AND "#,
+    fts_live!("new.id"),
+    " BEGIN\n    ",
+    fts_delete!(),
+    " SELECT 'delete', m.id, ",
+    fts_row!("m", "old.body_text"),
+    " FROM messages m WHERE m.id = new.id;\n    ",
+    fts_insert!(),
+    " SELECT m.id, ",
+    fts_row!("m", "new.body_text"),
+    r#" FROM messages m WHERE m.id = new.id;
+END;
+"#
+);
+
+/// Okuma bağlantısı sayısı: arayüz okumaları arka plan okumalarını (eşitleme, ek adı
+/// doldurma, gövde araması) beklemesin
+const READERS: usize = 3;
+
+/// Yavaş sorgu günlüğü: bu süreyi aşan SQL ifadeleri veri klasöründeki `slow-queries.log`'a
+/// yazılır (kullanıcının makinesindeki yavaşlık tahminle değil günlükten teşhis edilsin).
+/// Yalnızca ifadenin metni yazılır, parametreler (ileti içeriği, adresler) yazılmaz.
+const SLOW_QUERY_MS: u128 = 200;
+/// Günlük bu boyutu aşınca `.1` uzantısıyla kenara alınır (en çok iki dosya)
+const SLOW_LOG_MAX: u64 = 1 << 20;
+static SLOW_LOG: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Günlük satırı (eşiğin altındaysa None): zaman, süre, iş parçacığı ve tek satıra indirilmiş SQL
+fn slow_query_line(sql: &str, d: std::time::Duration) -> Option<String> {
+    if d.as_millis() < SLOW_QUERY_MS {
+        return None;
+    }
+    let mut sql = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    if let Some((i, _)) = sql.char_indices().nth(600) {
+        sql.truncate(i);
+        sql.push('…');
+    }
+    let thread = std::thread::current().name().unwrap_or("?").to_string();
+    Some(format!("[{}] {} ms [{thread}] {sql}\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), d.as_millis()))
+}
+
+fn append_slow_log(path: &std::path::Path, line: &str) {
+    use std::io::Write;
+    if std::fs::metadata(path).is_ok_and(|m| m.len() > SLOW_LOG_MAX) {
+        let _ = std::fs::rename(path, path.with_extension("log.1"));
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// SQLite'ın her ifade bitince çağırdığı ölçüm (bağlantı başına `Connection::profile`)
+fn log_slow_query(sql: &str, d: std::time::Duration) {
+    if let (Some(path), Some(line)) = (SLOW_LOG.get(), slow_query_line(sql, d)) {
+        append_slow_log(path, &line);
+    }
+}
 
 /// Sonradan eklenen sütunlar (eski veritabanlarını yükseltmek için).
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -117,6 +279,9 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("messages", "is_pinned", "INTEGER DEFAULT 0"),
     // Eklerin adları (satır başına bir ad): aramada ek önerileri ve "ekadı:" araması
     ("messages", "att_names", "TEXT DEFAULT ''"),
+    // "RE:/YNT:" önekleri atılmış, küçük harfli konu (konuşma görünümü ve konuya göre sıralama
+    // dizinden yapılır; her satırda konu yeniden çözülmez)
+    ("messages", "ns", "TEXT"),
     ("rules", "remote_id", "TEXT"),
     ("rules", "remote_xml", "TEXT DEFAULT ''"),
     ("rules", "complex", "INTEGER DEFAULT 0"),
@@ -427,6 +592,14 @@ fn like_pattern(word: &str) -> String {
         })
         .collect();
     format!("%{w}%")
+}
+
+/// Arama dizini sorgusu: sözcüklerin hepsi verilen sütunlardan birinde sözcük başı olarak geçmeli
+/// (`{subject sender} : ("ahmet"* AND "aydin"*)`). Sözcükler search_words'ten gelir (katlanmış,
+/// yalnızca harf/rakam) ve dizindeki metin de aynı katlamayla yazılmıştır.
+fn fts_query(cols: &[&str], words: &[String]) -> String {
+    let terms: Vec<String> = words.iter().map(|w| format!("\"{}\"*", w.replace('"', "\"\""))).collect();
+    format!("{{{}}} : ({})", cols.join(" "), terms.join(" AND "))
 }
 
 /// Kayıtlı ad/adres çiftini Outlook gibi temizler (tırnaklar, görünmez karakterler, kodlu adlar)
@@ -823,9 +996,13 @@ pub fn split_list(s: &str) -> Vec<String> {
 #[derive(Clone)]
 pub struct Db {
     conn: Arc<Mutex<Connection>>,
-    /// Yalnızca okuma bağlantısı (WAL: yazma sürerken de okur). Eşitleme uzun yazma
-    /// yaparken ileti açma, liste, klasör ağacı gibi arayüz okumaları onu beklemez.
-    reader: Arc<Mutex<Connection>>,
+    /// Yalnızca okuma bağlantıları (WAL: yazma sürerken de okur). Eşitleme uzun yazma
+    /// yaparken ileti açma, liste, klasör ağacı gibi arayüz okumaları onu beklemez; birden
+    /// çok olduğu için bir okuma da ötekini beklemez.
+    readers: Arc<Vec<Arc<Mutex<Connection>>>>,
+    /// Tam metin arama dizini tüm iletileri kapsıyor mu (eski iletiler arka planda dizinlenirken
+    /// arama dizinsiz yoldan yapılır)
+    fts_ready: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub fn default_data_dir() -> PathBuf {
@@ -963,6 +1140,23 @@ impl Db {
                 Ok(words_match(&text, &words, phrase != 0))
             },
         )?;
+        // Arama dizini için katlanmış metin (aranan sözcükler de search_words ile aynı biçime gelir)
+        conn.create_scalar_function(
+            "lyn_fold",
+            1,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8 | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+            // Tetikleyicilerde çalışır: hiçbir değerde hata vermemeli (ileti yazılamaz olurdu)
+            |ctx| {
+                use rusqlite::types::ValueRef;
+                let s = match ctx.get_raw(0) {
+                    ValueRef::Text(t) | ValueRef::Blob(t) => String::from_utf8_lossy(t).into_owned(),
+                    ValueRef::Integer(i) => i.to_string(),
+                    ValueRef::Real(f) => f.to_string(),
+                    ValueRef::Null => String::new(),
+                };
+                Ok(search_fold(&s))
+            },
+        )?;
         conn.create_scalar_function(
             "lyn_norm_subject",
             1,
@@ -976,24 +1170,198 @@ impl Db {
 
     fn open_reader(path: &std::path::Path) -> Result<Connection> {
         use rusqlite::OpenFlags;
-        let r = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI)?;
-        r.execute_batch("PRAGMA temp_store = MEMORY; PRAGMA cache_size = -32000; PRAGMA busy_timeout = 5000;")?;
+        let mut r = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI)?;
+        r.execute_batch("PRAGMA temp_store = MEMORY; PRAGMA cache_size = -16000; PRAGMA busy_timeout = 5000;")?;
         Self::register_functions(&r)?;
+        r.profile(Some(log_slow_query));
         Ok(r)
     }
 
-    fn init(conn: Connection, path: Option<std::path::PathBuf>) -> Result<Self> {
-        conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -32000; PRAGMA busy_timeout = 5000;")?;
+    fn has_column(conn: &Connection, table: &str, col: &str) -> Result<bool> {
+        conn.prepare(&format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"))?.exists([col])
+    }
+
+    /// Veritabanı eski düzende mi (1.1.0: gövdeler satırda; 1.2.0: konu sütunu yok): açılışta bir
+    /// kez yapılacak geçiş uzun sürebileceği için önceden açılış ekranı gösterilir
+    pub fn needs_upgrade(path: &std::path::Path) -> bool {
+        use rusqlite::OpenFlags;
+        path.exists()
+            && Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .and_then(|c| Ok(Self::has_column(&c, "messages", "raw")? || !Self::has_column(&c, "messages", "ns")?))
+                .unwrap_or(false)
+    }
+
+    /// 1.2.0 geçişi: ileti gövdeleri ve özgün ileti (body_text, body_html, raw) `message_content`
+    /// tablosuna taşınır. Eski düzende bu alanlar satırın ortasındaydı; ardından gelen remote_id,
+    /// att_names gibi sütunları okumak her iletide tüm taşma sayfalarını yürüyordu (liste ve
+    /// taramalar 15-50 kat yavaştı). Bir kez çalışır, yarıda kesilirse kaldığı yerden sürer.
+    /// Gövdeler küçük parçalar halinde taşınıp eski satırdan silindiği için boşalan sayfalar
+    /// hemen yeniden kullanılır: dosya büyümez, yalnızca son adım (küçük alanlar) tek işlemdir.
+    fn split_message_content(conn: &mut Connection) -> Result<bool> {
+        if !Self::has_column(conn, "messages", "raw")? {
+            return Ok(false);
+        }
+        let has_content = "(length(raw) > 0 OR body_text <> '' OR body_html <> '')";
+        let max_id: i64 = conn.query_row("SELECT COALESCE(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
+        let mut from = 0;
+        while from < max_id {
+            let to = from + 100;
+            let tx = conn.transaction()?;
+            tx.execute(
+                &format!(
+                    "INSERT OR REPLACE INTO message_content(id, body_text, body_html, raw) \
+                     SELECT id, COALESCE(body_text, ''), COALESCE(body_html, ''), raw FROM messages \
+                     WHERE id > ?1 AND id <= ?2 AND {has_content}"
+                ),
+                [from, to],
+            )?;
+            tx.execute(&format!("UPDATE messages SET body_text = '', body_html = '', raw = NULL WHERE id > ?1 AND id <= ?2 AND {has_content}"), [from, to])?;
+            tx.commit()?;
+            from = to;
+        }
+        // Silinmiş iletilerin kimlikleri yeniden verilmesin (görevler ileti kimliğini tutar)
+        let seq: i64 = conn.query_row("SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'messages'), 0)", [], |r| r.get(0))?;
+        // Tablo değişirken yabancı anahtar eylemleri kapalı: açıkken DROP TABLE gövdeleri de siler
+        conn.execute_batch("PRAGMA foreign_keys = OFF")?;
+        let rebuilt = Self::rebuild_messages(conn, seq);
+        conn.execute_batch("PRAGMA foreign_keys = ON")?;
+        rebuilt?;
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+        Ok(true)
+    }
+
+    /// Gövdeleri boşaltılmış eski tablonun yerine küçük alanlı yeni tablo (sütun sırası temiz
+    /// kurulumdakiyle aynı; sonradan eklenen sütunlar da en sonda)
+    fn rebuild_messages(conn: &mut Connection, seq: i64) -> Result<()> {
+        let tx = conn.transaction()?;
+        tx.execute_batch(concat!("CREATE TABLE messages_new (", messages_columns!(), ")"))?;
+        for (_, col, ddl) in MIGRATIONS.iter().filter(|m| m.0 == "messages") {
+            tx.execute_batch(&format!("ALTER TABLE messages_new ADD COLUMN {col} {ddl}"))?;
+        }
+        let cols: Vec<String> = {
+            let mut st = tx.prepare("SELECT name FROM pragma_table_info('messages_new') WHERE name IN (SELECT name FROM pragma_table_info('messages'))")?;
+            let cols = st.query_map([], |r| r.get(0))?.collect::<Result<Vec<String>>>()?;
+            cols
+        };
+        let list = cols.join(", ");
+        tx.execute_batch(&format!(
+            "INSERT INTO messages_new({list}) SELECT {list} FROM messages; DROP TABLE messages; ALTER TABLE messages_new RENAME TO messages;"
+        ))?;
+        if tx.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?1) WHERE name = 'messages'", [seq])? == 0 && seq > 0 {
+            tx.execute("INSERT INTO sqlite_sequence(name, seq) VALUES ('messages', ?1)", [seq])?;
+        }
+        tx.commit()
+    }
+
+    /// 1.3.0: konuşma görünümü için arındırılmış konu (`ns`) bir kez doldurulur, konu değişince
+    /// tetikleyiciyle güncellenir (yeni iletide insert_message yazar); gruplama ve sıralama dizinden
+    fn init_subject_index(conn: &Connection) -> Result<()> {
+        let tx = conn.unchecked_transaction()?;
+        if !tx.prepare("SELECT 1 FROM settings WHERE key = 'subject_index_v1'")?.exists([])? {
+            tx.execute_batch(
+                "UPDATE messages SET ns = lyn_norm_subject(subject) WHERE ns IS NULL OR ns <> lyn_norm_subject(subject); \
+                 INSERT OR REPLACE INTO settings(key, value) VALUES ('subject_index_v1', '1');",
+            )?;
+        }
+        tx.execute_batch(
+            "CREATE TRIGGER IF NOT EXISTS messages_ns AFTER UPDATE OF subject ON messages WHEN old.subject IS NOT new.subject BEGIN \
+                 UPDATE messages SET ns = lyn_norm_subject(new.subject) WHERE id = new.id; \
+             END; \
+             CREATE INDEX IF NOT EXISTS idx_messages_ns ON messages(folder_id, ns, date); \
+             CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(ns);",
+        )?;
+        tx.commit()
+    }
+
+    /// 1.3.0: arama dizini yoksa (ya da sürümü eskiyse) kurulur. O ana kadarki iletiler dizine
+    /// arka planda eklenir (`build_search_index`); nereye gelindiği `fts_build` tablosunda
+    /// tutulur, uygulama kapanırsa kaldığı yerden sürer. Döner: dizin tüm iletileri kapsıyor mu.
+    fn init_search_index(conn: &Connection) -> Result<bool> {
+        let tx = conn.unchecked_transaction()?;
+        let version: Option<String> = tx.query_row("SELECT value FROM settings WHERE key = 'fts_version'", [], |r| r.get(0)).optional()?;
+        if version.as_deref() != Some(FTS_VERSION) {
+            for t in FTS_TRIGGERS {
+                tx.execute_batch(&format!("DROP TRIGGER IF EXISTS {t}"))?;
+            }
+            tx.execute_batch("DROP TABLE IF EXISTS message_fts; DROP TABLE IF EXISTS fts_build;")?;
+            tx.execute_batch(FTS_SCHEMA)?;
+            let last: i64 = tx.query_row("SELECT COALESCE(MAX(id), 0) FROM messages", [], |r| r.get(0))?;
+            if last > 0 {
+                tx.execute("INSERT INTO fts_build(pos, last) VALUES (0, ?1)", [last])?;
+            }
+            tx.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('fts_version', ?1)", [FTS_VERSION])?;
+        } else {
+            // 1.2.0 geçişi ileti tablosunu yeniden kurduysa tetikleyicileri de gitmiştir
+            tx.execute_batch(FTS_SCHEMA)?;
+        }
+        let ready = !tx.prepare("SELECT 1 FROM fts_build")?.exists([])?;
+        tx.commit()?;
+        Ok(ready)
+    }
+
+    /// Arama dizinine eski iletilerden bir parça ekler (arka plan işi; yazma kilidi her parçada
+    /// kısa süre tutulur). Döner: iş kaldı mı. Dizin tamamlanınca arama ona geçer.
+    pub fn build_search_index(&self, batch: i64) -> bool {
+        use std::sync::atomic::Ordering;
+        if self.fts_ready.load(Ordering::Relaxed) {
+            return false;
+        }
+        match Self::search_index_step(&mut self.conn(), batch) {
+            Ok(true) => {
+                self.fts_ready.store(true, Ordering::Relaxed);
+                false
+            }
+            Ok(false) => true,
+            // Dizin kurulamıyorsa arama dizinsiz yoldan sürer
+            Err(e) => {
+                eprintln!("lynora arama dizini: {e}");
+                false
+            }
+        }
+    }
+
+    /// Döner: dizin tamamlandı mı
+    fn search_index_step(c: &mut Connection, batch: i64) -> Result<bool> {
+        let tx = c.transaction()?;
+        let Some((pos, last)) = tx.query_row("SELECT pos, last FROM fts_build", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).optional()? else {
+            return Ok(true);
+        };
+        let to = (pos + batch).min(last);
+        tx.execute(
+            concat!(fts_insert!(), " SELECT m.id, ", fts_row!("m", "c.body_text"), " FROM messages m LEFT JOIN message_content c ON c.id = m.id WHERE m.id > ?1 AND m.id <= ?2"),
+            [pos, to],
+        )?;
+        let done = to >= last;
+        if done {
+            tx.execute("DELETE FROM fts_build", [])?;
+        } else {
+            tx.execute("UPDATE fts_build SET pos = ?1", [to])?;
+        }
+        tx.commit()?;
+        Ok(done)
+    }
+
+    fn init(mut conn: Connection, path: Option<std::path::PathBuf>) -> Result<Self> {
+        // Artımlı küçültme: yeni veritabanında hemen, eskisinde ilk sıkıştırmada (VACUUM) geçerli olur
+        conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -32000; PRAGMA busy_timeout = 5000;")?;
         Self::register_functions(&conn)?;
+        // Bellek içi veritabanı (testler) ölçülmez: günlük yalnızca gerçek veri klasörüne yazılır
+        if let Some(p) = path.as_deref() {
+            SLOW_LOG.get_or_init(|| p.with_file_name("slow-queries.log"));
+            conn.profile(Some(log_slow_query));
+        }
         conn.execute_batch(SCHEMA)?;
         for (table, col, ddl) in MIGRATIONS {
-            let exists: bool = conn
-                .prepare(&format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"))?
-                .exists([col])?;
-            if !exists {
+            if !Self::has_column(&conn, table, col)? {
                 conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {col} {ddl}"))?;
             }
         }
+        // Eski tablo silindiğinde dizinleri de gider: şemadakiler yeniden kurulur (aşağıdakiler zaten kurulur)
+        if Self::split_message_content(&mut conn)? {
+            conn.execute_batch(SCHEMA)?;
+        }
+        Self::init_subject_index(&conn)?;
+        let fts_ready = Self::init_search_index(&conn)?;
         conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_messages_remote ON messages(folder_id, remote_id)")?;
         conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(folder_id, is_read)")?;
         // Listenin varsayılan sırası (sabitlenmiş, tarih, kimlik) dizinden okunur: klasör açılınca
@@ -1022,19 +1390,100 @@ impl Db {
                  INSERT OR REPLACE INTO settings(key, value) VALUES ('ews_sync_v2', '1');",
             )?;
         }
-        // Sorgu planlayıcı istatistikleri (hızlı; yalnızca gerekirse çalışır)
-        let _ = conn.execute_batch("PRAGMA optimize = 0x10002;");
+        // Sorgu planlayıcı istatistikleri (hızlı; yalnızca gerekirse çalışır). Arama dizininin iç
+        // tabloları hariç tutulur: dizin küçükken alınan istatistik ("2 satır") dizin büyüdükçe
+        // FTS5'in kendi sorgularına kötü plan seçtiriyordu (ilk eşitlemede ileti başına yazma
+        // 0,5 ms'den 20 ms'nin üstüne çıkıyordu); FTS5 istatistiksiz çalışır. Kısa ömürlü ayrı
+        // bağlantıda yapılır: SQLite bir bağlantıya yüklenmiş tablo boyutu tahminini, istatistik
+        // satırı sonradan silinse de bırakmaz. Bellek içi veritabanında (testler) gerekmez.
+        if let Some(p) = path.as_deref() {
+            if let Ok(c) = Connection::open(p) {
+                let _ = c.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA optimize = 0x10002;");
+                for t in ["sqlite_stat1", "sqlite_stat4"] {
+                    let _ = c.execute(&format!("DELETE FROM {t} WHERE tbl LIKE 'message!_fts!_%' ESCAPE '!'"), []);
+                }
+            }
+        }
         let conn = Arc::new(Mutex::new(conn));
         // Bellek içi veritabanında (testler) ayrı bağlantı açılamaz: aynı bağlantı kullanılır
-        let reader = match path.as_deref().map(Self::open_reader) {
-            Some(Ok(r)) => Arc::new(Mutex::new(r)),
-            _ => conn.clone(),
+        let mut readers: Vec<Arc<Mutex<Connection>>> = match path.as_deref() {
+            Some(p) => (0..READERS).map_while(|_| Self::open_reader(p).ok()).map(|r| Arc::new(Mutex::new(r))).collect(),
+            None => vec![],
         };
-        let db = Db { conn, reader };
+        if readers.is_empty() {
+            readers.push(conn.clone());
+        }
+        let db = Db { conn, readers: Arc::new(readers), fts_ready: Arc::new(std::sync::atomic::AtomicBool::new(fts_ready)) };
         if db.setting("schema_version").is_none() {
             db.first_run()?;
         }
         Ok(db)
+    }
+
+    /// Veritabanı dosyasının boyutu, içindeki kullanılmayan (silinen postalardan boşalan) alan
+    /// ve artımlı küçültme kipinde olup olmadığı (bayt)
+    pub fn storage_info(&self) -> (i64, i64, bool) {
+        self.rconn()
+            .query_row(
+                "SELECT page_count * page_size, freelist_count * page_size, auto_vacuum FROM pragma_page_count, pragma_page_size, pragma_freelist_count, pragma_auto_vacuum",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? == 2)),
+            )
+            .unwrap_or((0, 0, false))
+    }
+
+    /// Veritabanını sıkıştırır (VACUUM): kullanılmayan alan dosyadan geri alınır ve dosya artımlı
+    /// küçültme kipine geçer (bundan sonra boşalan alan arka planda geri verilir). Sürerken
+    /// yazmalar bekler, okumalar sürer. Döner: (önceki, sonraki) boyut.
+    pub fn compact(&self) -> Result<(i64, i64)> {
+        let before = self.storage_info().0;
+        let c = self.conn();
+        // Ara kopya bellekte değil, veri klasöründe (boş yeri denetlenen diskte) kurulur: büyük
+        // posta kutusunda GB'larca bellek ya da küçük bir /tmp gerekirdi
+        let dir = c.path().and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_string_lossy().replace('\'', "''"))).unwrap_or_default();
+        c.execute_batch(&format!("PRAGMA temp_store_directory = '{dir}'; PRAGMA temp_store = FILE; PRAGMA auto_vacuum = INCREMENTAL;"))?;
+        let done = c.execute_batch("VACUUM");
+        let _ = c.execute_batch("PRAGMA temp_store = MEMORY; PRAGMA temp_store_directory = ''; PRAGMA wal_checkpoint(TRUNCATE);");
+        done?;
+        drop(c);
+        Ok((before, self.storage_info().0))
+    }
+
+    /// Artımlı küçültme kipindeki veritabanında kullanılmayan alanın bir parçasını dosyadan geri
+    /// verir (arka plan işi; yazma kilidi her parçada kısa süre tutulur). Boş alan azsa (8 MB'tan
+    /// az) dokunulmaz. Döner: geri verilen sayfa sayısı.
+    pub fn reclaim_free_space(&self, max_pages: i64) -> i64 {
+        let c = self.conn();
+        let free = |c: &Connection| c.query_row("SELECT freelist_count FROM pragma_freelist_count", [], |r| r.get::<_, i64>(0)).unwrap_or(0);
+        let mode: i64 = c.query_row("PRAGMA auto_vacuum", [], |r| r.get(0)).unwrap_or(0);
+        let before = free(&c);
+        if mode != 2 || before < 2048 {
+            return 0;
+        }
+        // Her adımda bir sayfa geri verilir: ifade sonuna kadar adımlanmalı (execute_batch tek adım atar)
+        if let Ok(mut st) = c.prepare(&format!("PRAGMA incremental_vacuum({max_pages})")) {
+            if let Ok(mut rows) = st.query([]) {
+                while let Ok(Some(_)) = rows.next() {}
+            }
+        }
+        before - free(&c)
+    }
+
+    /// Veritabanının bulunduğu diskteki boş alan (bayt; bilinmiyorsa None)
+    pub fn free_disk_space(&self) -> Option<u64> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let dir = self.conn().path().and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_path_buf()))?;
+            let cpath = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+            let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+            if unsafe { libc::statvfs(cpath.as_ptr(), &mut st) } != 0 {
+                return None;
+            }
+            Some(st.f_bavail as u64 * st.f_frsize as u64)
+        }
+        #[cfg(not(unix))]
+        None
     }
 
     pub fn conn(&self) -> MutexGuard<'_, Connection> {
@@ -1047,9 +1496,18 @@ impl Db {
         self.conn().query_row("SELECT total_changes()", [], |r| r.get::<_, i64>(0)).map(|v| v as u64).unwrap_or(0)
     }
 
-    /// Okuma bağlantısı (yalnızca SELECT)
+    /// Okuma bağlantısı (yalnızca SELECT): boştaki ilk bağlantı; hepsi meşgulse sırayla biri beklenir
     fn rconn(&self) -> MutexGuard<'_, Connection> {
-        self.reader.lock().unwrap_or_else(|e| e.into_inner())
+        for r in self.readers.iter() {
+            match r.try_lock() {
+                Ok(g) => return g,
+                Err(std::sync::TryLockError::Poisoned(e)) => return e.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => {}
+            }
+        }
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let i = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % self.readers.len();
+        self.readers[i].lock().unwrap_or_else(|e| e.into_inner())
     }
 
     fn first_run(&self) -> Result<()> {
@@ -1307,10 +1765,14 @@ impl Db {
         Ok(c.last_insert_rowid())
     }
 
+    /// Değişen bir şey yoksa yazılmaz: eşitleme her turda klasör durumunu kaydeder ve
+    /// arayüz yenilemesi `total_changes` ile gerçek bir değişiklik olup olmadığına bakar
     pub fn update_folder(&self, f: &Folder) -> Result<()> {
         self.conn().execute(
             "UPDATE folders SET name=?1, remote_name=?2, role=?3, parent_id=?4, uidvalidity=?5, \
-             sync_state=?7, favorite=?8, full_sync=?9 WHERE id=?6",
+             sync_state=?7, favorite=?8, full_sync=?9 WHERE id=?6 AND (name IS NOT ?1 OR remote_name IS NOT ?2 \
+             OR role IS NOT ?3 OR parent_id IS NOT ?4 OR uidvalidity IS NOT ?5 OR sync_state IS NOT ?7 \
+             OR favorite IS NOT ?8 OR full_sync IS NOT ?9)",
             params![f.name, f.remote_name, f.role, f.parent_id, f.uidvalidity, f.id, f.sync_state,
                 f.favorite as i64, f.full_sync as i64],
         )?;
@@ -1397,7 +1859,11 @@ impl Db {
     /// Gövdesi henüz inmemiş sunucu iletisi mi (ham içeriği okumadan)
     pub fn needs_content(&self, id: i64) -> bool {
         self.rconn()
-            .query_row("SELECT COALESCE(length(raw), 0) = 0 AND remote_id IS NOT NULL FROM messages WHERE id = ?1", [id], |r| r.get::<_, Option<bool>>(0))
+            .query_row(
+                "SELECT COALESCE((SELECT length(raw) FROM message_content c WHERE c.id = m.id), 0) = 0 AND m.remote_id IS NOT NULL FROM messages m WHERE m.id = ?1",
+                [id],
+                |r| r.get::<_, Option<bool>>(0),
+            )
             .ok()
             .flatten()
             .unwrap_or(false)
@@ -1478,7 +1944,12 @@ impl Db {
     pub fn backfill_att_names(&self, batch: i64) -> usize {
         let rows: Vec<(i64, Vec<u8>)> = {
             let c = self.rconn();
-            let Ok(mut st) = c.prepare("SELECT id, raw FROM messages WHERE has_attachments = 1 AND (att_names IS NULL OR att_names = '') AND raw IS NOT NULL AND length(raw) > 0 LIMIT ?1") else { return 0 };
+            let Ok(mut st) = c.prepare(
+                "SELECT m.id, c.raw FROM messages m JOIN message_content c ON c.id = m.id \
+                 WHERE m.has_attachments = 1 AND (m.att_names IS NULL OR m.att_names = '') AND length(c.raw) > 0 LIMIT ?1",
+            ) else {
+                return 0;
+            };
             st.query_map([batch], |r| Ok((r.get(0)?, r.get::<_, Vec<u8>>(1)?))).map(|r| r.flatten().collect()).unwrap_or_default()
         };
         for (id, raw) in &rows {
@@ -1506,21 +1977,35 @@ impl Db {
     }
 
     // ------------------------------------------------------------------ iletiler
-    fn filter_sql(search: &str, filter: &MsgFilter, sql: &mut String, args: &mut Vec<String>) {
+    /// `fts`: arama dizini hazır (değilse metin sütunları LIKE ile taranır)
+    fn filter_sql(search: &str, filter: &MsgFilter, fts: bool, sql: &mut String, args: &mut Vec<String>) {
         for term in parse_search(search) {
             match term {
                 SearchTerm::Field(cols, v) => {
                     // Exchange/Outlook gibi: sözcük başı eşleşmesi, Türkçe harf ve aksan duyarsız.
                     // Birden çok sözcüklü değer (tırnaklı ifade, e-posta adresi) aynı alanda arka
-                    // arkaya geçmeli. Önce hızlı LIKE ön elemesi (en uzun sözcükle), sonra kesin denetim.
+                    // arkaya geçmeli. Önce hızlı ön eleme (dizin ya da en uzun sözcükle LIKE),
+                    // sonra kesin denetim.
                     let words = search_words(&v);
                     let Some(longest) = words.iter().max_by_key(|w| w.chars().count()) else { continue };
                     let phrase = words.len() > 1;
-                    let pre: Vec<String> = cols.iter().map(|c| format!("{c} LIKE ?")).collect();
-                    let exact: Vec<String> = cols.iter().map(|c| format!("lyn_match({c}, ?, {})", phrase as i32)).collect();
-                    sql.push_str(&format!(" AND ({}) AND ({})", pre.join(" OR "), exact.join(" OR ")));
-                    for _ in cols {
-                        args.push(like_pattern(longest));
+                    let col = |c: &'static str| -> &'static str { if c == "body_text" { BODY_TEXT_SQL } else { c } };
+                    let exact: Vec<String> = cols.iter().map(|c| format!("lyn_match({}, ?, {})", col(c), phrase as i32)).collect();
+                    if fts {
+                        // Dizin sözcük başı eşleşmesini zaten kesin yapar; yalnızca sözcüklerin
+                        // arka arkaya geçmesi (ifade) satırın kendisinde denetlenir
+                        sql.push_str(" AND id IN (SELECT rowid FROM message_fts WHERE message_fts MATCH ?)");
+                        args.push(fts_query(cols, &words));
+                        if !phrase {
+                            continue;
+                        }
+                        sql.push_str(&format!(" AND ({})", exact.join(" OR ")));
+                    } else {
+                        let pre: Vec<String> = cols.iter().map(|c| format!("{} LIKE ?", col(c))).collect();
+                        sql.push_str(&format!(" AND ({}) AND ({})", pre.join(" OR "), exact.join(" OR ")));
+                        for _ in cols {
+                            args.push(like_pattern(longest));
+                        }
                     }
                     for _ in cols {
                         args.push(words.join(" "));
@@ -1550,7 +2035,7 @@ impl Db {
     /// Aramaya uyan ileti sayısı (en çok 1'e kadar bakılır: yalnızca var/yok için)
     fn search_count(&self, folder_id: Option<i64>, search: &str, filter: &MsgFilter) -> i64 {
         let mut args: Vec<String> = Vec::new();
-        let wh = Self::where_sql(folder_id, search, filter, &mut args);
+        let wh = self.where_sql(folder_id, search, filter, &mut args);
         self.rconn()
             .query_row(&format!("SELECT COUNT(*) FROM (SELECT 1 FROM messages{wh} LIMIT 1)"), rusqlite::params_from_iter(args.iter()), |r| r.get(0))
             .unwrap_or(0)
@@ -1561,7 +2046,7 @@ impl Db {
         self.messages_page(folder_id, search, filter, &ListOrder::default(), 0, i64::MAX).0
     }
 
-    fn where_sql(folder_id: Option<i64>, search: &str, filter: &MsgFilter, args: &mut Vec<String>) -> String {
+    fn where_sql(&self, folder_id: Option<i64>, search: &str, filter: &MsgFilter, args: &mut Vec<String>) -> String {
         let mut sql = String::from(" WHERE 1=1");
         if let Some(f) = folder_id {
             sql.push_str(&format!(" AND folder_id = {f}"));
@@ -1569,7 +2054,7 @@ impl Db {
             // Tüm posta kutularında: çöp ve gereksiz hariç
             sql.push_str(" AND folder_id NOT IN (SELECT id FROM folders WHERE role IN ('trash','junk'))");
         }
-        Self::filter_sql(search, filter, &mut sql, args);
+        Self::filter_sql(search, filter, self.fts_ready.load(std::sync::atomic::Ordering::Relaxed), &mut sql, args);
         sql
     }
 
@@ -1588,12 +2073,12 @@ impl Db {
             _ => search,
         };
         let mut args: Vec<String> = Vec::new();
-        let wh = Self::where_sql(folder_id, search, filter, &mut args);
+        let wh = self.where_sql(folder_id, search, filter, &mut args);
         let dir = if order.desc { "DESC" } else { "ASC" };
         let key = match order.by.as_str() {
             "from" => format!("ltrim(sender, '\" ') COLLATE NOCASE {dir}, "),
             "to" => format!("ltrim(to_addr, '\" ') COLLATE NOCASE {dir}, "),
-            "subject" => format!("lyn_norm_subject(subject) {dir}, "),
+            "subject" => format!("ns {dir}, "),
             "importance" => format!("importance {dir}, "),
             "flag" => format!("is_flagged {dir}, "),
             "attachments" => format!("has_attachments {dir}, "),
@@ -1605,13 +2090,16 @@ impl Db {
         let order_sql = format!(" ORDER BY {pin}{key}date {dir}, id {dir}");
         let c = self.rconn();
         let (sql, count_sql) = if order.conversations {
+            // Konu başına en yeni ileti ve konuşmadaki ileti sayısı dizinden (folder_id, ns, date)
+            // bulunur; yalnızca bu satırlar okunur. SQLite: tek MAX() içeren gruplamada yalın
+            // sütun (id) en büyük değerli satırdandır.
             (
                 format!(
-                    "SELECT * FROM (SELECT {LIST_COLS}, COUNT(*) OVER (PARTITION BY ns) AS thread_count, \
-                     ROW_NUMBER() OVER (PARTITION BY ns ORDER BY date DESC) AS rn FROM \
-                     (SELECT {LIST_COLS}, lyn_norm_subject(subject) AS ns FROM messages{wh})) WHERE rn = 1{order_sql} LIMIT {limit} OFFSET {offset}"
+                    "SELECT {LIST_COLS}, g.n AS thread_count FROM messages JOIN \
+                     (SELECT id AS head, MAX(date) AS newest, COUNT(*) AS n FROM messages{wh} GROUP BY ns) g ON messages.id = g.head\
+                     {order_sql} LIMIT {limit} OFFSET {offset}"
                 ),
-                format!("SELECT COUNT(DISTINCT lyn_norm_subject(subject)) FROM messages{wh}"),
+                format!("SELECT COUNT(DISTINCT ns) FROM messages{wh}"),
             )
         } else {
             (
@@ -1641,7 +2129,12 @@ impl Db {
 
     pub fn message(&self, id: i64) -> Option<Message> {
         self.rconn()
-            .query_row("SELECT * FROM messages WHERE id = ?1", [id], Message::from_row)
+            .query_row(
+                "SELECT m.*, COALESCE(c.body_text, '') AS body_text, COALESCE(c.body_html, '') AS body_html, c.raw AS raw \
+                 FROM messages m LEFT JOIN message_content c ON c.id = m.id WHERE m.id = ?1",
+                [id],
+                Message::from_row,
+            )
             .optional()
             .ok()
             .flatten()
@@ -1663,50 +2156,67 @@ impl Db {
         st.query_map([mid], MessageRow::from_row).unwrap().flatten().collect()
     }
 
-    /// Bir konuşmaya ait iletiler (Message-ID / In-Reply-To zinciri ve konu).
+    /// Bir konuşmaya ait iletiler (tüm klasörlerde, çöp ve gereksiz hariç): konuşma görünümündeki
+    /// gruplamayla aynı anahtar (arındırılmış konu), dizinden
     pub fn conversation(&self, m: &MessageRow) -> Vec<MessageRow> {
-        let base = crate::mail::normalize_subject(&m.subject);
+        let ns = crate::mail::normalize_subject(&m.subject).to_lowercase();
         let c = self.rconn();
-        let mut st = c
-            .prepare(&format!(
-                "SELECT {LIST_COLS} FROM messages WHERE folder_id NOT IN \
-                 (SELECT id FROM folders WHERE role IN ('trash','junk')) AND \
-                 (message_id = ?1 OR in_reply_to = ?1 OR message_id = ?2 OR subject LIKE ?3) \
-                 ORDER BY date"
-            ))
-            .unwrap();
-        st.query_map(params![m.message_id, m.in_reply_to, format!("%{base}")], MessageRow::from_row)
-            .unwrap()
-            .flatten()
-            .filter(|r| crate::mail::normalize_subject(&r.subject) == base)
-            .collect()
+        let Ok(mut st) = c.prepare_cached(&format!(
+            "SELECT {LIST_COLS} FROM messages WHERE ns = ?1 AND folder_id NOT IN \
+             (SELECT id FROM folders WHERE role IN ('trash','junk')) ORDER BY date"
+        )) else {
+            return vec![];
+        };
+        st.query_map([ns], MessageRow::from_row).map(|r| r.flatten().collect()).unwrap_or_default()
     }
 
     pub fn insert_message(&self, m: &Message) -> Result<i64> {
-        let c = self.conn();
-        c.execute(
+        let mut c = self.conn();
+        let tx = c.transaction()?;
+        tx.execute(
             "INSERT INTO messages(folder_id, account_id, uid, message_id, in_reply_to, refs, subject, \
-             sender, to_addr, cc, bcc, date, snippet, body_text, body_html, raw, is_read, is_flagged, \
-             is_draft, is_answered, importance, categories, has_attachments, pending, remote_id, is_pinned, att_names) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27)",
+             sender, to_addr, cc, bcc, date, snippet, is_read, is_flagged, \
+             is_draft, is_answered, importance, categories, has_attachments, pending, remote_id, is_pinned, att_names, ns) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,lyn_norm_subject(?7))",
             params![m.folder_id, m.account_id, m.uid, m.message_id, m.in_reply_to, m.refs, m.subject,
-                m.sender, m.to_addr, m.cc, m.bcc, m.date, m.snippet, m.body_text, m.body_html, m.raw,
+                m.sender, m.to_addr, m.cc, m.bcc, m.date, m.snippet,
                 m.is_read as i64, m.is_flagged as i64, m.is_draft as i64, m.is_answered as i64,
                 m.importance, m.categories, m.has_attachments as i64, m.pending, m.remote_id, m.is_pinned as i64, m.att_names],
         )?;
-        Ok(c.last_insert_rowid())
+        let id = tx.last_insert_rowid();
+        // Yalnızca başlığı inmiş (Exchange) iletinin gövde satırı yoktur
+        if !m.raw.is_empty() || !m.body_text.is_empty() || !m.body_html.is_empty() {
+            Self::write_content(&tx, id, m)?;
+        }
+        tx.commit()?;
+        Ok(id)
+    }
+
+    fn write_content(c: &Connection, id: i64, m: &Message) -> Result<usize> {
+        c.execute(
+            // UPSERT (REPLACE değil): değişen gövde güncelleme tetikleyicisinde eski hâliyle görülür
+            "INSERT INTO message_content(id, body_text, body_html, raw) VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(id) DO UPDATE SET body_text = excluded.body_text, body_html = excluded.body_html, raw = excluded.raw",
+            params![id, m.body_text, m.body_html, m.raw],
+        )
     }
 
     /// Yalnızca başlığı bilinen (Exchange) iletinin tam içeriğini yazar.
     pub fn update_message_content(&self, id: i64, m: &Message) {
-        let _ = self.conn().execute(
-            "UPDATE messages SET raw=?1, body_text=?2, body_html=?3, sender=?4, to_addr=?5, cc=?6, bcc=?7, \
-             in_reply_to=?8, refs=?9, has_attachments=?10, snippet=?11, att_names=?15, \
-             message_id=CASE WHEN message_id='' THEN ?12 ELSE message_id END, \
-             subject=CASE WHEN subject='' OR instr(subject, char(65533)) > 0 THEN ?14 ELSE subject END WHERE id=?13",
-            params![m.raw, m.body_text, m.body_html, m.sender, m.to_addr, m.cc, m.bcc, m.in_reply_to, m.refs,
+        let mut c = self.conn();
+        let Ok(tx) = c.transaction() else { return };
+        let updated = tx.execute(
+            "UPDATE messages SET sender=?1, to_addr=?2, cc=?3, bcc=?4, \
+             in_reply_to=?5, refs=?6, has_attachments=?7, snippet=?8, att_names=?12, \
+             message_id=CASE WHEN message_id='' THEN ?9 ELSE message_id END, \
+             subject=CASE WHEN subject='' OR instr(subject, char(65533)) > 0 THEN ?11 ELSE subject END WHERE id=?10",
+            params![m.sender, m.to_addr, m.cc, m.bcc, m.in_reply_to, m.refs,
                 m.has_attachments as i64, m.snippet, m.message_id, id, m.subject, m.att_names],
         );
+        // İleti bu arada silindiyse gövde yazılmaz
+        if matches!(updated, Ok(n) if n > 0) && Self::write_content(&tx, id, m).is_ok() {
+            let _ = tx.commit();
+        }
     }
 
     pub fn newest_date(&self, folder_id: i64) -> Option<f64> {
@@ -1739,8 +2249,8 @@ impl Db {
     pub fn messages_without_content(&self, folder_id: i64, limit: usize) -> Vec<(i64, String)> {
         let c = self.rconn();
         let Ok(mut st) = c.prepare(
-            "SELECT id, remote_id FROM messages WHERE folder_id = ?1 AND remote_id IS NOT NULL \
-             AND (raw IS NULL OR length(raw) = 0) ORDER BY date DESC LIMIT ?2",
+            "SELECT id, remote_id FROM messages m WHERE folder_id = ?1 AND remote_id IS NOT NULL \
+             AND NOT EXISTS (SELECT 1 FROM message_content c WHERE c.id = m.id AND length(c.raw) > 0) ORDER BY date DESC LIMIT ?2",
         ) else {
             return vec![];
         };
@@ -2834,7 +3344,12 @@ mod search_tests {
         let dir = std::env::temp_dir().join(format!("lynora-db-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let db = Db::open(dir.join("t.db")).unwrap();
-        assert!(!Arc::ptr_eq(&db.conn, &db.reader));
+        assert_eq!(db.readers.len(), READERS);
+        assert!(db.readers.iter().all(|r| !Arc::ptr_eq(&db.conn, r)));
+        // Bir okuma sürerken öteki okuma başka bağlantıdan yapılır (beklemez)
+        let busy = db.rconn();
+        assert_eq!(db.setting("yok"), None);
+        drop(busy);
         db.set_setting("x", "1");
         assert_eq!(db.setting("x").as_deref(), Some("1"));
         let guard = db.conn();
@@ -2844,6 +3359,378 @@ mod search_tests {
         guard.execute_batch("COMMIT").unwrap();
         drop(guard);
         assert_eq!(db.setting("x").as_deref(), Some("2"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 1.1.0 düzeni: gövdeler ve özgün ileti messages satırının ortasında
+    const OLD_MESSAGES: &str = "CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        folder_id INTEGER NOT NULL, account_id INTEGER, uid INTEGER,
+        message_id TEXT DEFAULT '', in_reply_to TEXT DEFAULT '', refs TEXT DEFAULT '',
+        subject TEXT DEFAULT '', sender TEXT DEFAULT '', to_addr TEXT DEFAULT '',
+        cc TEXT DEFAULT '', bcc TEXT DEFAULT '', date REAL DEFAULT 0,
+        snippet TEXT DEFAULT '', body_text TEXT DEFAULT '', body_html TEXT DEFAULT '',
+        raw BLOB, is_read INTEGER DEFAULT 0, is_flagged INTEGER DEFAULT 0,
+        is_draft INTEGER DEFAULT 0, is_answered INTEGER DEFAULT 0, importance INTEGER DEFAULT 1,
+        categories TEXT DEFAULT '', has_attachments INTEGER DEFAULT 0, pending TEXT DEFAULT '',
+        FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE CASCADE
+    );
+    ALTER TABLE messages ADD COLUMN remote_id TEXT;
+    ALTER TABLE messages ADD COLUMN is_pinned INTEGER DEFAULT 0;
+    ALTER TABLE messages ADD COLUMN att_names TEXT DEFAULT '';";
+
+    /// Eski veritabanı açılışta bir kez yeni düzene geçer: kimlikler, gövdeler, bayraklar, arama,
+    /// silme ve kimlik sayacı korunur; yarıda kesilmiş geçiş kaldığı yerden tamamlanır.
+    #[test]
+    fn splits_message_content_from_old_layout() {
+        let dir = std::env::temp_dir().join(format!("lynora-split-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("old.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(
+                "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+                 INSERT INTO settings VALUES ('schema_version', '1');
+                 CREATE TABLE folders (id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER, name TEXT NOT NULL,
+                     remote_name TEXT, role TEXT, parent_id INTEGER, uidvalidity INTEGER DEFAULT 0, position INTEGER DEFAULT 100);
+                 INSERT INTO folders(id, name, role) VALUES (1, 'Gelen Kutusu', 'inbox');",
+            )
+            .unwrap();
+            c.execute_batch(OLD_MESSAGES).unwrap();
+            for i in 1..=260i64 {
+                c.execute(
+                    "INSERT INTO messages(id, folder_id, subject, body_text, body_html, raw, remote_id, is_read, att_names) VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![i, format!("Konu {i}"), format!("gövde metni anahtar{i}"), format!("<p>{i}</p>"), vec![i as u8; 5000], format!("r{i}"), i % 2, format!("ek{i}.pdf")],
+                )
+                .unwrap();
+            }
+            // Yalnızca başlığı inmiş ileti; en yeni kimlikler silinmiş (sayaç 260'ta kalır)
+            c.execute_batch("UPDATE messages SET body_text = '', body_html = '', raw = X'' WHERE id = 250; DELETE FROM messages WHERE id > 250;").unwrap();
+            // Yarıda kesilmiş geçiş: ilk 100 ileti taşınmış
+            c.execute_batch(
+                "CREATE TABLE message_content (id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+                     body_text TEXT NOT NULL DEFAULT '', body_html TEXT NOT NULL DEFAULT '', raw BLOB);
+                 INSERT INTO message_content SELECT id, body_text, body_html, raw FROM messages WHERE id <= 100;
+                 UPDATE messages SET body_text = '', body_html = '', raw = NULL WHERE id <= 100;",
+            )
+            .unwrap();
+        }
+        assert!(Db::needs_upgrade(&path));
+        let db = Db::open(&path).unwrap();
+        assert!(!Db::needs_upgrade(&path));
+        {
+            let c = db.conn();
+            assert!(!Db::has_column(&c, "messages", "raw").unwrap() && !Db::has_column(&c, "messages", "body_text").unwrap());
+            assert_eq!(c.query_row("SELECT COUNT(*) FROM message_content", [], |r| r.get::<_, i64>(0)).unwrap(), 249);
+            let idx: i64 = c.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_messages_folder', 'idx_messages_list', 'idx_messages_remote_u')", [], |r| r.get(0)).unwrap();
+            assert_eq!(idx, 3, "eski tabloyla giden dizinler yeniden kurulmalı");
+        }
+        for id in [42, 177] {
+            let m = db.message(id).unwrap();
+            assert_eq!((m.subject, m.body_text, m.body_html), (format!("Konu {id}"), format!("gövde metni anahtar{id}"), format!("<p>{id}</p>")));
+            assert_eq!(m.raw, vec![id as u8; 5000]);
+            assert_eq!((m.remote_id.as_deref(), m.is_read, m.att_names), (Some(format!("r{id}").as_str()), id % 2 == 1, format!("ek{id}.pdf")));
+        }
+        assert!(db.needs_content(250) && !db.needs_content(42));
+        // Konuşma anahtarı (arındırılmış konu) eski iletiler için de doldurulur
+        assert_eq!(db.conn().query_row("SELECT COUNT(*) FROM messages WHERE ns IS NULL", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(db.conversation(&db.message_row(177).unwrap()).iter().map(|r| r.id).collect::<Vec<_>>(), vec![177]);
+        assert_eq!(db.messages_without_content(1, 10), vec![(250, "r250".to_string())]);
+        // Gövdede arama (anahtarsız sözcük de gövdeye bakar)
+        assert_eq!(db.messages(Some(1), "gövde:anahtar177", &MsgFilter::All).len(), 1);
+        assert_eq!(db.messages(Some(1), "anahtar42", &MsgFilter::All).len(), 1);
+        // Arama dizini eski iletiler için arka planda kurulur; o zamana kadar dizinsiz aranır
+        assert!(!db.fts_ready.load(std::sync::atomic::Ordering::Relaxed));
+        while db.build_search_index(100) {}
+        assert!(db.fts_ready.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(db.messages(Some(1), "gövde:anahtar177", &MsgFilter::All).len(), 1);
+        assert_eq!(db.messages(Some(1), "anahtar42", &MsgFilter::All).len(), 1);
+        assert_eq!(db.messages(Some(1), "ekadı:ek99", &MsgFilter::All).len(), 1);
+        // Silinen iletinin gövdesi de gider; yeni ileti silinmişlerin kimliğini almaz
+        db.delete_message(42);
+        assert_eq!(db.conn().query_row("SELECT COUNT(*) FROM message_content WHERE id = 42", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        let id = db.insert_message(&Message { folder_id: 1, subject: "yeni".into(), body_text: "yeni gövde".into(), raw: b"x".to_vec(), ..Default::default() }).unwrap();
+        assert!(id > 260);
+        assert_eq!(db.message(id).unwrap().body_text, "yeni gövde");
+        // Sonradan inen gövde
+        db.update_message_content(250, &Message { body_text: "indi".into(), raw: b"From: a\r\n\r\nindi".to_vec(), ..Default::default() });
+        assert!(!db.needs_content(250));
+        assert_eq!(db.message(250).unwrap().body_text, "indi");
+        assert_eq!(db.messages(Some(1), "gövde:indi", &MsgFilter::All).len(), 1);
+        assert_eq!(db.messages(Some(1), "gövde:yeni", &MsgFilter::All)[0].id, id);
+        // Klasör silinince iletileri ve gövdeleri gider
+        db.delete_folder(1).unwrap();
+        assert_eq!(db.conn().query_row("SELECT COUNT(*) FROM message_content", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        drop(db);
+        // İkinci açılışta geçiş yeniden çalışmaz
+        assert!(Db::open(&path).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Arama dizini dizinsiz taramayla aynı sonucu verir ve ileti/gövde değiştikçe güncel kalır
+    #[test]
+    fn search_index_matches_scan_and_follows_changes() {
+        use std::sync::atomic::Ordering;
+        let db = Db::open_memory().unwrap();
+        let inbox = db.folder_by_role(None, "inbox").unwrap().id;
+        let rows = [
+            ("Bütçe toplantısı", "Ahmet Emre AYDIN <ahmet.aydin@kurum.com.tr>", "ŞÜKRÜ Bey, İSTANBUL ofisindeki kalamış projesi", "Kırmızı", "Teklif_2026.xlsx"),
+            ("RE: Aylık rapor", "Ayşe Işık <ayse.isik@x.com>", "Rapor ektedir. Ahmet Bey'e iletildi.", "", "rapor.pdf"),
+            ("Çay saati", "Veli <veli@x.com>", "aydın ışık çiçek ÇİÇEK emre", "Mavi", ""),
+            ("Fatura 2026/11", "muhasebe@firma.com.tr", "Ödeme e-posta ile: odeme@firma.com.tr", "", "fatura-11.pdf"),
+        ];
+        let mut ids = vec![];
+        for (subject, sender, body, cat, att) in rows {
+            let m = Message { folder_id: inbox, subject: subject.into(), sender: sender.into(), to_addr: "ben@kurum.com.tr".into(), body_text: body.into(), raw: b"x".to_vec(), categories: cat.into(), att_names: att.into(), ..Default::default() };
+            ids.push(db.insert_message(&m).unwrap());
+        }
+        let run = |q: &str| {
+            let mut v: Vec<i64> = db.messages(Some(inbox), q, &MsgFilter::All).iter().map(|m| m.id).filter(|id| ids.contains(id)).collect();
+            v.sort();
+            v
+        };
+        let queries = [
+            "aydın", "AYDIN", "aydin", "ahmet emre aydın", "\"emre aydin\"", "\"aydin emre\"", "ahmet.aydin@kurum.com.tr", "kişi:ahmet", "sukru", "İstanbul",
+            "ıstanbul", "kalamis", "konu:butce", "konu:rapor", "gövde:ekte", "gövde:iletil", "çiçek", "cicek", "kategori:kirmizi", "ekadı:teklif",
+            "ekadı:2026", "fatura 2026", "odeme@firma", "kimden:muhasebe", "kime:ben", "rapor is:unread", "yok", "a", "2026", "e-posta", "bey'e",
+        ];
+        assert!(db.fts_ready.load(Ordering::Relaxed));
+        let indexed: Vec<Vec<i64>> = queries.iter().map(|q| run(q)).collect();
+        db.fts_ready.store(false, Ordering::Relaxed);
+        let scanned: Vec<Vec<i64>> = queries.iter().map(|q| run(q)).collect();
+        db.fts_ready.store(true, Ordering::Relaxed);
+        for (q, (a, b)) in queries.iter().zip(indexed.iter().zip(&scanned)) {
+            assert_eq!(a, b, "dizinli ve dizinsiz arama farklı: {q}");
+        }
+        assert_eq!(run("aydın"), vec![ids[0], ids[2]]);
+        assert_eq!(run("ahmet emre aydın"), vec![ids[0]], "ad soyad arka arkaya geçmeli");
+        assert_eq!(run("kalamis"), vec![ids[0]]);
+        // Konu, kategori, ek adı ve gövde değişince dizin güncellenir
+        db.set_message_field(ids[2], "categories", "Acil");
+        assert_eq!(run("kategori:acil"), vec![ids[2]]);
+        assert!(run("kategori:mavi").is_empty());
+        db.update_message_content(ids[3], &Message { subject: "yok sayılır".into(), sender: "tahsilat@firma.com.tr".into(), body_text: "havale bilgisi".into(), raw: b"y".to_vec(), ..Default::default() });
+        assert_eq!(run("kimden:tahsilat"), vec![ids[3]]);
+        assert_eq!(run("gövde:havale"), vec![ids[3]]);
+        assert!(run("gövde:odeme").is_empty() && run("kimden:muhasebe").is_empty());
+        assert_eq!(run("konu:fatura"), vec![ids[3]], "konu değişmedi, dizinde kalmalı");
+        // Silinen ileti ve klasörüyle silinen iletiler dizinden çıkar
+        db.delete_message(ids[0]);
+        assert!(run("kalamis").is_empty());
+        let n: i64 = db.conn().query_row("SELECT COUNT(*) FROM message_fts WHERE message_fts MATCH 'cicek'", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        let other = db.folder_by_role(None, "archive").map(|f| f.id).unwrap_or(inbox);
+        db.set_message_field(ids[2], "folder_id", other);
+        db.delete_folder(other).unwrap();
+        let n: i64 = db.conn().query_row("SELECT COUNT(*) FROM message_fts WHERE message_fts MATCH 'cicek'", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    /// Rastgele ekleme/güncelleme/silme dizisinden sonra canlı dizin, aynı verilerden sıfırdan
+    /// kurulan dizinle sözcük sözcük aynıdır (silmede yanlış eski değer verilirse eski sözcükler
+    /// dizinde kalırdı)
+    #[test]
+    fn search_index_stays_exact_under_random_changes() {
+        let db = Db::open_memory().unwrap();
+        let inbox = db.folder_by_role(None, "inbox").unwrap().id;
+        let archive = db.folder_by_role(None, "archive").unwrap().id;
+        let vocab = ["ali", "ayşe", "IŞIK", "çiçek", "Şükrü", "rapor", "bütçe", "toplantı", "fatura", "İzmir", "ödeme", "acil", "proje", "teklif"];
+        let mut seed = 0x9e3779b97f4a7c15u64;
+        let mut rnd = |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let mut text = |k: usize| (0..k).map(|_| vocab[rnd(vocab.len())]).collect::<Vec<_>>().join(" ");
+        let mut ids: Vec<i64> = Vec::new();
+        for i in 0..120 {
+            let body = if i % 2 == 0 { text(6) } else { String::new() };
+            let m = Message { folder_id: if i % 3 == 0 { archive } else { inbox }, subject: text(3), sender: text(2), cc: text(1), categories: text(1), att_names: text(1), raw: if body.is_empty() { vec![] } else { b"x".to_vec() }, body_text: body, ..Default::default() };
+            ids.push(db.insert_message(&m).unwrap());
+        }
+        for step in 0..400 {
+            let id = ids[step * 7 % ids.len()];
+            match step % 6 {
+                0 => db.set_message_field(id, "categories", text(1)),
+                1 => db.update_message_content(id, &Message { sender: text(2), cc: text(1), att_names: text(1), body_text: text(5), raw: b"y".to_vec(), ..Default::default() }),
+                2 => {
+                    let _ = db.conn().execute("UPDATE messages SET subject = ?1 WHERE id = ?2", params![text(3), id]);
+                }
+                3 => db.set_message_field(id, "is_read", 1),
+                4 if step % 24 == 4 => db.delete_message(id),
+                _ => {
+                    let m = Message { folder_id: inbox, subject: text(2), body_text: text(4), raw: b"z".to_vec(), ..Default::default() };
+                    ids.push(db.insert_message(&m).unwrap());
+                }
+            }
+        }
+        db.delete_folder(archive).unwrap();
+        let c = db.conn();
+        c.execute_batch("INSERT INTO message_fts(message_fts) VALUES ('integrity-check')").unwrap();
+        // Aynı verilerden sıfırdan kurulan karşılaştırma dizini
+        c.execute_batch(concat!(
+            "CREATE VIRTUAL TABLE fts_check USING fts5(subject, sender, to_addr, cc, body_text, categories, att_names, content = '', ",
+            "tokenize = \"unicode61 remove_diacritics 0 categories 'L* N* Co M*'\"); ",
+            "INSERT INTO fts_check(rowid, subject, sender, to_addr, cc, body_text, categories, att_names) SELECT m.id, ",
+            fts_row!("m", "c.body_text"),
+            " FROM messages m LEFT JOIN message_content c ON c.id = m.id;"
+        ))
+        .unwrap();
+        let hits = |table: &str, q: &str| -> Vec<i64> {
+            c.prepare(&format!("SELECT rowid FROM {table} WHERE {table} MATCH ?1 ORDER BY rowid")).unwrap().query_map([q], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+        };
+        let mut total = 0;
+        for w in vocab {
+            for col in ["subject", "sender", "cc", "body_text", "categories", "att_names"] {
+                let q = format!("{{{col}}} : \"{}\"", search_fold(w));
+                let live = hits("message_fts", &q);
+                assert_eq!(live, hits("fts_check", &q), "{q}");
+                total += live.len();
+            }
+        }
+        assert!(total > 500, "anlamlı sayıda eşleşme olmalı: {total}");
+    }
+
+    /// Dizinsiz (1.3.0 öncesi) veritabanında dizin arka planda kurulur; bu arada değişen ve
+    /// yeni gelen iletiler iki kez dizinlenmez, eski içerikleri eşleşmez
+    #[test]
+    fn search_index_builds_in_background() {
+        use std::sync::atomic::Ordering;
+        let dir = std::env::temp_dir().join(format!("lynora-fts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.db");
+        {
+            let db = Db::open(&path).unwrap();
+            for i in 0..450 {
+                db.insert_message(&Message { folder_id: 1, subject: format!("konu{i}son ortak"), body_text: format!("gövde{i}son"), raw: b"x".to_vec(), ..Default::default() }).unwrap();
+            }
+            // 1.3.0 öncesi gibi: dizin yok
+            db.conn().execute_batch("DELETE FROM settings WHERE key = 'fts_version'").unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        assert!(!db.fts_ready.load(Ordering::Relaxed));
+        let id = |q: &str| db.messages(Some(1), q, &MsgFilter::All).iter().map(|m| m.id).collect::<Vec<_>>();
+        let first = id("konu:konu7son")[0];
+        // Kurulum başladıktan sonra değişen eski ileti ve yeni ileti
+        assert!(db.build_search_index(200));
+        let late = id("konu:konu400son")[0];
+        db.update_message_content(late, &Message { body_text: "değişti".into(), raw: b"y".to_vec(), ..Default::default() });
+        let fresh = db.insert_message(&Message { folder_id: 1, subject: "taze".into(), ..Default::default() }).unwrap();
+        while db.build_search_index(200) {}
+        assert!(db.fts_ready.load(Ordering::Relaxed));
+        assert_eq!(id("konu:konu7son"), vec![first]);
+        assert_eq!(id("gövde:değişti"), vec![late]);
+        assert!(id("gövde:gövde400son").is_empty());
+        assert_eq!(id("taze"), vec![fresh]);
+        assert_eq!(id("ortak").len(), 450);
+        let n: i64 = db.conn().query_row("SELECT COUNT(*) FROM message_fts WHERE message_fts MATCH 'ortak'", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 450, "aynı ileti dizinde bir kez");
+        drop(db);
+        // Yeniden açılışta dizin yeniden kurulmaz; iç tablolarının planlayıcı istatistiği tutulmaz
+        let db = Db::open(&path).unwrap();
+        assert!(db.fts_ready.load(Ordering::Relaxed));
+        let stats: i64 = db.conn().query_row("SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl LIKE 'message_fts%'", [], |r| r.get(0)).unwrap_or(0);
+        assert_eq!(stats, 0);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Konuşma: arındırılmış konusu aynı iletiler (tüm klasörler, çöp hariç); konu değişince güncellenir
+    #[test]
+    fn conversation_by_normalized_subject() {
+        let db = Db::open_memory().unwrap();
+        let inbox = db.folder_by_role(None, "inbox").unwrap().id;
+        let sent = db.folder_by_role(None, "sent").unwrap().id;
+        let trash = db.folder_by_role(None, "trash").unwrap().id;
+        let add = |folder: i64, subject: &str, date: f64| db.insert_message(&Message { folder_id: folder, subject: subject.into(), date, ..Default::default() }).unwrap();
+        let a = add(inbox, "Bütçe Toplantısı", 1.0);
+        let b = add(sent, "RE: bütçe toplantısı", 2.0);
+        let c = add(inbox, "YNT: Fw: Bütçe toplantısı", 3.0);
+        let _ = add(trash, "RE: Bütçe toplantısı", 4.0);
+        let other = add(inbox, "Bütçe toplantısı notları", 5.0);
+        let ids = |m: i64| db.conversation(&db.message_row(m).unwrap()).iter().map(|r| r.id).collect::<Vec<_>>();
+        assert_eq!(ids(c), vec![a, b, c]);
+        // Konuşma görünümünde gelen kutusu: aynı konu tek satır, sayı 2
+        let conv = ListOrder { conversations: true, ..ListOrder::default() };
+        let (rows, total) = db.messages_page(Some(inbox), "", &MsgFilter::All, &conv, 0, 50);
+        let head = rows.iter().find(|r| r.id == c).unwrap();
+        assert_eq!((head.thread_count, rows.iter().any(|r| r.id == a)), (2, false));
+        assert_eq!(total as usize, rows.len());
+        // Konu değişince (ör. bozuk kodlu konu düzeltildi) konuşması da değişir
+        db.conn().execute("UPDATE messages SET subject = 'Bütçe toplantısı notları' WHERE id = ?1", [b]).unwrap();
+        assert_eq!(ids(other), vec![b, other]);
+        assert_eq!(ids(a), vec![a, c]);
+    }
+
+    /// Silinen postaların boşalttığı alan sıkıştırmayla geri alınır; sonrasında dosya artımlı
+    /// küçültme kipindedir ve boş alan arka plan işiyle geri verilir
+    #[test]
+    fn compaction_and_incremental_reclaim() {
+        let dir = std::env::temp_dir().join(format!("lynora-vacuum-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.db");
+        // 1.2.0 ve öncesi gibi artımlı kipte olmayan dosya
+        Connection::open(&path).unwrap().execute_batch("PRAGMA auto_vacuum = NONE; CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);").unwrap();
+        let db = Db::open(&path).unwrap();
+        let fill = |n: usize| -> Vec<i64> {
+            (0..n).map(|i| db.insert_message(&Message { folder_id: 1, subject: format!("s{i}"), raw: vec![7u8; 40_000], body_text: "x".into(), ..Default::default() }).unwrap()).collect()
+        };
+        let ids = fill(200);
+        db.delete_messages(&ids);
+        let _ = db.conn().execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+        let (size, free, incremental) = db.storage_info();
+        assert!(!incremental && free > 7_000_000 && size >= free, "{size} {free}");
+        assert_eq!(db.reclaim_free_space(10_000), 0, "artımlı kip değilken dokunulmaz");
+        let (before, after) = db.compact().unwrap();
+        assert!(after < before / 2, "{before} → {after}");
+        let (_, free, incremental) = db.storage_info();
+        assert!(incremental && free == 0);
+        let ids = fill(400);
+        db.delete_messages(&ids);
+        let freed = db.reclaim_free_space(1_000);
+        assert_eq!(freed, 1_000);
+        while db.reclaim_free_space(1_000) > 0 {}
+        assert!(db.storage_info().1 < 2048 * 4096);
+        assert_eq!(db.messages(Some(1), "", &MsgFilter::All).iter().filter(|m| m.subject.starts_with('s')).count(), 0);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Değişmeyen klasör yeniden yazılmaz: eşitleme sonrası arayüz yenilemesi gerçek değişikliğe bakar
+    #[test]
+    fn unchanged_folder_is_not_rewritten() {
+        let db = Db::open_memory().unwrap();
+        let mut f = db.folder_by_role(None, "inbox").unwrap();
+        let before = db.total_changes();
+        db.update_folder(&f).unwrap();
+        assert_eq!(db.total_changes(), before);
+        f.sync_state = "durum".into();
+        db.update_folder(&f).unwrap();
+        assert_eq!(db.total_changes(), before + 1);
+        assert_eq!(db.folder(f.id).unwrap().sync_state, "durum");
+    }
+
+    /// Eşiği aşan sorgu tek satırda, kısaltılmış ve parametresiz yazılır; büyüyen günlük kenara alınır
+    #[test]
+    fn slow_query_log() {
+        use std::time::Duration;
+        assert!(slow_query_line("SELECT 1", Duration::from_millis(199)).is_none());
+        let line = slow_query_line("SELECT *\n   FROM messages\tWHERE id = ?1", Duration::from_millis(250)).unwrap();
+        assert!(line.contains(" 250 ms [") && line.ends_with("] SELECT * FROM messages WHERE id = ?1\n"), "{line}");
+        let long = slow_query_line(&"ğ".repeat(5000), Duration::from_secs(1)).unwrap();
+        assert!(long.ends_with("…\n") && long.chars().count() < 700);
+        let dir = std::env::temp_dir().join(format!("lynora-slowlog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("slow-queries.log");
+        std::fs::write(&path, vec![b'x'; (SLOW_LOG_MAX + 1) as usize]).unwrap();
+        append_slow_log(&path, "yeni\n");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "yeni\n");
+        assert_eq!(std::fs::metadata(dir.join("slow-queries.log.1")).unwrap().len(), SLOW_LOG_MAX + 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -12,3 +12,5 @@ vite.config.ts.timestamp-*
 /src-tauri/gen/schemas
 /dist/
 /.build-cache/
+/test-results/
+/playwright-report/
