@@ -100,7 +100,7 @@
 
   async function addTrusted() {
     const v = await app.prompt(t("settings.trusted_add"), t("settings.trusted_label"));
-    if (v) await addTrustedSender(v);
+    if (v?.trim() && !(await addTrustedSender(v))) toast.error(t("settings.trusted_invalid", v.trim()));
   }
 
   // Veritabanı boyutu ve sıkıştırma (Gelişmiş → Veritabanı)

@@ -24,7 +24,9 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 - **Kuralları Şimdi Uygula:** Yerel kurallar seçilen klasördeki mevcut iletilere uygulanır. Alt klasörler ve okunmuş/okunmamış seçilebilir. **Önizle** hiçbir şeyi değiştirmeden hangi iletiye ne yapılacağını gösterir; çalıştırma ilerleme çubuğuyla sürer ve iptal edilebilir.
 - **Şablonlar ve düzenleyici:** İleti şablonları, bul/değiştir, HTML kaynağı, emoji, yazım denetimi (`hunspell-tr`).
 - **Çökme kurtarma:** Yazılan ileti yerelde saklanır, uygulama çökerse açılışta geri yükleme önerilir.
-- **Güvenilir göndericiler:** Adres ya da alan adı; bu kaynaklardan gelen resimler sorulmadan iner.
+- **Güvenilir göndericiler:** Adres ya da alan adı (`sirket.com`, alt alan adları dahil); bu kaynaklardan gelen resimler
+  sorulmadan iner. Resim uyarısındaki "@sirket.com alan adına güven" düğmesi kurumdaki herkesi bir kerede ekler
+  (Gmail, Outlook.com gibi herkese açık servislerde bu düğme çıkmaz).
 - **Alıcı önerileri:** Yazarken kişiler, son kullanılan adresler ve kurum dizini (GAL) önerilir. Adresler "chip" olarak görünür.
 - **İletiyi yeni iletiye sürükleyince .msg eki** olarak eklenir. "Ek olarak ilet" de .msg kullanır.
 - Gönderimi geri alma, teslimi geciktirme, taslakların otomatik kaydı, imzalar, okundu bilgisi, önem düzeyi.
@@ -95,7 +97,7 @@ eski sürümler açamaz: geri dönmek için yükseltmeden önce alınmış bir y
 | Ubuntu 24.04 ve sonrası, Debian 13 ve türevleri (glibc 2.39+) | `Lynora_*_amd64.deb` |
 
 ```sh
-sudo apt install ./Lynora_1.3.0_amd64.deb      # bağımlılıklar otomatik kurulur
+sudo apt install ./Lynora_1.3.1_amd64.deb      # bağımlılıklar otomatik kurulur
 ```
 
 Paketler GitHub **Releases** sayfasında yayımlanır. Debian 12, Ubuntu 22.04 ve Pardus 23 gibi eski dağıtımlar için

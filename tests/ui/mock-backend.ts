@@ -13,6 +13,8 @@ export interface MockMessage {
   snippet: string;
   is_read: boolean;
   has_attachments?: boolean;
+  /** Gövdede uzak resim var (okuma bölmesi indirmeden önce sorar) */
+  has_remote?: boolean;
   html: string;
 }
 
@@ -135,7 +137,7 @@ export async function installMock(page: Page, f: Fixtures) {
         const m = f.messages.find((x) => x.id === a.id)!;
         return {
           ...row(m), cc: "", bcc: "", refs: "", body_text: m.snippet, body_html: m.html, pending: "", html: m.html, text: m.snippet,
-          attachments: [], reply_to: "", read_receipt_to: "", has_remote: false, has_calendar: false, has_vcard: false,
+          attachments: [], reply_to: "", read_receipt_to: "", has_remote: !!m.has_remote, has_calendar: false, has_vcard: false,
           folder_role: folders.find((x) => x.id === m.folder_id)?.role ?? "", external: false, security: "",
         };
       },

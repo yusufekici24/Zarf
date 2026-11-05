@@ -25,7 +25,7 @@
   import HelpCircle from "@lucide/svelte/icons/circle-help";
   import X from "@lucide/svelte/icons/x";
   import UserPlus from "@lucide/svelte/icons/user-plus";
-  import { addTrustedSender, isTrustedSender } from "$lib/trust";
+  import { addTrustedSender, isTrustedSender, trustDomainOf } from "$lib/trust";
   import MailCheck from "@lucide/svelte/icons/mail-check";
   import Clock from "@lucide/svelte/icons/clock";
   import Flag from "@lucide/svelte/icons/flag";
@@ -119,9 +119,12 @@
       .catch((e) => shown({ method: kind.startsWith("pgp") ? "pgp" : "smime", signed: kind.includes("signed"), encrypted: kind.includes("encrypted"), signature: "error", signer: "", error: errorText(e), content: null }));
   });
 
-  function trustSender() {
-    const addr = message ? splitNameAddr(message.sender).addr : "";
-    if (addr) void addTrustedSender(addr);
+  // Göndericinin alan adı ("@sirket.com"): aynı kurumdan herkese birden güvenmek için
+  const trustDomain = $derived(message ? trustDomainOf(splitNameAddr(message.sender).addr) : null);
+
+  async function trustSender(entry = message ? splitNameAddr(message.sender).addr : "") {
+    const added = entry ? await addTrustedSender(entry) : null;
+    if (added) toast.success(t("mail.trusted_added", added));
   }
 
   const pending = $derived.by(() => {
@@ -254,11 +257,15 @@
       </div>
 
       {#if m.has_remote && !allowRemote && !trusted}
-        <div class="bg-muted flex items-center gap-2 rounded-md px-3 py-1.5 text-xs">
+        <div class="bg-muted flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-3 py-1.5 text-xs">
           <ImageOff class="size-4 shrink-0" />
-          <span class="flex-1">{t("mail.remote_blocked")}</span>
+          <!-- Dar bölmede düğmeler metni sıkıştırmak yerine alt satıra geçer -->
+          <span class="min-w-48 flex-1">{t("mail.remote_blocked")}</span>
           <Button size="sm" variant="outline" class="h-6 text-xs" onclick={() => (allowRemote = true)}>{t("mail.load_images")}</Button>
-          <Button size="sm" variant="outline" class="h-6 text-xs" onclick={trustSender}>{t("mail.trust_sender")}</Button>
+          <Button size="sm" variant="outline" class="h-6 text-xs" onclick={() => trustSender()}>{t("mail.trust_sender")}</Button>
+          {#if trustDomain}
+            <Button size="sm" variant="outline" class="h-6 text-xs" onclick={() => trustSender(trustDomain)}>{t("mail.trust_domain", trustDomain)}</Button>
+          {/if}
         </div>
       {/if}
       {#if secBusy}
