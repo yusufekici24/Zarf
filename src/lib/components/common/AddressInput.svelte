@@ -555,7 +555,7 @@
       <span
         data-chip
         role="listitem"
-        class="my-0.5 mr-1.5 inline-flex h-7 max-w-full items-center gap-1.5 rounded-[4px] border border-black/10 pr-0.5 pl-0.5 text-[13px] dark:border-white/15 {ok ? 'bg-[#f3f6fa] hover:bg-[#e5f1fb] dark:bg-white/5 dark:hover:bg-white/10' : 'border-destructive text-destructive bg-destructive/10 border'} {dnd.entry && dnd.from === fieldId && dnd.index === i ? 'opacity-40' : ''}"
+        class="my-0.5 mr-1.5 inline-flex h-7 max-w-full items-center gap-1.5 rounded-[4px] border border-black/10 pr-0.5 pl-0.5 text-[13px] dark:border-white/15 {ok ? 'bg-[#f3f6fa] hover:bg-(--primary-hover) dark:bg-white/5 dark:hover:bg-white/10' : 'border-destructive text-destructive bg-destructive/10 border'} {dnd.entry && dnd.from === fieldId && dnd.index === i ? 'opacity-40' : ''}"
         title={c}
         onpointerdown={(e) => chipDown(e, i)}
       >
@@ -591,7 +591,7 @@
       <span
         data-chip
         role="listitem"
-        class="group/chip relative my-px inline-flex max-w-full items-center rounded-sm text-[13px] hover:bg-[#e5f1fb] dark:hover:bg-white/10 {dnd.entry && dnd.from === fieldId && dnd.index === i ? 'opacity-40' : ''}"
+        class="group/chip relative my-px inline-flex max-w-full items-center rounded-sm text-[13px] hover:bg-(--primary-hover) dark:hover:bg-white/10 {dnd.entry && dnd.from === fieldId && dnd.index === i ? 'opacity-40' : ''}"
         title={c}
         onpointerdown={(e) => chipDown(e, i)}
       >

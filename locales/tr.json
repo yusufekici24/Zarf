@@ -1553,5 +1553,16 @@
   "mail.collapse_conversation": "Konuşmayı daralt",
   "mail.conversation_n": "Konuşmada {0} ileti",
   "calendar.sync_failed": "{0} takvimi eşitlenemedi: {1}",
-  "calendar.sync_retry": "Yeniden dene"
+  "calendar.sync_retry": "Yeniden dene",
+  "accent.title": "Renk teması",
+  "accent.more": "Diğer görünüm seçenekleri…",
+  "settings.accent": "Renk",
+  "accent.blue": "Mavi",
+  "accent.purple": "Mor",
+  "accent.red": "Kırmızı",
+  "accent.pink": "Pembe",
+  "accent.orange": "Turuncu",
+  "accent.green": "Yeşil",
+  "accent.teal": "Turkuaz",
+  "accent.graphite": "Füme"
 }

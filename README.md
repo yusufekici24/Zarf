@@ -43,6 +43,9 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
   İngilizce karşılıkları da çalışır: `from:`, `to:`, `subject:`, `body:`, `category:`, `before:`, `on:`.
 
 **Görünüm**
+- **Renk teması:** Üst çubuktaki palet düğmesi rengi tek tıkla değiştirir: mavi (varsayılan), mor, kırmızı, pembe,
+  turuncu, yeşil, turkuaz, füme. Aynı yerden açık, koyu ya da sistem görünümü seçilir; **Seçenekler → Genel → Renk**
+  bölümünde de vardır. Seçili satır, bugün ve üzerine gelme tonları seçilen renkten türer, koyu görünümde rengin açık tonu kullanılır.
 - **Yazı tipi:** **Seçenekler → Genel → Yazı tipi** arayüzün yazı tipini bu bilgisayarda kurulu yazı tiplerinden seçer.
   Varsayılan, pakete gömülü Noto Sans'tır; her bilgisayarda aynı görünür. Sistemde Windows yazı tipleri kurulu olsa bile
   "Segoe UI Variable" kendiliğinden seçilmez: WebKitGTK bu değişken yazı tipinin kalınlığını her zaman uygulayamıyor ve
@@ -121,7 +124,7 @@ istenir.
 | Ubuntu 24.04 ve sonrası, Debian 13 ve türevleri (glibc 2.39+) | `Lynora_*_amd64.deb` |
 
 ```sh
-sudo apt install ./Lynora_1.4.0_amd64.deb      # bağımlılıklar otomatik kurulur
+sudo apt install ./Lynora_1.5.0_amd64.deb      # bağımlılıklar otomatik kurulur
 ```
 
 Paketler GitHub **Releases** sayfasında yayımlanır. Debian 12, Ubuntu 22.04 ve Pardus 23 gibi eski dağıtımlar için

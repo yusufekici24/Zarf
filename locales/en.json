@@ -1553,5 +1553,16 @@
   "mail.collapse_conversation": "Collapse conversation",
   "mail.conversation_n": "{0} messages in this conversation",
   "calendar.sync_failed": "Calendar of {0} could not be synced: {1}",
-  "calendar.sync_retry": "Try again"
+  "calendar.sync_retry": "Try again",
+  "accent.title": "Color theme",
+  "accent.more": "More appearance options…",
+  "settings.accent": "Color",
+  "accent.blue": "Blue",
+  "accent.purple": "Purple",
+  "accent.red": "Red",
+  "accent.pink": "Pink",
+  "accent.orange": "Orange",
+  "accent.green": "Green",
+  "accent.teal": "Teal",
+  "accent.graphite": "Graphite"
 }

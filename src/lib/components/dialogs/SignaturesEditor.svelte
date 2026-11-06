@@ -23,7 +23,7 @@
     defReply = defaultSignature(a, "reply");
   });
 
-  const btn = "h-[26px] rounded-[3px] border border-[#8a8a8a] bg-[#fdfdfd] px-2.5 text-[13px] hover:bg-[#e5f1fb] disabled:opacity-40 disabled:hover:bg-[#fdfdfd] dark:border-white/30 dark:bg-transparent dark:hover:bg-white/10";
+  const btn = "h-[26px] rounded-[3px] border border-[#8a8a8a] bg-[#fdfdfd] px-2.5 text-[13px] hover:bg-(--primary-hover) disabled:opacity-40 disabled:hover:bg-[#fdfdfd] dark:border-white/30 dark:bg-transparent dark:hover:bg-white/10";
   const selCls = "h-[26px] w-full rounded-[3px] border border-[#8a8a8a] bg-white px-1.5 text-[13px] dark:border-white/30 dark:bg-transparent";
 
   async function confirmDiscard(): Promise<boolean> {
@@ -123,7 +123,7 @@
       <legend class="px-1">{t("sig.select_edit")}</legend>
       <div class="h-28 overflow-y-auto rounded-[3px] border border-[#8a8a8a] bg-white dark:border-white/30 dark:bg-transparent" role="listbox">
         {#each list as s (s.name)}
-          <button role="option" aria-selected={s.name === sel} class="block w-full truncate px-2 py-0.5 text-left {s.name === sel ? 'bg-primary text-primary-foreground' : 'hover:bg-[#e5f1fb] dark:hover:bg-white/10'}" onclick={() => pick(s.name)}>{s.name}</button>
+          <button role="option" aria-selected={s.name === sel} class="block w-full truncate px-2 py-0.5 text-left {s.name === sel ? 'bg-primary text-primary-foreground' : 'hover:bg-(--primary-hover) dark:hover:bg-white/10'}" onclick={() => pick(s.name)}>{s.name}</button>
         {:else}
           <p class="text-muted-foreground p-2 text-xs">{t("sig.none")}</p>
         {/each}

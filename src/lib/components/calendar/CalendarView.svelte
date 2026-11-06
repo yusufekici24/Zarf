@@ -816,7 +816,7 @@
                       role="checkbox"
                       aria-checked={c.visible}
                       tabindex="0"
-                      class="hover:bg-accent flex cursor-default items-center gap-2 py-0.5 pr-1 pl-7 {c.visible ? 'bg-[#cfe4fa]/60 dark:bg-primary/20' : ''}"
+                      class="hover:bg-accent flex cursor-default items-center gap-2 py-0.5 pr-1 pl-7 {c.visible ? 'bg-(--primary-soft)/60 dark:bg-primary/20' : ''}"
                       title={c.owner || c.name}
                       onclick={(e) => { if (e.button === 0) void toggleCalendar(c); }}
                       onkeydown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); void toggleCalendar(c); } }}
@@ -911,7 +911,7 @@
               <div
                 role="gridcell"
                 tabindex="-1"
-                class="min-h-0 overflow-hidden border-b border-l p-0.5 {isToday ? 'bg-[#e5f1fb] dark:bg-primary/15' : d.getMonth() !== current.getMonth() ? 'bg-muted/40' : 'bg-background'}"
+                class="min-h-0 overflow-hidden border-b border-l p-0.5 {isToday ? 'bg-(--primary-hover) dark:bg-primary/15' : d.getMonth() !== current.getMonth() ? 'bg-muted/40' : 'bg-background'}"
                 ondblclick={() => newEvent(toTs(d) + workStart * 3600, {})}
               >
                 <button class="mb-0.5 px-1 text-[12px] {isToday ? 'text-primary font-bold' : 'hover:underline'}" onclick={() => { current = d; setView("day"); }}>{d.getDate() === 1 ? fmtDate(d, { day: "numeric", month: "short" }) : d.getDate()}</button>
@@ -1002,14 +1002,14 @@
             <div></div>
             {#each days as d, i (d.getTime())}
               {@const isToday = i === todayIdx}
-              <button class="border-l px-2 pt-1.5 pb-1 text-left {isToday ? 'bg-[#e5f1fb] dark:bg-primary/20' : ''}" style={isToday ? "border:1px solid var(--primary);border-top-width:2px;border-bottom:0" : ""} onclick={() => { current = d; setView("day"); }}>
+              <button class="border-l px-2 pt-1.5 pb-1 text-left {isToday ? 'bg-(--primary-hover) dark:bg-primary/20' : ''}" style={isToday ? "border:1px solid var(--primary);border-top-width:2px;border-bottom:0" : ""} onclick={() => { current = d; setView("day"); }}>
                 <div class="text-[14px] capitalize {isToday ? 'font-semibold' : ''}">{weekdayLong(d)}</div>
                 <div class="text-[14px] {isToday ? 'font-bold' : ''}">{d.getDate()}</div>
               </button>
             {/each}
             <div class="border-b"></div>
             {#each days as d, i (d.getTime())}
-              <div role="gridcell" tabindex="-1" class="min-h-[30px] space-y-px border-b border-l p-0.5 {i === todayIdx ? 'bg-[#e5f1fb]/60 dark:bg-primary/10' : ''}" style={i === todayIdx ? "border-left:1px solid var(--primary);border-right:1px solid var(--primary)" : ""} ondblclick={() => newEvent(toTs(d), { all_day: true, end: toTs(d) + 86400 })}>
+              <div role="gridcell" tabindex="-1" class="min-h-[30px] space-y-px border-b border-l p-0.5 {i === todayIdx ? 'bg-(--primary-hover)/60 dark:bg-primary/10' : ''}" style={i === todayIdx ? "border-left:1px solid var(--primary);border-right:1px solid var(--primary)" : ""} ondblclick={() => newEvent(toTs(d), { all_day: true, end: toTs(d) + 86400 })}>
                 {#each dayOccurrences(d, true) as o (occKey(o))}
                   {@const lk = look(o.event)}
                   <button
@@ -1039,7 +1039,7 @@
                   <!-- saat ve yarım saat çizgileri; çalışma saatleri dışı gri -->
                   {#each Array(24) as _, h (h)}
                     {@const off = h < workStart || h >= workEnd || d.getDay() === 0 || d.getDay() === 6}
-                    <div class="absolute right-0 left-0 border-t {off ? 'bg-[#f3f3f3] dark:bg-white/[0.03]' : isToday ? 'bg-[#f3f9fd] dark:bg-primary/[0.06]' : ''}" style="top:{h * HOUR}px;height:{HOUR}px">
+                    <div class="absolute right-0 left-0 border-t {off ? 'bg-[#f3f3f3] dark:bg-white/[0.03]' : isToday ? 'bg-(--primary-faint) dark:bg-primary/[0.06]' : ''}" style="top:{h * HOUR}px;height:{HOUR}px">
                       <div class="absolute right-0 left-0 border-t border-dotted border-black/10 dark:border-white/10" style="top:{HOUR / 2}px"></div>
                     </div>
                   {/each}

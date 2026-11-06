@@ -276,7 +276,7 @@
               {@const Icon = ICON(r.kind)}
               <tr
                 data-pick={i}
-                class="cursor-default {i === active ? 'bg-[#cce8ff] dark:bg-primary/30' : 'hover:bg-[#e5f3ff] dark:hover:bg-white/5'}"
+                class="cursor-default {i === active ? 'bg-(--primary-soft) dark:bg-primary/30' : 'hover:bg-(--primary-faint) dark:hover:bg-white/5'}"
                 onclick={() => (active = i)}
                 ondblclick={() => (browse ? openProps(r) : add(r))}
               >

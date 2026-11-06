@@ -19,6 +19,8 @@
   import { fmtSize, initials } from "$lib/format";
   import { SCALES, autoScale } from "$lib/zoom";
   import { READ_SIZES } from "$lib/uifont";
+  import { ACCENT_DEFAULT } from "$lib/accent";
+  import AccentPicker from "$lib/components/common/AccentPicker.svelte";
   import { COMMON_FONTS, FONT_SIZES, fontCss, fontStack, parseFont, type FontKey, type FontSpec } from "$lib/fonts";
   import TypeIcon from "@lucide/svelte/icons/type";
   import { setMode } from "mode-watcher";
@@ -419,9 +421,13 @@
         {@render field(t("settings.user_name"), get("user_name", me?.display_name ?? ""), (v) => set("user_name", v), "w-64")}
         {@render field(t("settings.initials"), get("user_initials", initials(me?.display_name || me?.email || "")), (v) => set("user_initials", v), "w-20")}
         {@render pick("theme", t("settings.office_theme"), "system", [["system", t("settings.theme_system")], ["light", t("settings.theme_light")], ["dark", t("settings.theme_dark")]])}
+        <div class="flex items-center gap-2 py-[3px] pl-4 text-[13px]" data-testid="accent-setting">
+          <span class="w-36 shrink-0">{t("settings.accent")}:</span>
+          <AccentPicker value={get("accent", ACCENT_DEFAULT)} onpick={(k) => set("accent", k)} />
+        </div>
         {@render section(t("settings.sec_privacy"))}
         <div class="py-1 pl-4">
-          <button class="h-[26px] rounded-[3px] border border-[#8a8a8a] px-3 text-[13px] hover:bg-[#e5f1fb] dark:border-white/30 dark:hover:bg-white/10" onclick={() => (app.settingsDialog = { open: true, tab: "trust" })}>{t("settings.privacy_btn")}</button>
+          <button class="h-[26px] rounded-[3px] border border-[#8a8a8a] px-3 text-[13px] hover:bg-(--primary-hover) dark:border-white/30 dark:hover:bg-white/10" onclick={() => (app.settingsDialog = { open: true, tab: "trust" })}>{t("settings.privacy_btn")}</button>
         </div>
         {@render section(t("settings.sec_startup"))}
         {@render pick("start_module", t("settings.when_opens"), "mail", ["mail", "calendar", "contacts", "tasks", "notes"].map((m) => [m, t(`module.${m}`)]))}
@@ -430,7 +436,7 @@
         <div class="flex items-center gap-3 py-1.5 pl-4 text-[13px]">
           <span>{isDefault ? t("default_app.is_default") : t("default_app.not_default")}</span>
           {#if !isDefault}
-            <button class="h-[26px] rounded-[3px] border border-[#8a8a8a] px-3 text-[13px] hover:bg-[#e5f1fb] dark:border-white/30 dark:hover:bg-white/10" onclick={makeDefault}>{t("default_app.button")}</button>
+            <button class="h-[26px] rounded-[3px] border border-[#8a8a8a] px-3 text-[13px] hover:bg-(--primary-hover) dark:border-white/30 dark:hover:bg-white/10" onclick={makeDefault}>{t("default_app.button")}</button>
           {/if}
         </div>
       {:else if tab === "language"}
@@ -467,7 +473,7 @@
         {@render section(t("settings.sec_storage"))}
         <div class="py-1 pl-4 text-[13px]" data-testid="storage">
           {#if storage}<div>{t("settings.storage_size", fmtSize(storage.size), fmtSize(storage.free))}</div>{/if}
-          <button class="mt-1.5 h-[26px] rounded-[3px] border border-[#8a8a8a] px-3 text-[13px] hover:bg-[#e5f1fb] disabled:opacity-50 dark:border-white/30 dark:hover:bg-white/10" disabled={compacting} onclick={compactDb}>{compacting ? t("settings.compacting") : t("settings.compact")}</button>
+          <button class="mt-1.5 h-[26px] rounded-[3px] border border-[#8a8a8a] px-3 text-[13px] hover:bg-(--primary-hover) disabled:opacity-50 dark:border-white/30 dark:hover:bg-white/10" disabled={compacting} onclick={compactDb}>{compacting ? t("settings.compacting") : t("settings.compact")}</button>
           <p class="text-muted-foreground py-1 text-[12px]">{storage?.incremental ? t("settings.compact_help_auto") : t("settings.compact_help")}</p>
         </div>
       {:else if tab === "trust"}

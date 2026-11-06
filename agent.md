@@ -134,13 +134,18 @@ katılımcılar) yalnızca ChangeKey'i değişen/yeni toplantılar için `calend
 - `SettingsDialog.svelte`: `get/set` bekleyen değişiklikleri tutar, **Tamam**'da `commit()` yazar. Yardımcı
   snippet'ler: `section`, `check(key, label, varsayılan)`, `pick(key, label, varsayılan, [[değer, ad]], geniş)`.
 - Yardımcılar: `format.ts` (tarih, ad/adres), `trust.ts` (güvenilir göndericiler), `uifont.ts` (arayüz/okuma yazı
-  tipi), `fonts.ts` (Kırtasiye), `zoom.ts` (ölçek), `security.ts`, `quicksteps.svelte.ts`.
+  tipi), `accent.ts` (renk teması), `fonts.ts` (Kırtasiye), `zoom.ts` (ölçek), `security.ts`, `quicksteps.svelte.ts`.
+- Renk teması: `<html data-accent="…">` + `app.css`'teki `html[data-accent]` / `html.dark[data-accent]` kuralları
+  `--primary`'yi değiştirir. Vurgu tonları için **sabit mavi yazmayın**; `text-primary`, `bg-primary/NN`,
+  `bg-(--primary-soft)` (seçili), `bg-(--primary-hover)` (üzerine gelme), `bg-(--primary-faint)` kullanın. Anlam taşıyan
+  renkler (takvim paleti, toplantı "meşgul" mavisi, şerit simge renkleri) temaya bağlı değildir.
 
 ## Önemli ayar anahtarları
 
 | Anahtar | Değerler (varsayılan önce) | Nerede |
 |---|---|---|
 | `ui_scale` | `auto`, 0.9…1.5 | zoom.ts |
+| `accent` | `blue`, `purple`, `red`, `pink`, `orange`, `green`, `teal`, `graphite` | accent.ts, +layout, üst çubuk paleti |
 | `ui_font` | `""` (gömülü Noto Sans), `system`, aile adı | uifont.ts, +layout |
 | `read_font`, `read_font_size` | `""` (Calibri), aile; `11` pt | MessageBody |
 | `list_font` | `normal`, `small`, `large`, `xlarge` | MessageList |

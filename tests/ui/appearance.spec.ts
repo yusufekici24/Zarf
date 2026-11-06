@@ -63,6 +63,59 @@ test("Seçenekler: yazı tipi listesi bu bilgisayarın yazı tiplerinden gelir v
   expect(errors).toEqual([]);
 });
 
+const cssVar = (page: Page, name: string) => page.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
+
+test("üst çubuktaki paletle renk teması hemen değişir: vurgu ve seçili satır tonu, koyu görünüm", async ({ page }) => {
+  const errors = await open(page);
+  await page.getByText("Bütçe toplantısı").first().click();
+  const row = page.getByRole("option").filter({ hasText: "Bütçe toplantısı" });
+  const rowBg = () => row.evaluate((r) => getComputedStyle(r).backgroundColor);
+  const blueRow = await rowBg();
+  expect(await cssVar(page, "--primary")).toBe("#0f6cbd");
+
+  await page.getByRole("button", { name: "Renk teması" }).click();
+  const pop = page.getByTestId("accent-popover");
+  await expect(pop.getByRole("radio", { name: "Mavi" })).toHaveAttribute("aria-checked", "true");
+  await pop.getByRole("radio", { name: "Kırmızı" }).click();
+  await expect.poll(() => cssVar(page, "--primary")).toBe("#c50f1f");
+  await expect(page.locator("html")).toHaveAttribute("data-accent", "red");
+  // Seçili satırın tonu da vurgu renginden türer (sabit mavi kalmaz)
+  expect(await rowBg()).not.toBe(blueRow);
+  await expect(page.getByRole("button", { name: "Renk teması" }).locator("svg")).toHaveCSS("color", "rgb(197, 15, 31)");
+  expect((await calls(page, "set_setting")).filter((a) => a.key === "accent").map((a) => a.value)).toEqual(["red"]);
+
+  // Koyu görünümde aynı rengin açık tonu
+  await pop.getByRole("radio", { name: "Koyu" }).click();
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  await expect.poll(() => cssVar(page, "--primary")).toBe("oklch(0.7 0.17 22)");
+  // Varsayılana dönünce öznitelik kalkar
+  await pop.getByRole("radio", { name: "Mavi" }).click();
+  await expect(page.locator("html")).not.toHaveAttribute("data-accent", /.+/);
+  expect(errors).toEqual([]);
+});
+
+test("kayıtlı renk teması açılışta uygulanır", async ({ page }) => {
+  await open(page, { settings: { accent: "green" } });
+  await expect(page.locator("html")).toHaveAttribute("data-accent", "green");
+  expect(await cssVar(page, "--primary")).toBe("#107c41");
+});
+
+test("Seçenekler > Genel > Renk: seçim Tamam'a kadar bekler", async ({ page }) => {
+  const errors = await open(page, { window: "w-settings" });
+  await page.waitForFunction(() => (window as unknown as { __mock: { listening: (e: string) => boolean } }).__mock.listening("window://assign"));
+  await page.evaluate(() =>
+    (window as unknown as { __mock: { emit: (e: string, p: unknown) => void } }).__mock.emit("window://assign", { kind: "settings", payload: { tab: "general" } }),
+  );
+  const row = page.getByTestId("accent-setting");
+  await expect(row.getByRole("radio")).toHaveCount(8);
+  await row.getByRole("radio", { name: "Mor" }).click();
+  await expect(row.getByRole("radio", { name: "Mor" })).toHaveAttribute("aria-checked", "true");
+  expect((await calls(page, "set_setting")).some((a) => a.key === "accent")).toBe(false);
+  await page.getByRole("button", { name: "Tamam" }).click();
+  await expect.poll(async () => (await calls(page, "set_setting")).find((a) => a.key === "accent")?.value).toBe("purple");
+  expect(errors).toEqual([]);
+});
+
 test("takvim eşitlenemezse takvimde neden yazar ve yeniden denenebilir", async ({ page }) => {
   const errors = await open(page, {
     settings: { start_module: "calendar" },

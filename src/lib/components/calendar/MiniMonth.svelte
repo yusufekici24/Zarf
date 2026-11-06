@@ -56,7 +56,7 @@
       {@const isToday = sameDay(d, today)}
       {@const other = d.getMonth() !== first.getMonth()}
       <button
-        class="h-6 text-[12px] {isToday ? 'bg-primary font-semibold text-white' : inRange ? 'bg-[#cfe4fa] dark:bg-primary/30' : 'hover:bg-[#e5f1fb] dark:hover:bg-white/10'} {other && !isToday ? 'text-muted-foreground/70' : ''} {busyDays.has(key) && !other ? 'font-bold' : ''}"
+        class="h-6 text-[12px] {isToday ? 'bg-primary font-semibold text-white' : inRange ? 'bg-(--primary-soft) dark:bg-primary/30' : 'hover:bg-(--primary-hover) dark:hover:bg-white/10'} {other && !isToday ? 'text-muted-foreground/70' : ''} {busyDays.has(key) && !other ? 'font-bold' : ''}"
         onclick={() => onpick(d)}
       >
         {d.getDate()}

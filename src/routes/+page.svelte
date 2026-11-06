@@ -54,6 +54,10 @@
   import StickyNote from "@lucide/svelte/icons/sticky-note";
   import Search from "@lucide/svelte/icons/search";
   import Settings from "@lucide/svelte/icons/settings";
+  import Palette from "@lucide/svelte/icons/palette";
+  import * as Popover from "$lib/components/ui/popover";
+  import AccentPicker from "$lib/components/common/AccentPicker.svelte";
+  import { ACCENT_DEFAULT } from "$lib/accent";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import X from "@lucide/svelte/icons/x";
   import Menu from "@lucide/svelte/icons/menu";
@@ -66,6 +70,7 @@
   let ready = $state(false);
   let sourceText = $state<string | null>(null);
   let shortcutsOpen = $state(false);
+  let paletteOpen = $state(false);
   let searchInput: HTMLInputElement | undefined = $state();
 
   const MODULES: { key: ModuleName; icon: typeof MailIcon; label: string }[] = [
@@ -478,6 +483,26 @@
       <SearchBox bind:input={searchInput} />
       <div data-tauri-drag-region class="h-full min-w-4 flex-1"></div>
       {#if app.status}<span data-tauri-drag-region class="text-muted-foreground hidden max-w-60 truncate text-xs lg:inline">{app.status}</span>{/if}
+      <!-- Hızlı renk teması: renk ve açık/koyu görünüm (Seçenekler > Genel'de de) -->
+      <Popover.Root bind:open={paletteOpen}>
+        <Popover.Trigger>
+          {#snippet child({ props })}
+            <button {...props} class="hover:bg-black/5 dark:hover:bg-white/10 rounded p-1.5 {paletteOpen ? 'bg-black/5 dark:bg-white/10' : ''}" title={t("accent.title")} aria-label={t("accent.title")}><Palette class="text-primary size-4" /></button>
+          {/snippet}
+        </Popover.Trigger>
+        <Popover.Content align="end" sideOffset={4} class="w-74 gap-0 rounded-[4px] p-3" data-testid="accent-popover">
+          <div class="mb-2 text-[13px] font-semibold">{t("accent.title")}</div>
+          <AccentPicker value={app.setting("accent", ACCENT_DEFAULT)} onpick={(k) => void app.setSetting("accent", k)} />
+          <div class="mt-3 mb-1.5 text-[13px] font-semibold">{t("settings.office_theme")}</div>
+          <div class="flex overflow-hidden rounded-[4px] border text-[12px]" role="radiogroup" aria-label={t("settings.office_theme")}>
+            {#each [["light", t("settings.theme_light")], ["dark", t("settings.theme_dark")], ["system", t("settings.theme_system")]] as [v, l] (v)}
+              {@const on = app.setting("theme", "system") === v}
+              <button type="button" role="radio" aria-checked={on} class="flex-1 px-2 py-1 not-first:border-l {on ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}" onclick={() => { void app.setSetting("theme", v); setMode(v as "light" | "dark" | "system"); }}>{l}</button>
+            {/each}
+          </div>
+          <button type="button" class="text-primary mt-3 text-[12px] hover:underline" onclick={() => { paletteOpen = false; app.openSettings("general"); }}>{t("accent.more")}</button>
+        </Popover.Content>
+      </Popover.Root>
       <button class="hover:bg-black/5 dark:hover:bg-white/10 rounded p-1.5" title={t("help.shortcuts") + " (F1)"} onclick={() => (shortcutsOpen = true)}><HelpCircle class="size-4" /></button>
       <button class="hover:bg-black/5 dark:hover:bg-white/10 rounded p-1.5" title={t("settings.title")} onclick={() => app.openSettings("general")}><Settings class="size-4" /></button>
       <!-- Pencere düğmeleri -->

@@ -24,6 +24,11 @@
   --popover-foreground: oklch(0.141 0.005 285.823);
   --primary: #0f6cbd;
   --primary-foreground: oklch(0.985 0 0);
+  /* Vurgu renginden türeyen tonlar (seçili satır, üzerine gelme, bugün): renk teması değişince onlar da değişir.
+     Bileşenlerde sabit mavi (#cfe4fa, #e5f1fb…) yerine bunları kullanın: bg-(--primary-soft) */
+  --primary-soft: color-mix(in srgb, var(--primary) 20%, white);
+  --primary-hover: color-mix(in srgb, var(--primary) 10%, white);
+  --primary-faint: color-mix(in srgb, var(--primary) 5%, white);
   --secondary: oklch(0.967 0.001 286.375);
   --secondary-foreground: oklch(0.21 0.006 285.885);
   --muted: oklch(0.967 0.001 286.375);
@@ -62,6 +67,9 @@
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.7 0.13 250);
   --primary-foreground: oklch(0.18 0.02 260);
+  --primary-soft: color-mix(in srgb, var(--primary) 28%, transparent);
+  --primary-hover: color-mix(in srgb, var(--primary) 16%, transparent);
+  --primary-faint: color-mix(in srgb, var(--primary) 8%, transparent);
   --secondary: oklch(0.274 0.006 286.033);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.274 0.006 286.033);
@@ -86,6 +94,23 @@
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.552 0.016 285.938);
 }
+
+/* Renk teması (src/lib/accent.ts): mavi varsayılandır (yukarıda). Açık görünümde beyaz yazıyla en az 5:1
+   karşıtlık; koyu görünümde açık ton, üzerinde koyu yazı (.dark --primary-foreground). */
+html[data-accent="purple"] { --primary: #6b46b8; }
+html.dark[data-accent="purple"] { --primary: oklch(0.72 0.14 295); }
+html[data-accent="red"] { --primary: #c50f1f; }
+html.dark[data-accent="red"] { --primary: oklch(0.7 0.17 22); }
+html[data-accent="pink"] { --primary: #bf0077; }
+html.dark[data-accent="pink"] { --primary: oklch(0.72 0.17 350); }
+html[data-accent="orange"] { --primary: #b54708; }
+html.dark[data-accent="orange"] { --primary: oklch(0.75 0.15 55); }
+html[data-accent="green"] { --primary: #107c41; }
+html.dark[data-accent="green"] { --primary: oklch(0.74 0.14 150); }
+html[data-accent="teal"] { --primary: #00727a; }
+html.dark[data-accent="teal"] { --primary: oklch(0.74 0.11 195); }
+html[data-accent="graphite"] { --primary: #525e6b; }
+html.dark[data-accent="graphite"] { --primary: oklch(0.75 0.02 250); }
 
 @theme inline {
   --radius-sm: calc(var(--radius) * 0.6);

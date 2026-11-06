@@ -6,10 +6,12 @@
   import SelectPopup from "$lib/components/common/SelectPopup.svelte";
   import { app } from "$lib/stores/app.svelte";
   import { applyUiFont } from "$lib/uifont";
+  import { ACCENT_DEFAULT, applyAccent } from "$lib/accent";
   let { children } = $props();
 
-  // Seçilen arayüz yazı tipi her pencerede (ayar başka pencerede değişince de) uygulanır
+  // Seçilen arayüz yazı tipi ve renk teması her pencerede (ayar başka pencerede değişince de) uygulanır
   $effect(() => applyUiFont(app.setting("ui_font", "")));
+  $effect(() => applyAccent(app.setting("accent", ACCENT_DEFAULT)));
 
   // Yakalanmayan ön yüz hatalarını uygulama günlüğüne aktar
   const log = (level: string, message: unknown) => {

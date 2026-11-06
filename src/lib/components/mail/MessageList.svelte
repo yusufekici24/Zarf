@@ -437,7 +437,7 @@
               tabindex="-1"
               aria-selected={sel}
               data-testid="thread-item"
-              class="absolute top-0 right-0 left-0 flex cursor-default items-stretch border-b pr-2 {sel ? 'bg-[#cfe4fa] dark:bg-primary/25' : 'bg-[#fafafa] hover:bg-[#f0f6fd] dark:bg-white/3 dark:hover:bg-accent/60'}"
+              class="absolute top-0 right-0 left-0 flex cursor-default items-stretch border-b pr-2 {sel ? 'bg-(--primary-soft) dark:bg-primary/25' : 'bg-[#fafafa] hover:bg-(--primary-faint) dark:bg-white/3 dark:hover:bg-accent/60'}"
               style="transform:translateY({top}px);height:{CHILD}px;contain:layout paint style"
               onclick={() => mail.select(c.id)}
               onkeydown={(e) => e.key === "Enter" && void mail.select(c.id)}
@@ -464,7 +464,7 @@
               role="option"
               tabindex="-1"
               aria-selected={sel}
-              class="group absolute top-0 right-0 left-0 flex cursor-default gap-2 border-b py-1.5 pr-2 {sel ? 'bg-[#cfe4fa] dark:bg-primary/25' : 'hover:bg-[#f0f6fd] dark:hover:bg-accent/60'}"
+              class="group absolute top-0 right-0 left-0 flex cursor-default gap-2 border-b py-1.5 pr-2 {sel ? 'bg-(--primary-soft) dark:bg-primary/25' : 'hover:bg-(--primary-faint) dark:hover:bg-accent/60'}"
               style="transform:translateY({top}px);height:{ROW}px;contain:layout paint style"
               onclick={(e) => mail.select(m.id, e)}
               ondblclick={() => mail.open(m.id)}
@@ -563,7 +563,7 @@
       <ContextMenu.Separator />
       <ContextMenu.Item onclick={() => mail.reply("reply")}><Reply class="size-4 text-[#8e44ad]" />{t("mail.reply")}<ContextMenu.Shortcut>Ctrl+R</ContextMenu.Shortcut></ContextMenu.Item>
       <ContextMenu.Item onclick={() => mail.reply("reply_all")}><ReplyAll class="size-4 text-[#8e44ad]" />{t("mail.reply_all")}<ContextMenu.Shortcut>Ctrl+Shift+R</ContextMenu.Shortcut></ContextMenu.Item>
-      <ContextMenu.Item onclick={() => mail.reply("forward")}><Forward class="size-4 text-[#0f6cbd]" />{t("mail.forward")}<ContextMenu.Shortcut>Ctrl+F</ContextMenu.Shortcut></ContextMenu.Item>
+      <ContextMenu.Item onclick={() => mail.reply("forward")}><Forward class="size-4 text-primary" />{t("mail.forward")}<ContextMenu.Shortcut>Ctrl+F</ContextMenu.Shortcut></ContextMenu.Item>
       <ContextMenu.Separator />
       {#if allRead}
         <ContextMenu.Item onclick={() => mail.setRead(mail.ids(), false)}><Mail class="size-4 text-[#444]" />{t("mail.mark_unread")}<ContextMenu.Shortcut>Ctrl+U</ContextMenu.Shortcut></ContextMenu.Item>
@@ -571,12 +571,12 @@
         <ContextMenu.Item onclick={() => mail.setRead(mail.ids(), true)}><MailOpen class="size-4 text-[#444]" />{t("mail.mark_read")}<ContextMenu.Shortcut>Ctrl+Q</ContextMenu.Shortcut></ContextMenu.Item>
       {/if}
       {#if mail.messages.find((x) => x.id === mail.ids()[0])?.is_pinned}
-        <ContextMenu.Item onclick={() => void mail.togglePin()}><PinOff class="size-4 text-[#0f6cbd]" />{t("mail.unpin")}</ContextMenu.Item>
+        <ContextMenu.Item onclick={() => void mail.togglePin()}><PinOff class="size-4 text-primary" />{t("mail.unpin")}</ContextMenu.Item>
       {:else}
-        <ContextMenu.Item onclick={() => void mail.togglePin()}><Pin class="size-4 text-[#0f6cbd]" />{t("mail.pin")}</ContextMenu.Item>
+        <ContextMenu.Item onclick={() => void mail.togglePin()}><Pin class="size-4 text-primary" />{t("mail.pin")}</ContextMenu.Item>
       {/if}
       <ContextMenu.Sub>
-        <ContextMenu.SubTrigger><LayoutGrid class="mr-2 size-4 text-[#0f6cbd]" />{t("ctx.categorize")}</ContextMenu.SubTrigger>
+        <ContextMenu.SubTrigger><LayoutGrid class="mr-2 size-4 text-primary" />{t("ctx.categorize")}</ContextMenu.SubTrigger>
         <ContextMenu.SubContent class="w-52">
           {#each app.categories as c (c.name)}
             <ContextMenu.Item onclick={() => mail.toggleCategory(c.name)}><span class="size-3 rounded-sm" style="background:{c.color}"></span>{c.name}</ContextMenu.Item>
@@ -621,7 +621,7 @@
       </ContextMenu.Sub>
       <ContextMenu.Separator />
       <ContextMenu.Sub>
-        <ContextMenu.SubTrigger disabled={!one}><ListFilter class="mr-2 size-4 text-[#0f6cbd]" />{t("ctx.rules")}</ContextMenu.SubTrigger>
+        <ContextMenu.SubTrigger disabled={!one}><ListFilter class="mr-2 size-4 text-primary" />{t("ctx.rules")}</ContextMenu.SubTrigger>
         <ContextMenu.SubContent class="w-72">
           <ContextMenu.Sub>
             <ContextMenu.SubTrigger><span class="truncate">{t("ctx.always_move", senderName)}</span></ContextMenu.SubTrigger>
@@ -636,7 +636,7 @@
         </ContextMenu.SubContent>
       </ContextMenu.Sub>
       <ContextMenu.Sub>
-        <ContextMenu.SubTrigger><FolderInput class="mr-2 size-4 text-[#0f6cbd]" />{t("mail.move")}</ContextMenu.SubTrigger>
+        <ContextMenu.SubTrigger><FolderInput class="mr-2 size-4 text-primary" />{t("mail.move")}</ContextMenu.SubTrigger>
         <ContextMenu.SubContent class="max-h-96 w-64 overflow-y-auto">
           {#each allFolders as { f, account } (f.id)}
             <ContextMenu.Item onclick={() => mail.move(f.id)}><span class="truncate">{f.display}</span><span class="text-muted-foreground ml-auto truncate text-xs">{account}</span></ContextMenu.Item>

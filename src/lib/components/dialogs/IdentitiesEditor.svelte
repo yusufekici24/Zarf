@@ -13,7 +13,7 @@
   let original = $state<string | null>(null);
 
   const rows = $derived(list.filter((x) => x.account_id === account));
-  const btn = "h-[26px] rounded-[3px] border border-[#8a8a8a] bg-[#fdfdfd] px-2.5 text-[13px] hover:bg-[#e5f1fb] disabled:opacity-40 disabled:hover:bg-[#fdfdfd] dark:border-white/30 dark:bg-transparent dark:hover:bg-white/10";
+  const btn = "h-[26px] rounded-[3px] border border-[#8a8a8a] bg-[#fdfdfd] px-2.5 text-[13px] hover:bg-(--primary-hover) disabled:opacity-40 disabled:hover:bg-[#fdfdfd] dark:border-white/30 dark:bg-transparent dark:hover:bg-white/10";
   const input = "h-[26px] w-full rounded-[3px] border border-[#8a8a8a] bg-white px-1.5 text-[13px] outline-none focus:border-primary dark:border-white/30 dark:bg-transparent";
 
   function add() {
