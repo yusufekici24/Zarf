@@ -2653,6 +2653,12 @@ pub fn app_info() -> Value {
     })
 }
 
+/// Takvimi eşitlenemeyen Exchange hesapları: [{account, error}]
+#[tauri::command]
+pub fn calendar_sync_errors() -> Vec<Value> {
+    crate::ews_sync::calendar_errors()
+}
+
 /// Veritabanı boyutu ve içindeki kullanılmayan alan (Seçenekler → Gelişmiş → Veritabanı)
 #[tauri::command(async)]
 pub fn storage_info(state: State<AppState>) -> Value {

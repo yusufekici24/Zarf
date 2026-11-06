@@ -18,6 +18,7 @@ export const api = {
   appInfo: () => invoke<{ version: string; data_dir: string; readpst: boolean }>("app_info"),
   storageInfo: () => invoke<{ size: number; free: number; incremental: boolean }>("storage_info"),
   compactDatabase: () => invoke<{ before: number; after: number }>("compact_database"),
+  calendarSyncErrors: () => invoke<{ account: number; error: string }[]>("calendar_sync_errors"),
 
   // hesaplar
   listAccounts: () => invoke<Account[]>("list_accounts"),

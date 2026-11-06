@@ -19,6 +19,13 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 
 **Posta**
 - Sık Kullanılanlar, klasör ağacı, arama klasörleri; konuşma görünümü; kurallar; kategoriler; bayrak ve takip.
+- **Konuşmalar (OWA gibi):** Konuşma satırının okuna basınca iletileri, Gönderilmiş Öğeler'deki yanıtlar dahil,
+  listede alt alta açılır. Okuma bölmesinde konuşmanın iletileri alt alta durur: gösterilen ileti açıktır, diğerleri
+  tek satırdır, tıklanınca açılır ve okundu olur. **Seçenekler → Gelişmiş → Konuşmalar**: alt alta ya da tek ileti
+  görünümü, en yeni ileti üstte ya da altta, listede açılma oku.
+- **Okundu bilgisi kaybolmaz:** Okundu/okunmadı ve bayrak değişiklikleri yerelde hemen yazılır, sunucuya yazılana
+  kadar bekleyen olarak tutulur. Bağlantı yokken (VPN, uyku) yapılan değişiklik bağlantı gelince gönderilir. Eşitleme
+  bu arada sunucudaki eski durumu geri yazmaz; okunan ileti yeniden kalın görünmez.
 - **Anlık posta:** Exchange akış aboneliği ve IMAP IDLE ile yeni ileti sunucuya düştüğü anda gelir.
 - **Kurallar:** Exchange kuralları sunucuda çalışır. IMAP için yerel kurallar: çoklu koşul, ve/veya, düzenli ifade, özel durumlar.
 - **Kuralları Şimdi Uygula:** Yerel kurallar seçilen klasördeki mevcut iletilere uygulanır. Alt klasörler ve okunmuş/okunmamış seçilebilir. **Önizle** hiçbir şeyi değiştirmeden hangi iletiye ne yapılacağını gösterir; çalıştırma ilerleme çubuğuyla sürer ve iptal edilebilir.
@@ -34,6 +41,15 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 - Ofis dışında yanıtı (Exchange'de sunucuda çalışır).
 - Arama işleçleri: `kimden:ali konu:"aylık rapor" has:attachment is:unread after:2026-01-01`.
   İngilizce karşılıkları da çalışır: `from:`, `to:`, `subject:`, `body:`, `category:`, `before:`, `on:`.
+
+**Görünüm**
+- **Yazı tipi:** **Seçenekler → Genel → Yazı tipi** arayüzün yazı tipini bu bilgisayarda kurulu yazı tiplerinden seçer.
+  Varsayılan, pakete gömülü Noto Sans'tır; her bilgisayarda aynı görünür. Sistemde Windows yazı tipleri kurulu olsa bile
+  "Segoe UI Variable" kendiliğinden seçilmez: WebKitGTK bu değişken yazı tipinin kalınlığını her zaman uygulayamıyor ve
+  okunmuş iletiler de kalın görünebiliyordu.
+- **Okuma Bölmesi (Seçenekler → Posta):** İleti listesi yazı boyutu (küçük, normal, büyük, çok büyük), okunmamış
+  iletileri kalın ya da yalnızca renkli gösterme, kendi yazı tipi olmayan iletilerin okuma yazı tipi ve boyutu
+  (varsayılan Calibri 11 pt). Arayüz ölçeği **Seçenekler → Genel** bölümündedir.
 
 **Güvenlik**
 - **S/MIME ve OpenPGP:** İmzalı ve şifreli iletiler okunur: imza doğrulanır, şifreli ileti çözülür. Okuma bölmesindeki çubuk imzanın geçerli, güvenilmeyen ya da geçersiz olduğunu ve imzalayanı gösterir.
@@ -51,6 +67,10 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 
 **Diğer**
 - Takvim (Exchange takvimi ile eşitleme, yinelenen etkinlikler, hatırlatıcılar), kişiler ve gruplar, görevler, notlar. Görev, not ve kişi grupları Exchange ile çift yönlü eşitlenir.
+- **Yoğun takvimler:** Exchange tek istekte en çok 1000 öğe döndürür (`EWSFindCountLimit`). Takvim bu yüzden 31 günlük
+  parçalarla istenir, dolan parça ikiye bölünür; tekrarlayan toplantısı çok olan takvimler de eksiksiz gelir. Açıklama
+  ve katılımcılar yalnızca yeni ya da değişen toplantılar için istenir (Exchange ChangeKey). Takvim eşitlenemezse
+  nedeni takvimin üstünde yazar ve **Yeniden dene** ile tekrarlanır.
 - **CalDAV ve CardDAV:** IMAP hesaplarında takvim ve kişiler Nextcloud, Radicale gibi sunucularla çift yönlü eşitlenir. Hesabın gelişmiş ayarlarına sunucu adresi yazılır, takvimler ve adres defterleri kendiliğinden bulunur. Yerelde değişen özellikler dışında sunucudaki nesne korunur.
 - **Yedekle / geri yükle:** Tüm veriler tek dosyada, isteğe bağlı parolayla AES-256-GCM şifreli (Dosya > Aç ve Dışarı Aktar).
 - Türkçe ve İngilizce arayüz. Yeni dil eklemek kolaydır (aşağıya bakın).
@@ -90,6 +110,10 @@ yarıda kesilirse sonraki açılışta kaldığı yerden sürer, dosya büyümez
 kurulur (30 bin iletide birkaç saniye); bitene kadar arama eski yöntemle çalışır. Yeni düzene geçen veritabanını
 eski sürümler açamaz: geri dönmek için yükseltmeden önce alınmış bir yedek gerekir.
 
+1.3.x'ten 1.4.0'a yükseltmede geçiş yoktur: yalnızca bir tablo (bekleyen bayraklar) ve bir sütun (toplantı ChangeKey)
+eklenir, 1.3.x bu veritabanını açmaya devam eder. İlk takvim eşitlemesinde toplantıların ayrıntıları bir kez yeniden
+istenir.
+
 ## Kurulum
 
 | Dağıtım | Paket |
@@ -97,7 +121,7 @@ eski sürümler açamaz: geri dönmek için yükseltmeden önce alınmış bir y
 | Ubuntu 24.04 ve sonrası, Debian 13 ve türevleri (glibc 2.39+) | `Lynora_*_amd64.deb` |
 
 ```sh
-sudo apt install ./Lynora_1.3.1_amd64.deb      # bağımlılıklar otomatik kurulur
+sudo apt install ./Lynora_1.4.0_amd64.deb      # bağımlılıklar otomatik kurulur
 ```
 
 Paketler GitHub **Releases** sayfasında yayımlanır. Debian 12, Ubuntu 22.04 ve Pardus 23 gibi eski dağıtımlar için
@@ -133,6 +157,8 @@ Uygulamayı yeniden derlemeden denemek için dosyayı `~/.local/share/lynora/loc
 Sistem geneli için `/usr/share/lynora/locales/` kullanılır. Dil, **Ayarlar → Genel** bölümünden seçilir.
 
 ## Geliştirme
+
+Kodun haritası (modüller, veri akışı, tablolar, ayar anahtarları, tuzaklar): [agent.md](agent.md).
 
 ```sh
 sudo apt install libwebkit2gtk-4.1-dev build-essential curl file libssl-dev librsvg2-dev libayatana-appindicator3-dev

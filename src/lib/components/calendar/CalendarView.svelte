@@ -290,6 +290,14 @@
     void load();
   });
 
+  // Exchange takvimi eşitlenemediyse nedeni görünür (arka plan işinin hatası başka yerde çıkmaz;
+  // önceden toplantılar sessizce görünmüyordu)
+  let syncErrors = $state<{ account: number; error: string }[]>([]);
+  $effect(() => {
+    void app.revision.calendar;
+    void api.calendarSyncErrors().then((v) => (syncErrors = v)).catch(() => {});
+  });
+
   $effect(() => {
     const q = app.search.trim();
     if (!q) {
@@ -739,6 +747,13 @@
   </Ribbon>
 
   <div class="pane mx-0.5 mb-0.5 flex min-h-0 flex-1 flex-col">
+  {#each syncErrors as se (se.account)}
+    <div class="flex items-center gap-2 border-b bg-amber-50 px-3 py-1.5 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-100" data-testid="calendar-sync-error">
+      <TriangleAlert class="size-4 shrink-0" />
+      <span class="selectable flex-1">{t("calendar.sync_failed", app.accounts.find((a) => a.id === se.account)?.email ?? "", se.error)}</span>
+      <Button size="sm" variant="outline" class="h-6 text-xs" onclick={() => void api.syncAccount(se.account)}>{t("calendar.sync_retry")}</Button>
+    </div>
+  {/each}
   <div class="flex min-h-0 flex-1">
     <!-- Sol bölme: iki aylık Tarih Gezgini ve takvim listesi -->
     <div class="min-w-0 shrink-0 overflow-x-hidden overflow-y-auto border-r" style="width:{sideW}px">

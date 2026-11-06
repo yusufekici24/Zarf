@@ -24,6 +24,8 @@ export interface Fixtures {
   settings: Record<string, string>;
   messages: MockMessage[];
   storage: { size: number; free: number; incremental: boolean };
+  fonts: string[];
+  calendarErrors: { account: number; error: string }[];
 }
 
 const NOW = Math.floor(Date.UTC(2026, 10, 5, 9, 0) / 1000);
@@ -69,6 +71,8 @@ export function fixtures(over: Partial<Fixtures> = {}): Fixtures {
     settings: { language: "tr", start_module: "mail", reading_pane: "right", sync_on_start: "0" },
     messages: SAMPLE_MESSAGES,
     storage: { size: 1_520_000_000, free: 210_000_000, incremental: false },
+    fonts: ["DejaVu Sans", "Liberation Serif", "Noto Sans"],
+    calendarErrors: [],
     ...over,
   };
 }
@@ -95,12 +99,14 @@ export async function installMock(page: Page, f: Fixtures) {
       };
     };
     const folders = [folder(1, "Gelen Kutusu", "inbox", 0), folder(2, "Gönderilmiş Öğeler", "sent", 1), folder(3, "Silinmiş Öğeler", "trash", 2)];
-    const row = (m: (typeof f.messages)[number]) => ({
+    const row = (m: (typeof f.messages)[number], thread_count = 1) => ({
       id: m.id, folder_id: m.folder_id, account_id: 1, uid: m.id, subject: m.subject, sender: m.sender, to_addr: "Ben <ben@kurum.com.tr>",
       date: m.date, snippet: m.snippet, is_read: m.is_read, is_flagged: false, is_draft: false, is_answered: false, importance: 1,
-      categories: "", has_attachments: !!m.has_attachments, message_id: `<m${m.id}@kurum.com.tr>`, in_reply_to: "", thread_count: 1, is_pinned: false,
+      categories: "", has_attachments: !!m.has_attachments, message_id: `<m${m.id}@kurum.com.tr>`, in_reply_to: "", thread_count, is_pinned: false,
     });
     const fold = (s: string) => s.toLocaleLowerCase("tr").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/ı/g, "i");
+    // Konuşma anahtarı: "RE:/YNT:/Fw:" önekleri atılmış küçük harfli konu (arka uçtaki ns sütunu gibi)
+    const ns = (s: string) => s.replace(/^\s*((re|ynt|fw|fwd|ilt)\s*:\s*)+/i, "").trim().toLocaleLowerCase("tr");
     const handlers: Record<string, (a: Args) => unknown> = {
       get_locales: () => ({ current: "tr", langs: { tr: f.locales } }),
       set_language: () => "tr",
@@ -126,13 +132,34 @@ export async function installMock(page: Page, f: Fixtures) {
       folder_counts: () => Object.fromEntries(folders.map((x) => [x.id, [x.total, x.unread]])),
       list_messages: (a) => {
         const q = fold(String(a.search ?? "").trim());
-        const rows = f.messages
+        const list = f.messages
           .filter((m) => a.folderId == null || m.folder_id === a.folderId)
           .filter((m) => !q || q.split(/\s+/).every((w) => fold(`${m.subject} ${m.sender} ${m.snippet}`).includes(w)))
-          .sort((x, y) => y.date - x.date)
-          .map(row);
+          .sort((x, y) => y.date - x.date);
+        // Konuşma görünümü: konu başına en yeni ileti, konuşmadaki ileti sayısıyla
+        const conv = (a.order as { conversations?: boolean } | undefined)?.conversations;
+        const rows = conv
+          ? list.filter((m, i) => list.findIndex((x) => ns(x.subject) === ns(m.subject)) === i).map((m) => row(m, list.filter((x) => ns(x.subject) === ns(m.subject)).length))
+          : list.map((m) => row(m));
         return { rows, total: rows.length };
       },
+      conversation: (a) => {
+        const m = f.messages.find((x) => x.id === a.id);
+        if (!m) return [];
+        return f.messages.filter((x) => ns(x.subject) === ns(m.subject) && x.folder_id !== 3).sort((x, y) => x.date - y.date).map((x) => row(x));
+      },
+      set_read: (a) => {
+        for (const m of f.messages) if ((a.ids as number[]).includes(m.id)) m.is_read = a.value as boolean;
+        return null;
+      },
+      system_fonts: () => f.fonts,
+      calendar_sync_errors: () => f.calendarErrors,
+      list_calendars: () => [{ id: 1, name: "ben@kurum.com.tr", color: "#0f6cbd", visible: true, account_id: 1, owner: "", grp: "", kind: "", remote_id: null }],
+      list_occurrences: () => [],
+      remote_occurrences: () => [],
+      refresh_internet_calendars: () => 0,
+      refresh_team_calendars: () => "",
+      sync_account: () => null,
       get_message: (a) => {
         const m = f.messages.find((x) => x.id === a.id)!;
         return {

@@ -67,6 +67,18 @@
     else mail.reply(mode, id);
   }
 
+  // Konuşma (OWA gibi): iletiler alt alta, gösterilen açık, diğerleri tek satır (Seçenekler >
+  // Gelişmiş > Konuşmalar). "single": eski görünüm, tek ileti ve üstte geçiş düğmeleri.
+  const stacked = $derived(
+    !standalone && app.setting("conversation_layout", "stacked") === "stacked" && mail.thread.length > 1 && !!message && mail.thread.some((x) => x.id === message.id),
+  );
+  const ordered = $derived([...mail.thread].sort((a, b) => (app.setting("conversation_order", "newest") === "newest" ? b.date - a.date : a.date - b.date)));
+
+  /** Açılan ileti görünür alana kaydırılır */
+  function reveal(node: HTMLElement) {
+    requestAnimationFrame(() => node.scrollIntoView({ block: "nearest" }));
+  }
+
   let allowRemote = $state(false);
 
   async function respond(kind: "accept" | "tentative" | "decline") {
@@ -193,13 +205,15 @@
   {@const sender = splitNameAddr(m.sender)}
   {@const senderName = (sender.name && !sender.name.includes("@") ? sender.name : "") || (sender.addr && people.name(sender.addr)) || sender.addr || m.sender}
   {@const cats = m.categories ? m.categories.split(",").filter(Boolean) : []}
-  <div class="flex h-full min-h-0 flex-col" bind:clientWidth={paneW}>
-    <div class="space-y-2 border-b px-4 pt-3 pb-2">
-      <div class="flex items-start gap-2">
-        <h2 class="selectable flex-1 text-lg leading-tight font-semibold">{m.subject || t("mail.no_subject")}</h2>
-        {#if m.is_flagged}<Flag class="mt-1 size-4 fill-red-600 text-red-600" />{/if}
-        {#if m.importance === 2}<AlertCircle class="mt-1 size-4 text-red-600" />{/if}
-      </div>
+  {#snippet subject()}
+    <div class="flex items-start gap-2">
+      <h2 class="selectable flex-1 text-lg leading-tight font-semibold">{m.subject || t("mail.no_subject")}</h2>
+      {#if m.is_flagged}<Flag class="mt-1 size-4 fill-red-600 text-red-600" />{/if}
+      {#if m.importance === 2}<AlertCircle class="mt-1 size-4 text-red-600" />{/if}
+    </div>
+  {/snippet}
+  <!-- Gösterilen iletinin başlığı, uyarıları ve ekleri (tek ileti ya da konuşmadaki açık ileti) -->
+  {#snippet details()}
       {#if cats.length}
         <div class="flex flex-wrap gap-1">
           {#each cats as c (c)}<span class="rounded px-2 py-0.5 text-xs text-white" style="background:{app.categoryColor(c)}">{c}</span>{/each}
@@ -345,19 +359,54 @@
           {/if}
         </div>
       {/if}
-    </div>
-
-    {#if mail.thread.length > 1 && !standalone}
-      <div class="flex gap-1 overflow-x-auto border-b px-3 py-1.5">
-        {#each mail.thread as tm (tm.id)}
-          <button class="shrink-0 rounded border px-2 py-0.5 text-xs {tm.id === m.id ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}" onclick={() => mail.showOnly(tm.id)}>
-            {displayName(tm.sender)} · {fmtListDate(tm.date)}
-          </button>
+  {/snippet}
+  <div class="flex h-full min-h-0 flex-col" bind:clientWidth={paneW}>
+    {#if stacked}
+      <div class="border-b px-4 pt-3 pb-2">
+        {@render subject()}
+        <div class="text-muted-foreground mt-0.5 text-xs">{t("mail.conversation_n", mail.thread.length)}</div>
+      </div>
+      <div class="min-h-0 flex-1 overflow-y-auto" data-testid="conversation">
+        {#each ordered as tm (tm.id)}
+          {#if tm.id === m.id}
+            <div class="border-b" data-testid="conversation-open" use:reveal>
+              <div class="space-y-2 px-4 pt-3 pb-2">{@render details()}</div>
+              <MessageBody bind:this={body} html={m.html} text={m.text} allowRemote={allowRemote || trusted} {zoom} autoHeight />
+            </div>
+          {:else}
+            {@const who = splitNameAddr(tm.sender)}
+            <button type="button" class="hover:bg-accent/60 flex w-full items-center gap-3 border-b px-4 py-2 text-left" data-testid="conversation-item" onclick={() => mail.showOnly(tm.id)}>
+              <Avatar name={displayName(tm.sender)} email={who.addr} class="size-8 shrink-0 text-xs" />
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 text-sm">
+                  <span class="truncate {tm.is_read ? '' : 'text-primary font-semibold'}">{displayName(tm.sender) || t("mail.no_sender")}</span>
+                  <span class="flex-1"></span>
+                  {#if tm.has_attachments}<Paperclip class="text-muted-foreground size-3.5" />{/if}
+                  <span class="text-muted-foreground shrink-0 text-xs">{fmtListDate(tm.date)}</span>
+                </div>
+                <div class="text-muted-foreground truncate text-xs">{tm.snippet}</div>
+              </div>
+            </button>
+          {/if}
         {/each}
       </div>
+    {:else}
+      <div class="space-y-2 border-b px-4 pt-3 pb-2">
+        {@render subject()}
+        {@render details()}
+      </div>
+      {#if mail.thread.length > 1 && !standalone}
+        <div class="flex gap-1 overflow-x-auto border-b px-3 py-1.5">
+          {#each mail.thread as tm (tm.id)}
+            <button class="shrink-0 rounded border px-2 py-0.5 text-xs {tm.id === m.id ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}" onclick={() => mail.showOnly(tm.id)}>
+              {displayName(tm.sender)} · {fmtListDate(tm.date)}
+            </button>
+          {/each}
+        </div>
+      {/if}
+      <div class="min-h-0 flex-1">
+        <MessageBody bind:this={body} html={m.html} text={m.text} allowRemote={allowRemote || trusted} {zoom} />
+      </div>
     {/if}
-    <div class="min-h-0 flex-1">
-      <MessageBody bind:this={body} html={m.html} text={m.text} allowRemote={allowRemote || trusted} {zoom} />
-    </div>
   </div>
 {/if}

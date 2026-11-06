@@ -206,6 +206,39 @@ fn ts_to_ews(ts: f64) -> String {
     chrono::DateTime::from_timestamp(ts as i64, 0).map(|d| d.format("%Y-%m-%dT%H:%M:%SZ").to_string()).unwrap_or_default()
 }
 
+/// Takvim görünümü parçası (31 gün) ve parça başına en çok öğe (Exchange'in varsayılan 1000'lik
+/// sınırının altında: aşan parça ikiye bölünür)
+const CAL_CHUNK_SECS: f64 = 31.0 * 86400.0;
+const CAL_MAX: usize = 500;
+/// Daha fazla bölünmeyen en kısa aralık
+const CAL_MIN_SECS: f64 = 3600.0;
+
+/// [start, end) aralığını `chunk` uzunluğunda parçalarla çeker. `fetch` (öğeler, tamamı geldi mi)
+/// döndürür; tamamı gelmeyen parça ikiye bölünür (en kısa aralıkta gelen kabul edilir).
+fn fetch_split<T>(start: f64, end: f64, chunk: f64, fetch: &mut dyn FnMut(f64, f64) -> MailResult<(Vec<T>, bool)>) -> MailResult<Vec<T>> {
+    let mut out = Vec::new();
+    let mut stack: Vec<(f64, f64)> = Vec::new();
+    let mut s = start;
+    while s < end {
+        let e = (s + chunk).min(end);
+        stack.push((s, e));
+        s = e;
+    }
+    // Sıra korunur: bölünen parçanın ilk yarısı önce
+    stack.reverse();
+    while let Some((s, e)) = stack.pop() {
+        let (items, complete) = fetch(s, e)?;
+        if complete || e - s <= CAL_MIN_SECS {
+            out.extend(items);
+        } else {
+            let mid = s + ((e - s) / 2.0).floor();
+            stack.push((mid, e));
+            stack.push((s, mid));
+        }
+    }
+    Ok(out)
+}
+
 pub fn ews_to_ts(s: &str) -> Option<f64> {
     chrono::DateTime::parse_from_rfc3339(s.trim()).ok().map(|d| d.timestamp() as f64)
 }
@@ -984,22 +1017,50 @@ impl Ews {
     }
 
     // ------------------------------------------------------------------ takvim
-    pub fn calendar_view(&mut self, start: f64, end: f64) -> MailResult<Vec<Event>> {
+    /// Hesabın (paylaşılan kutuda o kutunun) takvimi, ayrıntısız
+    pub fn calendar_summary(&mut self, start: f64, end: f64) -> MailResult<Vec<Event>> {
         let mailbox = self.mailbox.clone();
-        self.calendar_view_of(mailbox.as_deref(), start, end)
+        self.calendar_summary_of(mailbox.as_deref(), start, end)
     }
 
     /// Takvim görünümü; `mailbox` verilirse başkasının (ekip, oda, paylaşılan) takvimi
     pub fn calendar_view_of(&mut self, mailbox: Option<&str>, start: f64, end: f64) -> MailResult<Vec<Event>> {
+        let mut events = self.calendar_summary_of(mailbox, start, end)?;
+        self.calendar_details(&mut events);
+        Ok(events)
+    }
+
+    /// Takvim görünümü, ayrıntısız (açıklama ve katılımcılar yok). Exchange tek istekte en çok
+    /// `EWSFindCountLimit` (varsayılan 1000) öğe döndürür; fazlasında hata verir ya da listeyi
+    /// keser. Toplantısı yoğun takvimlerde (tekrarlayan toplantılar) aralık bu yüzden parçalar
+    /// halinde istenir, dolan parça ikiye bölünür.
+    pub fn calendar_summary_of(&mut self, mailbox: Option<&str>, start: f64, end: f64) -> MailResult<Vec<Event>> {
         let folder = match mailbox {
             Some(m) => format!(r#"<t:DistinguishedFolderId Id="calendar"><t:Mailbox><t:EmailAddress>{}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>"#, esc(m)),
             None => r#"<t:DistinguishedFolderId Id="calendar"/>"#.to_string(),
         };
-        let doc = self.call(&format!(r#"<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="item:Subject"/><t:FieldURI FieldURI="calendar:Start"/><t:FieldURI FieldURI="calendar:End"/><t:FieldURI FieldURI="calendar:Location"/><t:FieldURI FieldURI="calendar:IsAllDayEvent"/><t:FieldURI FieldURI="item:ReminderIsSet"/><t:FieldURI FieldURI="item:ReminderMinutesBeforeStart"/><t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus"/><t:FieldURI FieldURI="calendar:IsRecurring"/><t:FieldURI FieldURI="item:Categories"/><t:FieldURI FieldURI="item:Sensitivity"/><t:FieldURI FieldURI="calendar:UID"/><t:FieldURI FieldURI="calendar:Organizer"/><t:FieldURI FieldURI="calendar:IsCancelled"/><t:FieldURI FieldURI="calendar:IsMeeting"/><t:FieldURI FieldURI="calendar:MyResponseType"/></t:AdditionalProperties></m:ItemShape><m:CalendarView MaxEntriesReturned="2000" StartDate="{}" EndDate="{}"/><m:ParentFolderIds>{folder}</m:ParentFolderIds></m:FindItem>"#, ts_to_ews(start), ts_to_ews(end)))?;
+        let all = fetch_split(start, end, CAL_CHUNK_SECS, &mut |s, e| self.calendar_chunk(&folder, s, e))?;
+        // Parça sınırına denk gelen toplantı iki parçada da gelir
+        let mut seen = std::collections::HashSet::new();
+        Ok(all.into_iter().filter(|e| seen.insert(e.remote_id.clone())).collect())
+    }
+
+    /// Aralığın tek isteği: (olaylar, tamamı geldi mi)
+    fn calendar_chunk(&mut self, folder: &str, start: f64, end: f64) -> MailResult<(Vec<Event>, bool)> {
+        let doc = match self.call(&format!(r#"<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="item:Subject"/><t:FieldURI FieldURI="calendar:Start"/><t:FieldURI FieldURI="calendar:End"/><t:FieldURI FieldURI="calendar:Location"/><t:FieldURI FieldURI="calendar:IsAllDayEvent"/><t:FieldURI FieldURI="item:ReminderIsSet"/><t:FieldURI FieldURI="item:ReminderMinutesBeforeStart"/><t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus"/><t:FieldURI FieldURI="calendar:IsRecurring"/><t:FieldURI FieldURI="item:Categories"/><t:FieldURI FieldURI="item:Sensitivity"/><t:FieldURI FieldURI="calendar:UID"/><t:FieldURI FieldURI="calendar:Organizer"/><t:FieldURI FieldURI="calendar:IsCancelled"/><t:FieldURI FieldURI="calendar:IsMeeting"/><t:FieldURI FieldURI="calendar:MyResponseType"/></t:AdditionalProperties></m:ItemShape><m:CalendarView MaxEntriesReturned="{CAL_MAX}" StartDate="{}" EndDate="{}"/><m:ParentFolderIds>{folder}</m:ParentFolderIds></m:FindItem>"#, ts_to_ews(start), ts_to_ews(end))) {
+            Ok(d) => d,
+            // Sınır aşıldı: parça bölünür
+            Err(e) if e.message().contains("ErrorExceededFindCountLimit") || e.message().contains("ErrorCalendarViewRangeTooBig") => return Ok((vec![], false)),
+            Err(e) => return Err(e),
+        };
         let mut items = Vec::new();
         doc.find_all("CalendarItem", &mut items);
-        let mut events: Vec<Event> = items.iter().filter_map(|it| calendar_item_to_event(it)).collect();
-        // Açıklama ve katılımcılar için ayrıntılar
+        let complete = items.len() < CAL_MAX && doc.find("RootFolder").and_then(|r| r.attr("IncludesLastItemInRange")) != Some("false");
+        Ok((items.iter().filter_map(|it| calendar_item_to_event(it)).collect(), complete))
+    }
+
+    /// Açıklama ve katılımcılar (50'şer öğelik isteklerle)
+    pub fn calendar_details(&mut self, events: &mut [Event]) {
         let ids: Vec<String> = events.iter().filter_map(|e| e.remote_id.clone()).collect();
         for chunk in ids.chunks(50) {
             let Ok(doc) = self.call(&format!(r#"<m:GetItem><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:BodyType>Text</t:BodyType><t:AdditionalProperties><t:FieldURI FieldURI="item:Body"/><t:FieldURI FieldURI="calendar:RequiredAttendees"/><t:FieldURI FieldURI="calendar:OptionalAttendees"/><t:FieldURI FieldURI="calendar:Resources"/></t:AdditionalProperties></m:ItemShape><m:ItemIds>{}</m:ItemIds></m:GetItem>"#, item_ids(chunk))) else { continue };
@@ -1022,7 +1083,6 @@ impl Ews {
                 }
             }
         }
-        Ok(events)
     }
 
     fn event_xml(e: &Event, include_recurrence: bool) -> String {
@@ -1518,6 +1578,7 @@ fn collect_response_messages<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
 
 fn calendar_item_to_event(it: &Element) -> Option<Event> {
     let id = it.child("ItemId")?.attr("Id")?.to_string();
+    let change_key = it.child("ItemId").and_then(|i| i.attr("ChangeKey")).unwrap_or("").to_string();
     let start = ews_to_ts(&it.text_of("Start"))?;
     let end = ews_to_ts(&it.text_of("End")).unwrap_or(start + 1800.0);
     let reminder = if it.text_of("ReminderIsSet") == "true" { it.text_of("ReminderMinutesBeforeStart").parse().unwrap_or(15) } else { -1 };
@@ -1560,6 +1621,7 @@ fn calendar_item_to_event(it: &Element) -> Option<Event> {
         .into(),
         master_id: if it.text_of("IsRecurring") == "true" { Some(id.clone()) } else { None },
         remote_id: Some(id),
+        change_key,
         ..Event::new_default()
     })
 }
@@ -1592,6 +1654,49 @@ fn recurrence_xml(e: &Event) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Yoğun takvim (460 günde saat başı toplantı): Exchange 500'den fazlasını keser, 1000'den
+    /// fazlasında hata verir. Parçalı istekle hepsi, sırayla ve bir kez gelir.
+    #[test]
+    fn dense_calendar_is_fetched_in_chunks() {
+        let (start, end) = (0.0, 460.0 * 86400.0);
+        let all: Vec<f64> = (0..(460 * 24)).map(|h| h as f64 * 3600.0).collect();
+        let mut calls = 0;
+        let got = fetch_split(start, end, CAL_CHUNK_SECS, &mut |s, e| {
+            calls += 1;
+            let hit: Vec<f64> = all.iter().copied().filter(|t| *t >= s && *t < e).collect();
+            if hit.len() > 1000 {
+                return Ok((vec![], false)); // ErrorExceededFindCountLimit
+            }
+            let complete = hit.len() < CAL_MAX;
+            Ok((hit.into_iter().take(CAL_MAX).collect(), complete))
+        })
+        .unwrap();
+        assert_eq!(got, all);
+        assert!(calls < 80, "{calls} istek");
+        // Seyrek takvimde parça başına tek istek
+        let mut calls = 0;
+        let got = fetch_split(start, end, CAL_CHUNK_SECS, &mut |_, _| {
+            calls += 1;
+            Ok((vec![1], true))
+        })
+        .unwrap();
+        assert_eq!((got.len(), calls), (15, 15));
+        // Bölünemeyecek kadar dar aralıkta gelen kabul edilir (sonsuz döngü olmaz)
+        let got = fetch_split(0.0, 1800.0, CAL_CHUNK_SECS, &mut |_, _| Ok((vec![7], false))).unwrap();
+        assert_eq!(got, vec![7]);
+        // Ağ hatası olduğu gibi döner
+        assert!(fetch_split::<u8>(start, end, CAL_CHUNK_SECS, &mut |_, _| Err(MailError::net("yok"))).unwrap_err().is_net());
+    }
+
+    #[test]
+    fn calendar_item_keeps_change_key() {
+        let xml = r#"<CalendarItem><ItemId Id="AAMkA" ChangeKey="DwAAAB"/><Subject>Yönetim kurulu</Subject><Start>2026-11-06T07:00:00Z</Start><End>2026-11-06T08:00:00Z</End><IsRecurring>true</IsRecurring></CalendarItem>"#;
+        let doc = xml::parse(xml.as_bytes()).unwrap();
+        let e = calendar_item_to_event(doc.find("CalendarItem").unwrap()).unwrap();
+        assert_eq!((e.remote_id.as_deref(), e.change_key.as_str(), e.master_id.as_deref()), (Some("AAMkA"), "DwAAAB", Some("AAMkA")));
+        assert_eq!((e.start, e.end), (1793948400.0, 1793952000.0));
+    }
 
     #[test]
     fn task_xml_roundtrip() {

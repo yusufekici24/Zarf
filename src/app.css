@@ -145,7 +145,8 @@
   html,
   body {
     @apply bg-background text-foreground h-full overflow-hidden;
-    font-family: "Segoe UI Variable Text", "Segoe UI", "Noto Sans Variable", "Noto Sans", "Ubuntu", "Cantarell", "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
+    /* Seçenekler > Genel > Yazı tipi (src/lib/uifont.ts); varsayılan gömülü Noto Sans */
+    font-family: var(--ui-font, "Noto Sans Variable", "Noto Sans", "Ubuntu", "Cantarell", "DejaVu Sans", "Liberation Sans", system-ui, sans-serif);
     font-size: 14px;
     -webkit-user-select: none;
     user-select: none;

@@ -32,7 +32,9 @@ Lynora'nın kendi eksikleri:
 
 - Kişiler, Görevler ve Notlar şeritleri eski stilde, Giriş ve Yardım sekmeleri var
 - Yinelenen etkinlikler beş kalıpla sınırlı
-- Arayüz testleri (`tests/ui`, sahte arka uçla) yalnızca posta ana ekranını ve Seçenekler → Veritabanı bölümünü kapsıyor
+- Arayüz testleri (`tests/ui`, sahte arka uçla) posta ana ekranını, konuşmaları, güvenilir göndericileri, yazı tipi ve
+  görünüm ayarlarını, Seçenekler → Veritabanı bölümünü ve takvim eşitleme uyarısını kapsıyor; takvim, kişiler, görevler
+  ve ileti yazma ekranları kapsanmıyor
 
 ## Bilinen sınırlar
 
@@ -47,6 +49,8 @@ Lynora'nın kendi eksikleri:
   kaydedilen taslak şifrelenmez. İmzalı ya da şifreli iletide gönderimi geri alma bekletmesi uygulanmaz.
 - S/MIME sertifika iptali (CRL/OCSP) denetlenmez. Şifreli iletiler yerel aramada bulunmaz.
 - Yedek parolaları içermez: anahtarlık yoksa hesap parolaları geri yüklemede yeniden istenebilir.
+- Exchange takvimi bugünden 60 gün öncesi ile 400 gün sonrası arasında eşitlenir; daha eski ve daha ileri
+  toplantılar yerelde görünmez.
 
 ## Geliştirme
 

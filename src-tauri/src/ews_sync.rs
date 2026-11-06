@@ -11,6 +11,30 @@ use std::collections::{HashMap, HashSet};
 /// Klasör başına son sabitleme denetimi (10 dakikada bir)
 static PIN_CHECK: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<i64, std::time::Instant>>> = std::sync::LazyLock::new(Default::default);
 
+/// Hesap başına son takvim eşitleme hatası. Takvim arka planda eşitlendiği için hata başka
+/// yerde görünmez: takvim görünümü açılınca okur, değişince "calendar://sync-error" ile bildirilir.
+static CALENDAR_ERRORS: std::sync::LazyLock<std::sync::Mutex<HashMap<i64, String>>> = std::sync::LazyLock::new(Default::default);
+
+/// Hesabın takvim hatasını yazar (boş: eşitleme başarılı)
+pub(crate) fn set_calendar_error(emit: &crate::sync::Emitter, account_id: i64, msg: &str) {
+    let mut m = CALENDAR_ERRORS.lock().unwrap_or_else(|e| e.into_inner());
+    let changed = if msg.is_empty() { m.remove(&account_id).is_some() } else { m.insert(account_id, msg.to_string()).as_deref() != Some(msg) };
+    if changed {
+        emit("calendar://sync-error", json!(calendar_errors_of(&m)));
+    }
+}
+
+fn calendar_errors_of(m: &HashMap<i64, String>) -> Vec<serde_json::Value> {
+    let mut v: Vec<_> = m.iter().map(|(a, e)| json!({"account": a, "error": e})).collect();
+    v.sort_by_key(|x| x["account"].as_i64());
+    v
+}
+
+/// Takvimi eşitlenemeyen hesaplar ve hataları
+pub fn calendar_errors() -> Vec<serde_json::Value> {
+    calendar_errors_of(&CALENDAR_ERRORS.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 /// İletinin tam içeriği; yalnızca başlığı inmiş Exchange iletisiyse sunucudan
 /// hemen indirilip kaydedilir (posta açılınca; eşitleme kuyruğunu beklemez).
 pub fn ensure_content(db: &crate::db::Db, id: i64) -> Option<Vec<u8>> {
@@ -432,11 +456,13 @@ impl Worker {
     fn ews_apply_changes(&mut self, account_id: i64, folder: &Folder, ch: &crate::mail::ews::SyncChanges, notify_after: f64) -> MailResult<Vec<Message>> {
         for (id, read, flag, pinned) in &ch.updates {
             if let Some(mid) = self.db.message_by_remote(folder.id, id) {
+                // Sunucuya henüz yazılmamış yerel değişikliğin üzerine yazılmaz (eşitleme, okundu
+                // isteğinden önce alınmış eski durumu getirebilir)
                 if let Some(r) = read {
-                    self.db.set_message_field(mid, "is_read", *r as i64);
+                    self.db.set_flag_from_server(mid, "is_read", *r);
                 }
                 if let Some(f) = flag {
-                    self.db.set_message_field(mid, "is_flagged", *f as i64);
+                    self.db.set_flag_from_server(mid, "is_flagged", *f);
                 }
                 if let Some(p) = pinned {
                     self.db.set_message_field(mid, "is_pinned", *p as i64);
@@ -608,9 +634,43 @@ impl Worker {
             }
         };
         let now = crate::db::now();
-        let events = self.with_ews(account_id, move |e| e.calendar_view(now - 60.0 * 86400.0, now + 400.0 * 86400.0))?;
+        let mut events = match self.with_ews(account_id, move |e| e.calendar_summary(now - 60.0 * 86400.0, now + 400.0 * 86400.0)) {
+            Ok(v) => v,
+            Err(e) => {
+                // Arka plan işinin hatası başka yerde görünmez: takvim görünümü bildirir
+                if !e.is_net() {
+                    set_calendar_error(&self.emit, account_id, e.message());
+                }
+                return Err(e);
+            }
+        };
         let local: HashMap<String, crate::db::Event> =
             self.db.events_in_calendar(cal.id).into_iter().filter_map(|e| e.remote_id.clone().map(|r| (r, e))).collect();
+        // Değişmeyen toplantının (aynı ChangeKey) ayrıntıları yereldekinden alınır; yalnızca yeni
+        // ve değişenler için açıklama ve katılımcılar istenir
+        let mut need = Vec::new();
+        for (i, e) in events.iter_mut().enumerate() {
+            match e.remote_id.as_ref().and_then(|r| local.get(r)) {
+                Some(old) if !old.change_key.is_empty() && old.change_key == e.change_key => {
+                    e.description = old.description.clone();
+                    e.attendees = old.attendees.clone();
+                    e.optional_attendees = old.optional_attendees.clone();
+                    e.resources = old.resources.clone();
+                }
+                _ => need.push(i),
+            }
+        }
+        if !need.is_empty() {
+            let mut subset: Vec<crate::db::Event> = need.iter().map(|&i| events[i].clone()).collect();
+            subset = self.with_ews(account_id, move |e| {
+                e.calendar_details(&mut subset);
+                Ok(subset)
+            })?;
+            for (i, e) in need.into_iter().zip(subset) {
+                events[i] = e;
+            }
+        }
+        set_calendar_error(&self.emit, account_id, "");
         let mut seen = HashSet::new();
         let mut changed = false;
         for mut e in events {

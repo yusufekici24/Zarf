@@ -18,6 +18,7 @@
   import type { Account, Rule } from "$lib/types";
   import { fmtSize, initials } from "$lib/format";
   import { SCALES, autoScale } from "$lib/zoom";
+  import { READ_SIZES } from "$lib/uifont";
   import { COMMON_FONTS, FONT_SIZES, fontCss, fontStack, parseFont, type FontKey, type FontSpec } from "$lib/fonts";
   import TypeIcon from "@lucide/svelte/icons/type";
   import { setMode } from "mode-watcher";
@@ -102,6 +103,16 @@
     const v = await app.prompt(t("settings.trusted_add"), t("settings.trusted_label"));
     if (v?.trim() && !(await addTrustedSender(v))) toast.error(t("settings.trusted_invalid", v.trim()));
   }
+
+  // Bu bilgisayardaki yazı tipleri (Genel → yazı tipi, Posta → okuma yazı tipi)
+  let fonts = $state<string[] | null>(null);
+  $effect(() => {
+    if (app.settingsDialog.open && (tab === "general" || tab === "mail") && fonts === null) {
+      fonts = [];
+      void api.systemFonts().then((f) => (fonts = f)).catch(() => {});
+    }
+  });
+  const fontOptions = (first: [string, string][]): [string, string][] => [...first, ...(fonts ?? []).map((f): [string, string] => [f, f])];
 
   // Veritabanı boyutu ve sıkıştırma (Gelişmiş → Veritabanı)
   let storage = $state<{ size: number; free: number; incremental: boolean } | null>(null);
@@ -403,6 +414,7 @@
         {@render check("show_avatars", t("view.show_avatars"), true)}
         {@render pick("reading_pane", t("settings.reading_pane"), "right", [["right", t("settings.reading_pane_right")], ["bottom", t("settings.reading_pane_bottom")], ["off", t("settings.reading_pane_off")]])}
         {@render pick("ui_scale", t("settings.ui_scale"), "auto", [["auto", t("settings.ui_scale_auto", Math.round(autoScale() * 100))], ...SCALES.map((v) => [v, `%${Math.round(Number(v) * 100)}`] as [string, string])])}
+        {@render pick("ui_font", t("settings.ui_font"), "", fontOptions([["", t("settings.font_default", "Noto Sans")], ["system", t("settings.font_system")]]))}
         {@render section(t("settings.sec_personalize"))}
         {@render field(t("settings.user_name"), get("user_name", me?.display_name ?? ""), (v) => set("user_name", v), "w-64")}
         {@render field(t("settings.initials"), get("user_initials", initials(me?.display_name || me?.email || "")), (v) => set("user_initials", v), "w-20")}
@@ -445,6 +457,9 @@
         {@render check("sync_on_select", t("settings.sync_on_select"), true)}
         {@render section(t("settings.sec_conversations"))}
         {@render check("conversations", t("view.conversations"))}
+        {@render pick("conversation_layout", t("settings.conv_layout"), "stacked", [["stacked", t("settings.conv_stacked")], ["single", t("settings.conv_single")]], true)}
+        {@render pick("conversation_order", t("settings.conv_order"), "newest", [["newest", t("settings.conv_newest")], ["oldest", t("settings.conv_oldest")]], true)}
+        {@render check("conversation_expand", t("settings.conv_expand"), true)}
         {@render check("group_by_date", t("view.group_by_date"), true)}
         {@render section(t("settings.sec_display"))}
         {@render check("hw_accel", t("settings.hw_accel"), true)}
@@ -491,7 +506,10 @@
           <button class="hover:bg-accent h-7 rounded border px-3" onclick={() => (app.settingsDialog = { open: true, tab: "stationery" })}>{t("settings.tab_stationery")}…</button>
         </div>
         {@render section(t("settings.sec_reading"))}
-        {@render pick("list_font", t("settings.list_font"), "normal", [["small", t("settings.size_small")], ["normal", t("settings.size_normal")], ["large", t("settings.size_large")]], true)}
+        {@render pick("list_font", t("settings.list_font"), "normal", [["small", t("settings.size_small")], ["normal", t("settings.size_normal")], ["large", t("settings.size_large")], ["xlarge", t("settings.size_xlarge")]], true)}
+        {@render check("unread_bold", t("settings.unread_bold"), true)}
+        {@render pick("read_font", t("settings.read_font"), "", fontOptions([["", t("settings.font_default", "Calibri")]]), true)}
+        {@render pick("read_font_size", t("settings.read_font_size"), "11", READ_SIZES.map((v): [string, string] => [v, `${v} pt`]), true)}
         {@render pick("preview_lines", t("settings.preview_lines"), "1", [["0", t("settings.preview_off")], ["1", t("settings.preview_n", 1)], ["2", t("settings.preview_n", 2)], ["3", t("settings.preview_n", 3)]], true)}
         {@render pick("reading_zoom", t("settings.reading_zoom"), "100", ["75", "90", "100", "110", "125", "150", "175", "200"].map((v) => [v, `%${v}`]), true)}
         {@render pick("mark_read_delay", t("settings.mark_read"), "0", [["0", t("settings.mark_read_immediately")], ["2", t("settings.mark_read_after", 2)], ["5", t("settings.mark_read_after", 5)], ["10", t("settings.mark_read_after", 10)], ["-1", t("settings.mark_read_never")]], true)}

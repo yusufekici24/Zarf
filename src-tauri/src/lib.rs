@@ -554,6 +554,7 @@ pub fn run() {
             commands::dismiss_reminder,
             commands::app_info,
             commands::storage_info,
+            commands::calendar_sync_errors,
             commands::compact_database,
             commands::system_identity,
             commands::discover_account,

@@ -39,6 +39,8 @@ class MailState {
   anchor = $state<number | null>(null);
   current = $state<MessageView | null>(null);
   thread = $state<MessageRow[]>([]);
+  /** Listede açılmış konuşmalar (OWA gibi alt alta): baş satırın kimliği → konuşmadaki iletiler */
+  expanded = $state.raw<Record<number, MessageRow[]>>({});
   loading = $state(false);
   sortBy = $state<"date" | "from" | "subject" | "importance" | "flag">("date");
   sortDesc = $state(true);
@@ -188,6 +190,9 @@ class MailState {
       if (app.search.trim()) void this.searchServer();
       else this.serverSearchKey = "";
       const ids = new Set(r.rows.map((x) => x.id));
+      // Açık konuşmalar: klasör değişince kapanır, yenilemede (okundu, yeni yanıt) güncellenir
+      if (!keep) this.expanded = {};
+      else void this.refreshExpanded(ids);
       if (!keep) this.selected = this.selected.filter((id) => ids.has(id));
       if (this.current && !ids.has(this.current.id) && !this.current.external && !keep) {
         this.current = null;
@@ -262,6 +267,28 @@ class MailState {
     return m.thread_count ?? 1;
   }
 
+  /** Konuşmayı listede aç/kapat (iletileri baş satırın altında) */
+  async toggleExpand(head: number) {
+    if (this.expanded[head]) {
+      const { [head]: _, ...rest } = this.expanded;
+      this.expanded = rest;
+      return;
+    }
+    const rows = await api.conversation(head).catch(() => [] as MessageRow[]);
+    if (rows.length > 1) this.expanded = { ...this.expanded, [head]: rows };
+  }
+
+  private async refreshExpanded(heads: Set<number>) {
+    const open = Object.keys(this.expanded).map(Number);
+    if (!open.length) return;
+    const next: Record<number, MessageRow[]> = {};
+    for (const h of open.filter((h) => heads.has(h))) {
+      const rows = await api.conversation(h).catch(() => this.expanded[h] ?? []);
+      if (rows.length > 1) next[h] = rows;
+    }
+    this.expanded = next;
+  }
+
   // ------------------------------------------------------------- seçim
   async select(id: number, e?: MouseEvent | KeyboardEvent) {
     if (this.inlineReply && this.inlineReply.sourceId !== id) await this.closeInline();
@@ -294,23 +321,30 @@ class MailState {
       // Konuşma sorgusu yalnızca konuşmada birden çok ileti varsa (tüm tabloyu tarar)
       const row = this.messages.find((m) => m.id === id);
       this.thread = this.conversations && (row?.thread_count ?? 2) > 1 ? await api.conversation(id) : [];
-      if (!v.is_read && app.setting("reading_pane", "right") !== "off") {
-        const delay = Number(app.setting("mark_read_delay", "0"));
-        if (delay >= 0) {
-          this.readTimer = setTimeout(() => {
-            if (this.selected.length === 1 && this.selected[0] === id) void this.setRead([id], true);
-          }, delay * 1000);
-        }
-      }
+      this.autoRead(v, () => this.selected.length === 1 && this.selected[0] === id);
     } catch (e) {
       app.error(e);
     }
   }
 
-  /** Konuşmadaki başka bir iletiyi seçimi değiştirmeden göster */
+  /** Okuma bölmesinde gösterilen ileti, ayardaki süre sonunda (hâlâ gösteriliyorsa) okundu olur */
+  private autoRead(v: MessageView, still: () => boolean) {
+    if (this.readTimer) clearTimeout(this.readTimer);
+    this.readTimer = null;
+    if (v.is_read || v.external || app.setting("reading_pane", "right") === "off") return;
+    const delay = Number(app.setting("mark_read_delay", "0"));
+    if (delay < 0) return;
+    this.readTimer = setTimeout(() => {
+      if (still() && this.current?.id === v.id) void this.setRead([v.id], true);
+    }, delay * 1000);
+  }
+
+  /** Konuşmadaki başka bir iletiyi seçimi değiştirmeden göster (o ileti de okundu olur) */
   async showOnly(id: number) {
     try {
-      this.current = await api.getMessage(id);
+      const v = await api.getMessage(id);
+      this.current = v;
+      this.autoRead(v, () => true);
     } catch (e) {
       app.error(e);
     }
@@ -357,7 +391,10 @@ class MailState {
       clearTimeout(this.readTimer);
       this.readTimer = null;
     }
-    this.messages = this.messages.map((m) => (set.has(m.id) && m.is_read !== value ? { ...m, is_read: value } : m));
+    const mark = (rows: MessageRow[]) => (rows.some((m) => set.has(m.id) && m.is_read !== value) ? rows.map((m) => (set.has(m.id) && m.is_read !== value ? { ...m, is_read: value } : m)) : rows);
+    this.messages = mark(this.messages);
+    this.thread = mark(this.thread);
+    if (Object.keys(this.expanded).length) this.expanded = Object.fromEntries(Object.entries(this.expanded).map(([k, rows]) => [k, mark(rows)]));
     if (this.current && set.has(this.current.id)) this.current = { ...this.current, is_read: value };
     try {
       await api.setRead(ids, value);

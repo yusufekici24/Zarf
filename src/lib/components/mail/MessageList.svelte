@@ -33,15 +33,23 @@
   import MailX from "@lucide/svelte/icons/mail-x";
   import ShieldBan from "@lucide/svelte/icons/shield-ban";
   import Archive from "@lucide/svelte/icons/archive";
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
+  import ChevronDown from "@lucide/svelte/icons/chevron-down";
 
   // Görünüm: ileti listesi yazı boyutu ve önizleme satırı (Outlook "İleti Önizlemesi")
-  const FS = $derived(({ small: 12, normal: 13, large: 15 } as Record<string, number>)[app.setting("list_font", "normal")] ?? 13);
+  const FS = $derived(({ small: 12, normal: 13, large: 15, xlarge: 17 } as Record<string, number>)[app.setting("list_font", "normal")] ?? 13);
   const PREVIEW = $derived(Math.max(0, Math.min(3, Number(app.setting("preview_lines", "1")) || 0)));
   /** Satır yüksekliği: dolgu + ad ve konu satırları + önizleme satırları */
   const ROW = $derived(Math.round(15 + FS * 3 + PREVIEW * (FS - 1) * 1.35));
   const HEAD = 28;
+  /** Açılmış konuşmadaki ileti satırı (gönderen + özet) */
+  const CHILD = $derived(Math.round(12 + FS * 2.6));
+  // Okunmamış: kalın (varsayılan) ya da yalnızca renkli (Seçenekler > Posta > Okuma Bölmesi)
+  const BOLD = $derived(app.setting("unread_bold", "1") === "1");
+  // Konuşma satırında aç/kapa oku (OWA gibi iletiler alt alta)
+  const EXPANDABLE = $derived(mail.conversations && app.setting("conversation_expand", "1") === "1");
 
-  type Item = { kind: "head"; label: string } | { kind: "row"; m: MessageRow };
+  type Item = { kind: "head"; label: string } | { kind: "row"; m: MessageRow } | { kind: "child"; m: MessageRow; head: number };
 
   const grouped = $derived(app.setting("group_by_date", "1") === "1" && mail.sortBy === "date");
 
@@ -57,6 +65,9 @@
         }
       }
       out.push({ kind: "row", m });
+      const kids = EXPANDABLE ? mail.expanded[m.id] : undefined;
+      // En yeni üstte (OWA listesi gibi)
+      if (kids) for (const c of [...kids].sort((a, b) => b.date - a.date)) out.push({ kind: "child", m: c, head: m.id });
     }
     return out;
   });
@@ -66,11 +77,16 @@
     let y = 0;
     for (const it of items) {
       o.push(y);
-      y += it.kind === "head" ? HEAD : ROW;
+      y += it.kind === "head" ? HEAD : it.kind === "child" ? CHILD : ROW;
     }
     o.push(y);
     return o;
   });
+
+  /** Konuşmadaki iletinin klasörü başka (ör. Gönderilmiş Öğeler) ise adı */
+  function otherFolder(c: MessageRow): string {
+    return c.folder_id === mail.folderId ? "" : (mail.folder(c.folder_id)?.display ?? "");
+  }
 
   let scroller: HTMLDivElement | undefined = $state();
   let scrollTop = $state(0);
@@ -408,9 +424,36 @@
         </div>
       {/if}
       <div style="height: {offsets[offsets.length - 1] ?? 0}px;contain:strict" class="relative">
-        {#each visible as { it, top } (it.kind === "row" ? "r" + it.m.id : "h" + it.label)}
+        {#each visible as { it, top } (it.kind === "row" ? "r" + it.m.id : it.kind === "child" ? `c${it.head}:${it.m.id}` : "h" + it.label)}
           {#if it.kind === "head"}
             <div class="text-foreground absolute top-0 right-0 left-0 flex items-center px-3 text-xs font-semibold" style="transform:translateY({top}px);height:{HEAD}px">{it.label}</div>
+          {:else if it.kind === "child"}
+            <!-- Açılmış konuşmadaki ileti (OWA): girintili, gönderen ve özet; tıklayınca o ileti açılır -->
+            {@const c = it.m}
+            {@const sel = selectedSet.has(c.id)}
+            {@const where = otherFolder(c)}
+            <div
+              role="option"
+              tabindex="-1"
+              aria-selected={sel}
+              data-testid="thread-item"
+              class="absolute top-0 right-0 left-0 flex cursor-default items-stretch border-b pr-2 {sel ? 'bg-[#cfe4fa] dark:bg-primary/25' : 'bg-[#fafafa] hover:bg-[#f0f6fd] dark:bg-white/3 dark:hover:bg-accent/60'}"
+              style="transform:translateY({top}px);height:{CHILD}px;contain:layout paint style"
+              onclick={() => mail.select(c.id)}
+              onkeydown={(e) => e.key === "Enter" && void mail.select(c.id)}
+              ondblclick={() => mail.open(c.id)}
+            >
+              <span class="ml-5 w-[3px] shrink-0 {c.is_read ? 'bg-border' : 'bg-primary'}"></span>
+              <div class="min-w-0 flex-1 py-1 pl-3">
+                <div class="flex items-center gap-1">
+                  <span class="truncate {c.is_read ? '' : BOLD ? 'font-bold' : 'text-primary'}" style="font-size:{FS - 1}px">{displayName(c.sender) || t("mail.no_sender")}</span>
+                  <span class="flex-1"></span>
+                  {#if c.has_attachments}<Paperclip class="text-muted-foreground size-3" />{/if}
+                  <span class="text-muted-foreground shrink-0 text-[11px]">{fmtListDate(c.date)}</span>
+                </div>
+                <div class="text-muted-foreground truncate" style="font-size:{FS - 2}px">{#if where}<span class="text-primary/80">{where}</span>{" · "}{/if}{c.snippet}</div>
+              </div>
+            </div>
           {:else}
             {@const m = it.m}
             {@const sel = selectedSet.has(m.id)}
@@ -441,23 +484,43 @@
               >
                 <span class="w-[5px] flex-none {m.is_read ? 'group-hover:bg-[#c8c8c8] group-hover/bar:bg-primary/70 dark:group-hover:bg-white/25' : 'bg-primary group-hover/bar:bg-primary/75'}"></span>
               </button>
+              {#if EXPANDABLE}
+                <!-- Konuşmayı listede aç/kapat (OWA) -->
+                {#if count > 1}
+                  {@const open = !!mail.expanded[m.id]}
+                  <button
+                    type="button"
+                    class="text-muted-foreground hover:text-foreground -ml-1 flex w-4 shrink-0 items-start pt-1"
+                    title={open ? t("mail.collapse_conversation") : t("mail.expand_conversation")}
+                    aria-label={open ? t("mail.collapse_conversation") : t("mail.expand_conversation")}
+                    aria-expanded={open}
+                    onpointerdown={(e) => e.stopPropagation()}
+                    ondblclick={(e) => e.stopPropagation()}
+                    onclick={(e) => { e.stopPropagation(); void mail.toggleExpand(m.id); }}
+                  >
+                    {#if open}<ChevronDown class="size-4" />{:else}<ChevronRight class="size-4" />{/if}
+                  </button>
+                {:else}
+                  <span class="-ml-1 w-4 shrink-0"></span>
+                {/if}
+              {/if}
               {#if showAvatars}
                 <Avatar name={ri.name} email={ri.addr} class="mt-0.5 size-8 text-xs" />
               {/if}
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1">
-                  <span class="truncate {m.is_read ? '' : 'font-bold'}" style="font-size:{FS}px">{ri.who || t("mail.no_sender")}</span>
+                  <span class="truncate {m.is_read ? '' : BOLD ? 'font-bold' : 'text-primary'}" style="font-size:{FS}px">{ri.who || t("mail.no_sender")}</span>
                   {#if count > 1}<span class="text-muted-foreground text-xs">({count})</span>{/if}
                   <span class="flex-1"></span>
                   {#if m.is_answered}<Reply class="text-muted-foreground size-3.5" />{/if}
                   {#if m.has_attachments}<Paperclip class="text-muted-foreground size-3.5" />{/if}
                   {#if m.importance === 2}<AlertCircle class="size-3.5 text-red-600" />{:else if m.importance === 0}<ArrowDown class="size-3.5 text-blue-500" />{/if}
-                  <span class="text-muted-foreground shrink-0 text-xs {m.is_read ? '' : 'text-primary font-semibold'}">{ri.date}</span>
+                  <span class="text-muted-foreground shrink-0 text-xs {m.is_read ? '' : BOLD ? 'text-primary font-semibold' : 'text-primary'}">{ri.date}</span>
                 </div>
                 <div class="flex items-center gap-1">
                   {#if m.is_draft && !mail.sentLike}<span class="text-xs font-semibold text-red-600">[{t("mail.draft")}]</span>{/if}
                   {#if !PREVIEW}{#each cats as c (c)}<span class="size-2.5 shrink-0 rounded-sm" style="background:{app.categoryColor(c)}" title={c}></span>{/each}{/if}
-                  <span class="truncate {m.is_read ? '' : 'text-primary font-semibold'}" style="font-size:{FS}px">{m.subject || t("mail.no_subject")}</span>
+                  <span class="truncate {m.is_read ? '' : BOLD ? 'text-primary font-semibold' : 'text-primary'}" style="font-size:{FS}px">{m.subject || t("mail.no_subject")}</span>
                   <span class="flex-1"></span>
                   <div class="hidden shrink-0 items-center gap-0.5 group-hover:flex">
                     <button class="hover:bg-background rounded p-0.5" title={t("common.delete")} onclick={(e) => { e.stopPropagation(); mail.selected = [m.id]; mail.delete(); }}><Trash2 class="size-3.5" /></button>

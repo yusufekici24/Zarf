@@ -54,6 +54,11 @@ CREATE TABLE IF NOT EXISTS message_content (
     id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     body_text TEXT NOT NULL DEFAULT '', body_html TEXT NOT NULL DEFAULT '', raw BLOB
 );
+CREATE TABLE IF NOT EXISTS pending_flags (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    field TEXT NOT NULL, value INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(message_id, field)
+);
 CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     first_name TEXT DEFAULT '', last_name TEXT DEFAULT '', display_name TEXT DEFAULT '',
@@ -314,6 +319,8 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("events", "is_cancelled", "INTEGER DEFAULT 0"),
     ("events", "is_meeting", "INTEGER DEFAULT 0"),
     ("events", "response", "TEXT DEFAULT ''"),
+    // Exchange ChangeKey: değişmeyen toplantının ayrıntıları (açıklama, katılımcılar) yeniden istenmez
+    ("events", "change_key", "TEXT DEFAULT ''"),
 ];
 
 pub const ROLES: [&str; 7] = ["inbox", "drafts", "sent", "outbox", "archive", "junk", "trash"];
@@ -633,6 +640,20 @@ const LIST_COLS: &str = "id, folder_id, account_id, uid, subject, sender, to_add
     is_read, is_flagged, is_draft, is_answered, importance, categories, has_attachments, \
     message_id, in_reply_to, remote_id, is_pinned";
 
+/// Sunucuyla eşitlenen bayrak sütunları
+pub const FLAG_FIELDS: [&str; 3] = ["is_read", "is_flagged", "is_answered"];
+
+/// Sunucuya yazılmayı bekleyen bayrak değişikliği
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingFlag {
+    pub message_id: i64,
+    pub field: String,
+    pub value: bool,
+    pub folder_id: i64,
+    pub uid: Option<i64>,
+    pub remote_id: Option<String>,
+}
+
 /// Tam ileti.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -843,6 +864,8 @@ pub struct Event {
     pub remote_id: Option<String>,
     /// Exchange yinelenen serinin ana öğe kimliği
     pub master_id: Option<String>,
+    /// Exchange ChangeKey (öğe değişince değişir)
+    pub change_key: String,
 }
 
 impl Event {
@@ -874,6 +897,7 @@ impl Event {
             response: r.get::<_, Option<String>>("response").ok().flatten().unwrap_or_default(),
             remote_id: r.get("remote_id")?,
             master_id: r.get("master_id")?,
+            change_key: r.get::<_, Option<String>>("change_key").ok().flatten().unwrap_or_default(),
         })
     }
 
@@ -2289,6 +2313,104 @@ impl Db {
         let _ = tx.commit();
     }
 
+    /// Kullanıcının değiştirdiği bayrak (okundu, bayraklı, yanıtlandı): yerelde hemen yazılır,
+    /// sunucuya yazılana kadar bekleyen olarak tutulur. Bekleyen alanın üzerine eşitleme
+    /// sunucudaki eski değeri yazmaz; bağlantı yokken yapılan değişiklik de kaybolmaz.
+    pub fn set_flags_local(&self, ids: &[i64], field: &str, value: bool) {
+        if ids.is_empty() || !FLAG_FIELDS.contains(&field) {
+            return;
+        }
+        let mut c = self.conn();
+        let Ok(tx) = c.transaction() else { return };
+        {
+            let Ok(mut set) = tx.prepare_cached(&format!("UPDATE messages SET {field} = ?1 WHERE id = ?2")) else { return };
+            // Yalnızca sunucuda karşılığı olan iletiler (yerel klasörler beklemez)
+            let Ok(mut pend) = tx.prepare_cached(
+                "INSERT INTO pending_flags(message_id, field, value) SELECT id, ?2, ?3 FROM messages \
+                 WHERE id = ?1 AND account_id IS NOT NULL AND (uid IS NOT NULL OR remote_id IS NOT NULL) \
+                 ON CONFLICT(message_id, field) DO UPDATE SET value = excluded.value, attempts = 0",
+            ) else {
+                return;
+            };
+            for id in ids {
+                let _ = set.execute(params![value as i64, id]);
+                let _ = pend.execute(params![id, field, value as i64]);
+            }
+        }
+        let _ = tx.commit();
+    }
+
+    /// Hesabın sunucuya yazılmayı bekleyen bayrakları
+    pub fn pending_flags(&self, account_id: i64) -> Vec<PendingFlag> {
+        let c = self.rconn();
+        let Ok(mut st) = c.prepare_cached(
+            "SELECT p.message_id, p.field, p.value, m.folder_id, m.uid, m.remote_id FROM pending_flags p \
+             JOIN messages m ON m.id = p.message_id WHERE m.account_id = ?1 ORDER BY m.folder_id, p.field, p.value, p.message_id",
+        ) else {
+            return vec![];
+        };
+        st.query_map([account_id], |r| {
+            Ok(PendingFlag {
+                message_id: r.get(0)?,
+                field: r.get(1)?,
+                value: r.get::<_, i64>(2)? != 0,
+                folder_id: r.get(3)?,
+                uid: r.get(4)?,
+                remote_id: r.get(5)?,
+            })
+        })
+        .map(|rows| rows.flatten().collect())
+        .unwrap_or_default()
+    }
+
+    /// Sunucuya yazılan bayraklar bekleyenlerden düşer (bu arada yeniden değiştiyse kalır)
+    pub fn clear_pending_flags(&self, done: &[PendingFlag]) {
+        let mut c = self.conn();
+        let Ok(tx) = c.transaction() else { return };
+        if let Ok(mut st) = tx.prepare_cached("DELETE FROM pending_flags WHERE message_id = ?1 AND field = ?2 AND value = ?3") {
+            for p in done {
+                let _ = st.execute(params![p.message_id, p.field, p.value as i64]);
+            }
+        }
+        let _ = tx.commit();
+    }
+
+    /// Sunucunun reddettiği bayraklar: deneme sayısı artar, `max` denemeden sonra düşer
+    /// (sunucudaki değer esas alınır). Düşenlerin sayısı döner.
+    pub fn fail_pending_flags(&self, failed: &[PendingFlag], max: i64) -> usize {
+        let mut c = self.conn();
+        let Ok(tx) = c.transaction() else { return 0 };
+        let mut dropped = 0;
+        if let (Ok(mut inc), Ok(mut del)) = (
+            tx.prepare_cached("UPDATE pending_flags SET attempts = attempts + 1 WHERE message_id = ?1 AND field = ?2 AND value = ?3"),
+            tx.prepare_cached("DELETE FROM pending_flags WHERE message_id = ?1 AND field = ?2 AND attempts >= ?3"),
+        ) {
+            for p in failed {
+                let _ = inc.execute(params![p.message_id, p.field, p.value as i64]);
+                dropped += del.execute(params![p.message_id, p.field, max]).unwrap_or(0);
+            }
+        }
+        let _ = tx.commit();
+        dropped
+    }
+
+    /// Sunucudaki bayrak değeri yerele yazılır; kullanıcının henüz sunucuya yazılmamış
+    /// değişikliği varsa dokunulmaz. Değer gerçekten değiştiyse true.
+    pub fn set_flag_from_server(&self, id: i64, field: &str, value: bool) -> bool {
+        if !FLAG_FIELDS.contains(&field) {
+            return false;
+        }
+        self.conn()
+            .execute(
+                &format!(
+                    "UPDATE messages SET {field} = ?1 WHERE id = ?2 AND {field} != ?1 \
+                     AND NOT EXISTS (SELECT 1 FROM pending_flags WHERE message_id = ?2 AND field = '{field}')"
+                ),
+                params![value as i64, id],
+            )
+            .is_ok_and(|n| n > 0)
+    }
+
     /// Çok iletiyi tek işlemde siler
     pub fn delete_messages(&self, ids: &[i64]) {
         if ids.is_empty() {
@@ -2780,12 +2902,12 @@ impl Db {
                  start=?6, end=?7, all_day=?8, recurrence=?9, recur_interval=?10, recur_until=?11, \
                  exdates=?12, reminder_minutes=?13, category=?14, show_as=?15, attendees=?16, \
                  is_private=?17, modified=?18, remote_id=?20, master_id=?21, optional_attendees=?22, \
-                 resources=?23, organizer=?24, is_cancelled=?25, is_meeting=?26, response=?27 WHERE id=?19",
+                 resources=?23, organizer=?24, is_cancelled=?25, is_meeting=?26, response=?27, change_key=?28 WHERE id=?19",
                 params![e.calendar_id, e.uid, e.title, e.location, e.description, e.start, e.end,
                     e.all_day as i64, e.recurrence, e.recur_interval, e.recur_until, e.exdates,
                     e.reminder_minutes, e.category, e.show_as, e.attendees, e.is_private as i64,
                     now(), e.id, e.remote_id, e.master_id, e.optional_attendees, e.resources,
-                    e.organizer, e.is_cancelled as i64, e.is_meeting as i64, e.response],
+                    e.organizer, e.is_cancelled as i64, e.is_meeting as i64, e.response, e.change_key],
             )?;
             Ok(e.id)
         } else {
@@ -2793,13 +2915,13 @@ impl Db {
                 "INSERT INTO events(calendar_id, uid, title, location, description, start, end, all_day, \
                  recurrence, recur_interval, recur_until, exdates, reminder_minutes, category, show_as, \
                  attendees, is_private, created, modified, remote_id, master_id, optional_attendees, resources, \
-                 organizer, is_cancelled, is_meeting, response) \
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?18,?19,?20,?21,?22,?23,?24,?25,?26)",
+                 organizer, is_cancelled, is_meeting, response, change_key) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27)",
                 params![e.calendar_id.max(1), e.uid, e.title, e.location, e.description, e.start,
                     e.end, e.all_day as i64, e.recurrence, e.recur_interval.max(1), e.recur_until,
                     e.exdates, e.reminder_minutes, e.category, e.show_as, e.attendees,
                     e.is_private as i64, now(), e.remote_id, e.master_id, e.optional_attendees, e.resources,
-                    e.organizer, e.is_cancelled as i64, e.is_meeting as i64, e.response],
+                    e.organizer, e.is_cancelled as i64, e.is_meeting as i64, e.response, e.change_key],
             )?;
             Ok(c.last_insert_rowid())
         }
@@ -3663,6 +3785,49 @@ mod search_tests {
         db.conn().execute("UPDATE messages SET subject = 'Bütçe toplantısı notları' WHERE id = ?1", [b]).unwrap();
         assert_eq!(ids(other), vec![b, other]);
         assert_eq!(ids(a), vec![a, c]);
+    }
+
+    /// Kullanıcının bayrak değişikliği sunucuya yazılana kadar bekler: eşitleme bu arada
+    /// sunucudaki eski değeri geri yazmaz (okunan iletinin yeniden kalın görünmesi)
+    #[test]
+    fn pending_flags_block_stale_server_values() {
+        let db = Db::open_memory().unwrap();
+        let inbox = db.folder_by_role(None, "inbox").unwrap().id;
+        let add = |acc: Option<i64>, uid: Option<i64>, rid: Option<&str>| {
+            db.insert_message(&Message { folder_id: inbox, account_id: acc, uid, remote_id: rid.map(String::from), ..Default::default() }).unwrap()
+        };
+        let (imap, ews, local, other) = (add(Some(1), Some(7), None), add(Some(1), None, Some("AAMk")), add(None, None, None), add(Some(2), Some(8), None));
+        db.set_flags_local(&[imap, ews, local], "is_read", true);
+        let read = |id| db.message_row(id).unwrap().is_read;
+        assert!(read(imap) && read(ews) && read(local));
+        // Yerel klasördeki ileti sunucuya gitmez
+        let p = db.pending_flags(1);
+        assert_eq!(p.iter().map(|p| (p.message_id, p.field.as_str(), p.value, p.uid)).collect::<Vec<_>>(), vec![(imap, "is_read", true, Some(7)), (ews, "is_read", true, None)]);
+        assert_eq!(p[1].remote_id.as_deref(), Some("AAMk"));
+        // Eşitleme okundu isteğinden önce alınmış "okunmadı" bilgisini getirir: yazılmaz
+        assert!(!db.set_flag_from_server(imap, "is_read", false));
+        assert!(read(imap));
+        // Başka alan sunucudan güncellenir
+        assert!(db.set_flag_from_server(imap, "is_flagged", true));
+        // Gönderim sürerken yeniden değişen değer, eski gönderim bitince bekleyenlerden düşmez
+        db.set_flags_local(&[ews], "is_read", false);
+        db.clear_pending_flags(&p);
+        assert_eq!(db.pending_flags(1).iter().map(|p| (p.message_id, p.value)).collect::<Vec<_>>(), vec![(ews, false)]);
+        // Yazılan değerden sonra sunucu yine esas
+        assert!(db.set_flag_from_server(imap, "is_read", false));
+        assert!(!read(imap));
+        // Sunucu üç kez reddederse vazgeçilir
+        let p = db.pending_flags(1);
+        assert_eq!((db.fail_pending_flags(&p, 3), db.fail_pending_flags(&p, 3)), (0, 0));
+        assert_eq!(db.fail_pending_flags(&p, 3), 1);
+        assert!(db.pending_flags(1).is_empty());
+        // Yeni değişiklik deneme sayısını sıfırlar; ileti silinince bekleyen de silinir
+        db.set_flags_local(&[other], "is_flagged", true);
+        assert_eq!(db.fail_pending_flags(&db.pending_flags(2), 3), 0);
+        db.set_flags_local(&[other], "is_flagged", false);
+        assert_eq!(db.fail_pending_flags(&db.pending_flags(2), 2), 0);
+        db.delete_message(other);
+        assert!(db.pending_flags(2).is_empty());
     }
 
     /// Silinen postaların boşalttığı alan sıkıştırmayla geri alınır; sonrasında dosya artımlı

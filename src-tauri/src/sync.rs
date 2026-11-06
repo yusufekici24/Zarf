@@ -573,11 +573,11 @@ impl MailService {
 
     // ------------------------------------------------------------------ bayraklar
     pub fn set_read(&self, ids: &[i64], value: bool) {
-        self.set_flag(ids, "is_read", "\\Seen", value);
+        self.set_flag(ids, "is_read", value);
     }
 
     pub fn set_flagged(&self, ids: &[i64], value: bool) {
-        self.set_flag(ids, "is_flagged", "\\Flagged", value);
+        self.set_flag(ids, "is_flagged", value);
     }
 
     /// Sabitle: Exchange'de sunucuya yazılır (Outlook'ta da üstte görünür), IMAP'te yereldir.
@@ -599,39 +599,15 @@ impl MailService {
     }
 
     pub fn set_answered(&self, ids: &[i64]) {
-        self.set_flag(ids, "is_answered", "\\Answered", true);
+        self.set_flag(ids, "is_answered", true);
     }
 
-    fn set_flag(&self, ids: &[i64], column: &str, imap_flag: &'static str, value: bool) {
-        let mut remote: HashMap<(i64, i64), Vec<u32>> = HashMap::new();
-        let mut ews: HashMap<i64, Vec<String>> = HashMap::new();
-        self.db.set_messages_field(ids, column, value as i64);
-        for &id in ids {
-            let Some(m) = self.db.message_row(id) else { continue };
-            if let (Some(uid), Some(acc)) = (m.uid, m.account_id) {
-                remote.entry((acc, m.folder_id)).or_default().push(uid as u32);
-            } else if let (Some(rid), Some(acc)) = (m.remote_id.clone(), m.account_id) {
-                ews.entry(acc).or_default().push(rid);
-            }
-        }
-        for (acc, rids) in ews {
-            let flag = imap_flag;
-            self.submit(String::new(), move |w| {
-                w.with_ews(acc, |e| match flag {
-                    "\\Seen" => e.set_read(&rids, value),
-                    "\\Flagged" => e.set_flag(&rids, value),
-                    _ => Ok(()),
-                })
-            });
-        }
-        for ((acc, fid), uids) in remote {
-            self.submit(String::new(), move |w| {
-                let f = w.db.folder(fid).ok_or_else(|| MailError("folder".into()))?;
-                let Some(remote) = f.remote_name.clone() else { return Ok(()) };
-                let imap = w.imap(acc)?;
-                imap.select(&remote)?;
-                imap.store_flag(&uids, imap_flag, value)
-            });
+    /// Yerelde hemen yazılır; sunucuya hesap başına tek işle gider (bkz. `Worker::push_flags`).
+    fn set_flag(&self, ids: &[i64], column: &str, value: bool) {
+        self.db.set_flags_local(ids, column, value);
+        let accounts: HashSet<i64> = ids.iter().filter_map(|&id| self.db.message_row(id)?.account_id).collect();
+        for acc in accounts {
+            self.submit_keyed(format!("flags:{acc}"), false, String::new(), move |w| w.push_flags(acc));
         }
         self.changed(None);
     }
@@ -1174,7 +1150,70 @@ impl Worker {
         Ok(self.conns.get_mut(&account_id).unwrap())
     }
 
+    /// Bekleyen bayrak değişikliklerini sunucuya yazar (klasör, alan ve değer başına tek istek).
+    /// Bağlantı yoksa ya da hesap duraklatılmışsa kayıtlar kalır, sonraki eşitlemede yeniden
+    /// denenir; sunucu üç kez reddederse sunucudaki değer esas alınır.
+    pub(crate) fn push_flags(&mut self, account_id: i64) -> MailResult<()> {
+        let pending = self.db.pending_flags(account_id);
+        let Some(acc) = self.db.account(account_id) else { return Ok(()) };
+        if pending.is_empty() || acc.auth_state == "failed" {
+            return Ok(());
+        }
+        let ews = acc.is_exchange();
+        let mut groups: Vec<Vec<crate::db::PendingFlag>> = Vec::new();
+        for p in pending {
+            match groups.last_mut() {
+                Some(g) if g[0].folder_id == p.folder_id && g[0].field == p.field && g[0].value == p.value => g.push(p),
+                _ => groups.push(vec![p]),
+            }
+        }
+        let mut first_err = None;
+        for g in groups {
+            let (field, value) = (g[0].field.clone(), g[0].value);
+            let res = if ews {
+                let rids: Vec<String> = g.iter().filter_map(|p| p.remote_id.clone()).collect();
+                match field.as_str() {
+                    "is_read" if !rids.is_empty() => self.with_ews(account_id, |e| e.set_read(&rids, value)),
+                    "is_flagged" if !rids.is_empty() => self.with_ews(account_id, |e| e.set_flag(&rids, value)),
+                    // Exchange "yanıtlandı" bilgisini gönderilen yanıttan kendisi işler
+                    _ => Ok(()),
+                }
+            } else {
+                let uids: Vec<u32> = g.iter().filter_map(|p| p.uid.map(|u| u as u32)).collect();
+                let flag = match field.as_str() {
+                    "is_read" => "\\Seen",
+                    "is_flagged" => "\\Flagged",
+                    _ => "\\Answered",
+                };
+                match self.db.folder(g[0].folder_id).and_then(|f| f.remote_name) {
+                    Some(remote) if !uids.is_empty() => (|| -> MailResult<()> {
+                        let imap = self.imap(account_id)?;
+                        imap.select(&remote)?;
+                        imap.store_flag(&uids, flag, value)
+                    })(),
+                    _ => Ok(()),
+                }
+            };
+            match res {
+                Ok(()) => self.db.clear_pending_flags(&g),
+                Err(e) if e.is_net() || self.db.account(account_id).is_some_and(|a| a.auth_state == "failed") => return Err(e),
+                Err(e) => {
+                    self.db.fail_pending_flags(&g, 3);
+                    first_err.get_or_insert(e);
+                }
+            }
+        }
+        first_err.map_or(Ok(()), Err)
+    }
+
     fn sync_account(&mut self, account_id: i64) -> MailResult<()> {
+        // Önce bekleyen bayraklar: sunucudan okunan bayraklar kullanıcının son değişikliğini içersin
+        if let Err(e) = self.push_flags(account_id) {
+            if e.is_net() {
+                return Err(e);
+            }
+            (self.emit)("mail://error", json!(e.message()));
+        }
         if self.db.account(account_id).map(|a| a.is_exchange()).unwrap_or(false) {
             return self.ews_sync_account(account_id);
         }
@@ -1286,14 +1325,11 @@ impl Worker {
         for (uid, flags) in imap.fetch_flags(&existing)? {
             if let Some((id, r, f, a)) = local.get(&uid) {
                 let (nr, nf, na) = (flags_contain(&flags, "\\Seen"), flags_contain(&flags, "\\Flagged"), flags_contain(&flags, "\\Answered"));
-                if nr != *r {
-                    db.set_message_field(*id, "is_read", nr as i64);
-                }
-                if nf != *f {
-                    db.set_message_field(*id, "is_flagged", nf as i64);
-                }
-                if na != *a {
-                    db.set_message_field(*id, "is_answered", na as i64);
+                // Sunucuya henüz yazılmamış yerel değişikliğin üzerine yazılmaz
+                for (field, server, was) in [("is_read", nr, *r), ("is_flagged", nf, *f), ("is_answered", na, *a)] {
+                    if server != was {
+                        db.set_flag_from_server(*id, field, server);
+                    }
                 }
             }
         }
@@ -1614,5 +1650,82 @@ mod tests {
         let out = String::from_utf8(strip_bcc(raw)).unwrap();
         assert!(!out.contains("gizli") && !out.contains("diger"));
         assert!(out.contains("Subject: s") && out.contains("Bcc: govdede kalir"));
+    }
+
+    /// Sahte IMAP sunucusu: her komutu kaydeder ve olumlu yanıtlar
+    fn fake_imap(host: &str) -> (u16, Arc<Mutex<Vec<String>>>) {
+        use std::io::{BufRead, Write};
+        let l = std::net::TcpListener::bind((host, 0)).unwrap();
+        let port = l.local_addr().unwrap().port();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        std::thread::spawn(move || {
+            for s in l.incoming().flatten() {
+                let seen = seen.clone();
+                std::thread::spawn(move || {
+                    let mut w = s.try_clone().unwrap();
+                    let _ = w.write_all(b"* OK hazir\r\n");
+                    for line in std::io::BufReader::new(s).lines().map_while(Result::ok) {
+                        let (tag, cmd) = line.split_once(' ').unwrap_or((&line, ""));
+                        seen.lock().unwrap().push(cmd.to_string());
+                        let up = cmd.to_uppercase();
+                        let data = if up.starts_with("CAPABILITY") {
+                            "* CAPABILITY IMAP4rev1\r\n"
+                        } else if up.starts_with("SELECT") {
+                            "* 3 EXISTS\r\n* OK [UIDVALIDITY 1] u\r\n"
+                        } else {
+                            ""
+                        };
+                        let _ = write!(w, "{data}{tag} OK tamam\r\n");
+                    }
+                });
+            }
+        });
+        (port, log)
+    }
+
+    fn test_worker(db: &Db) -> Worker {
+        let q = || Arc::new(Queue { items: Mutex::new(VecDeque::new()), cv: Condvar::new(), pending: AtomicUsize::new(0) });
+        Worker { db: db.clone(), conns: HashMap::new(), ews: HashMap::new(), emit: Arc::new(|_, _| {}), fg: q(), bg: q(), enum_seen: Default::default(), folder_locks: Default::default() }
+    }
+
+    fn imap_account(db: &Db, host: &str, port: u16) -> (i64, i64) {
+        let acc = db
+            .save_account(&crate::db::Account { name: "t".into(), email: "t@x.test".into(), imap_host: host.into(), imap_port: port as i64, imap_security: "none".into(), username: "t".into(), password: "p".into(), ..Default::default() })
+            .unwrap();
+        let inbox = db.insert_folder(&Folder { account_id: Some(acc), name: "INBOX".into(), remote_name: Some("INBOX".into()), role: Some("inbox".into()), ..Default::default() }).unwrap();
+        (acc, inbox)
+    }
+
+    /// Okundu/bayrak değişiklikleri klasör ve değer başına tek STORE ile gider; yazılınca bekleyenlerden düşer
+    #[test]
+    fn pending_flags_are_pushed_in_groups() {
+        let db = Db::open_memory().unwrap();
+        let (port, log) = fake_imap("127.0.0.1");
+        let (acc, inbox) = imap_account(&db, "127.0.0.1", port);
+        let ids: Vec<i64> = (1..=3).map(|uid| db.insert_message(&Message { folder_id: inbox, account_id: Some(acc), uid: Some(uid), ..Default::default() }).unwrap()).collect();
+        db.set_flags_local(&ids[..2], "is_read", true);
+        db.set_flags_local(&ids[2..], "is_flagged", true);
+        test_worker(&db).push_flags(acc).unwrap();
+        assert!(db.pending_flags(acc).is_empty());
+        let log = log.lock().unwrap();
+        assert!(log.iter().any(|c| c == "UID STORE 1,2 +FLAGS.SILENT (\\Seen)"), "{log:?}");
+        assert!(log.iter().any(|c| c == "UID STORE 3 +FLAGS.SILENT (\\Flagged)"), "{log:?}");
+    }
+
+    /// Sunucuya ulaşılamazken yapılan değişiklik kaybolmaz ve eşitleme onu geri almaz
+    #[test]
+    fn pending_flags_survive_offline() {
+        let db = Db::open_memory().unwrap();
+        let closed = std::net::TcpListener::bind(("127.0.0.3", 0)).unwrap().local_addr().unwrap().port();
+        let (acc, inbox) = imap_account(&db, "127.0.0.3", closed);
+        let id = db.insert_message(&Message { folder_id: inbox, account_id: Some(acc), uid: Some(5), ..Default::default() }).unwrap();
+        db.set_flags_local(&[id], "is_read", true);
+        let e = test_worker(&db).push_flags(acc).unwrap_err();
+        assert!(e.is_net(), "{}", e.message());
+        assert_eq!(db.pending_flags(acc).len(), 1);
+        // Sunucudan gelen eski "okunmadı" bilgisi yazılmaz
+        assert!(!db.set_flag_from_server(id, "is_read", false));
+        assert!(db.message_row(id).unwrap().is_read);
     }
 }

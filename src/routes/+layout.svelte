@@ -4,7 +4,12 @@
   import "../app.css";
   import { invoke } from "@tauri-apps/api/core";
   import SelectPopup from "$lib/components/common/SelectPopup.svelte";
+  import { app } from "$lib/stores/app.svelte";
+  import { applyUiFont } from "$lib/uifont";
   let { children } = $props();
+
+  // Seçilen arayüz yazı tipi her pencerede (ayar başka pencerede değişince de) uygulanır
+  $effect(() => applyUiFont(app.setting("ui_font", "")));
 
   // Yakalanmayan ön yüz hatalarını uygulama günlüğüne aktar
   const log = (level: string, message: unknown) => {

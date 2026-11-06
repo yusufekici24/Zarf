@@ -22,6 +22,7 @@
 
 <script lang="ts">
   import { fontCss, parseFont } from "$lib/fonts";
+  import { readFontStack } from "$lib/uifont";
   // İleti gövdesi: HTML korumalı (betiksiz) bir iframe içinde gösterilir.
   // Uzak içerik (izleme pikselleri, uzak resimler) varsayılan olarak engellenir.
   import { textToHtml } from "$lib/format";
@@ -77,6 +78,8 @@
   const plainOnly = $derived(app.setting("plain_text_only", "0") === "1");
   // Düz metin iletileri "Kırtasiye ve Yazı Tipleri"ndeki düz metin yazı tipiyle okunur
   const plainFont = $derived(fontCss(parseFont(app.setting("font_plain", ""), "font_plain")));
+  // Kendi yazı tipi olmayan iletiler: Seçenekler > Posta > Okuma yazı tipi
+  const readFont = $derived(`font-family:${readFontStack(app.setting("read_font", ""))};font-size:${Number(app.setting("read_font_size", "11")) || 11}pt`);
 
   const doc = $derived.by(() => {
     const remote = allowRemote ? " https: http:" : "";
@@ -88,13 +91,13 @@
 <style>
 html{background:#fff;color:#000}
 @font-face{font-family:"Aptos";font-weight:400;font-style:normal;src:local("Noto Sans"),local("Liberation Sans")}@font-face{font-family:"Aptos";font-weight:700;font-style:normal;src:local("Noto Sans Bold"),local("Liberation Sans")}@font-face{font-family:"Aptos";font-weight:400;font-style:italic;src:local("Noto Sans Italic"),local("Liberation Sans")}@font-face{font-family:"Aptos";font-weight:700;font-style:italic;src:local("Noto Sans Bold Italic"),local("Liberation Sans")}@font-face{font-family:"Segoe UI";font-weight:400;font-style:normal;src:local("Noto Sans"),local("Liberation Sans")}@font-face{font-family:"Segoe UI";font-weight:700;font-style:normal;src:local("Noto Sans Bold"),local("Liberation Sans")}@font-face{font-family:"Segoe UI";font-weight:400;font-style:italic;src:local("Noto Sans Italic"),local("Liberation Sans")}@font-face{font-family:"Segoe UI";font-weight:700;font-style:italic;src:local("Noto Sans Bold Italic"),local("Liberation Sans")}
-body{font-family:Calibri,Carlito,"Noto Sans",sans-serif;font-size:11pt;margin:16px;word-wrap:break-word;overflow-wrap:anywhere;zoom:${zoom}}
+body{${readFont};margin:16px;word-wrap:break-word;overflow-wrap:anywhere;zoom:${zoom}}
 [style*="mso-hide:all"],[style*="mso-hide: all"]{display:none!important}
 img{max-width:100%;height:auto}
 blockquote{margin:5pt 0 5pt 36pt}
 .plain{white-space:normal;${plainFont}}
 a{color:#0563c1}a:visited{color:#954f72}
-pre{white-space:pre-wrap}
+pre{white-space:pre-wrap}${autoHeight ? "\nhtml{overflow-y:hidden}html,body{height:auto!important;min-height:0!important}" : ""}
 </style>`;
     if (/<head[^>]*>/i.test(body)) return body.replace(/<head([^>]*)>/i, `<head$1>${base}`);
     return `<!doctype html><html><head>${base}</head><body>${body}</body></html>`;
@@ -120,9 +123,22 @@ pre{white-space:pre-wrap}
   function attach() {
     const d = frame?.contentDocument;
     if (!d) return;
-    if (autoHeight) frameHeight = Math.max(80, d.documentElement.scrollHeight + 8);
+    // Gövdenin içerik yüksekliği ölçülür (belgeninki çerçeveden küçük olamaz: çerçeve büyüdükçe
+    // ölçüm de büyürdü)
+    const measure = () => {
+      const b = d.body;
+      if (!b) return;
+      const cs = d.defaultView?.getComputedStyle(b);
+      const margins = parseFloat(cs?.marginTop || "0") + parseFloat(cs?.marginBottom || "0");
+      const h = Math.max(80, Math.ceil(Math.max(b.scrollHeight, b.getBoundingClientRect().height) + margins) + 8);
+      if (Math.abs(h - frameHeight) > 1) frameHeight = h;
+    };
+    if (autoHeight) measure();
     if (attached.has(d)) return;
     attached.add(d);
+    // Resimler ve yazı tipleri yüklendikçe yükseklik değişir (kesilmesin). Korumalı çerçevede
+    // WebKitGTK belge dinleyicilerini ve gözlemcileri çalıştırmadığı için birkaç kez yeniden ölçülür.
+    if (autoHeight) for (const ms of [150, 500, 1200, 2500, 5000]) setTimeout(measure, ms);
     hoverUrl = "";
     // İleti gövdesine tıklayınca açık kişi kartı kapanır (Chrome'da; WebKit'te betiksiz çerçevede
     // dinleyici çalışmaz, orada app.css'teki kural tıklamayı çerçevenin altındaki bölmeye bırakır)
