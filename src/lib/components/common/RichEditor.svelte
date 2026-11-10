@@ -514,8 +514,28 @@
     color: #1a73e8;
     text-decoration: underline;
   }
+  /* Tailwind'in sıfırlaması resmi blok yapar: satır içi resim (imza, ifade) satırda kalır */
   :global(.rich-editor img) {
+    display: inline;
+    vertical-align: baseline;
     max-width: 100%;
+  }
+  :global(.rich-editor table img) {
+    max-width: none;
+  }
+  /* Alıntılanan tablolar okuma bölmesindeki gibi görünür: Tailwind'in sıfırlaması
+     (border:0, border-collapse:collapse) border/cellspacing özniteliklerini ezer.
+     Satır içi stiller (Word tabloları) bunların üstündedir. */
+  :global(.rich-editor table) {
+    border-collapse: separate;
+    text-indent: initial;
+  }
+  :global(.rich-editor table[border]:not([border="0"])) {
+    border: 1px outset gray;
+  }
+  :global(.rich-editor table[border]:not([border="0"]) > * > tr > :is(td, th)),
+  :global(.rich-editor table[border]:not([border="0"]) > tr > :is(td, th)) {
+    border: 1px inset gray;
   }
   :global(.rich-editor hr) {
     margin: 8px 0;

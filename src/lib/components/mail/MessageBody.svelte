@@ -75,6 +75,47 @@
     });
   }
 
+  const UNIT: Record<string, number> = { px: 1, pt: 96 / 72, in: 96, cm: 96 / 2.54, mm: 96 / 25.4, pc: 16 };
+  /** Mutlak uzunluk piksel olarak ("600", "77.9pt", "4.375in"); yüzde ve bilinmeyen birimde 0 */
+  function px(v: string | null): number {
+    const m = /^\s*([\d.]+)\s*(px|pt|in|cm|mm|pc)?\s*$/i.exec(v ?? "");
+    return m ? parseFloat(m[1]) * UNIT[(m[2] ?? "px").toLowerCase()] : 0;
+  }
+
+  /**
+   * Tablo ve resim düzeni korunur (Outlook'taki gibi görünsün):
+   * - Genişliği ve yüksekliği verilmiş resim bölmeye sığmayınca oranını korur (yalnızca eni
+   *   daralıp boyu kalınca ekran görüntüsü yamulur; 600×1 ara resmi de kare olmamalı).
+   * - Tablo içindeki ölçülü resim küçülmez: imza ve bülten tabloları sütun genişliğini resimden
+   *   alır, dar bölmede tablo yatay kayar.
+   * - Hücredeki boşluksuz uzun metin (adres, kimlik) hücrenin içinde bölünür; olağan sözcükler
+   *   bölünmez (bkz. gövdedeki overflow-wrap).
+   */
+  function tune(src: string): string {
+    if (!/<img\b|<t[dh]\b/i.test(src)) return src;
+    const t = document.createElement("template");
+    t.innerHTML = src;
+    for (const img of t.content.querySelectorAll("img")) {
+      const w = px(img.style.width || img.getAttribute("width"));
+      if (!w) continue;
+      if (img.closest("table")) {
+        if (!img.style.maxWidth) img.style.maxWidth = "none";
+        continue;
+      }
+      const h = px(img.style.height || img.getAttribute("height"));
+      if (!h) continue;
+      img.style.aspectRatio = `${w} / ${h}`;
+      img.style.height = "auto";
+    }
+    for (const cell of t.content.querySelectorAll<HTMLElement>("td,th")) {
+      if (cell.querySelector("table") || !/\S{36,}/.test(cell.textContent ?? "")) continue;
+      if (cell.hasAttribute("nowrap") || /nowrap/i.test(cell.style.whiteSpace)) continue;
+      cell.style.overflowWrap = "anywhere";
+      if (!cell.style.minWidth && !cell.style.width && !cell.hasAttribute("width")) cell.style.minWidth = "10em";
+    }
+    return t.innerHTML;
+  }
+
   const plainOnly = $derived(app.setting("plain_text_only", "0") === "1");
   // Düz metin iletileri "Kırtasiye ve Yazı Tipleri"ndeki düz metin yazı tipiyle okunur
   const plainFont = $derived(fontCss(parseFont(app.setting("font_plain", ""), "font_plain")));
@@ -86,14 +127,14 @@
     const csp = `default-src 'none'; img-src data: blob: cid:${remote}; style-src 'unsafe-inline'${remote}; font-src data:${remote}; media-src data:${remote};`;
     // target="_blank" korumalı çerçevede açılır pencere olarak engellenir: bağlantı çerçevenin
     // kendisinde gezinir, yerel taraf yakalayıp varsayılan tarayıcıda açar
-    const body = fixBlockLinks(html && !plainOnly ? html : `<div class="plain">${textToHtml(text || "")}</div>`).replace(/(<a\b[^>]*?)\starget\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "$1");
+    const body = tune(fixBlockLinks(html && !plainOnly ? html : `<div class="plain">${textToHtml(text || "")}</div>`)).replace(/(<a\b[^>]*?)\starget\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "$1");
     const base = `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><base target="_self">
 <style>
 html{background:#fff;color:#000}
 @font-face{font-family:"Aptos";font-weight:400;font-style:normal;src:local("Noto Sans"),local("Liberation Sans")}@font-face{font-family:"Aptos";font-weight:700;font-style:normal;src:local("Noto Sans Bold"),local("Liberation Sans")}@font-face{font-family:"Aptos";font-weight:400;font-style:italic;src:local("Noto Sans Italic"),local("Liberation Sans")}@font-face{font-family:"Aptos";font-weight:700;font-style:italic;src:local("Noto Sans Bold Italic"),local("Liberation Sans")}@font-face{font-family:"Segoe UI";font-weight:400;font-style:normal;src:local("Noto Sans"),local("Liberation Sans")}@font-face{font-family:"Segoe UI";font-weight:700;font-style:normal;src:local("Noto Sans Bold"),local("Liberation Sans")}@font-face{font-family:"Segoe UI";font-weight:400;font-style:italic;src:local("Noto Sans Italic"),local("Liberation Sans")}@font-face{font-family:"Segoe UI";font-weight:700;font-style:italic;src:local("Noto Sans Bold Italic"),local("Liberation Sans")}
-body{${readFont};margin:16px;word-wrap:break-word;overflow-wrap:anywhere;zoom:${zoom}}
+body{${readFont};margin:16px;word-wrap:break-word;overflow-wrap:break-word;zoom:${zoom}}
 [style*="mso-hide:all"],[style*="mso-hide: all"]{display:none!important}
-img{max-width:100%;height:auto}
+img{max-width:100%}
 blockquote{margin:5pt 0 5pt 36pt}
 .plain{white-space:normal;${plainFont}}
 a{color:#0563c1}a:visited{color:#954f72}
@@ -130,7 +171,10 @@ pre{white-space:pre-wrap}${autoHeight ? "\nhtml{overflow-y:hidden}html,body{heig
       if (!b) return;
       const cs = d.defaultView?.getComputedStyle(b);
       const margins = parseFloat(cs?.marginTop || "0") + parseFloat(cs?.marginBottom || "0");
-      const h = Math.max(80, Math.ceil(Math.max(b.scrollHeight, b.getBoundingClientRect().height) + margins) + 8);
+      // Geniş tablo yatay kaydırma çubuğu çıkarır: çubuk son satırı örtmesin
+      const root = d.documentElement;
+      const bar = root.scrollWidth > root.clientWidth + 1 ? 16 : 0;
+      const h = Math.max(80, Math.ceil(Math.max(b.scrollHeight, b.getBoundingClientRect().height) + margins) + 8 + bar);
       if (Math.abs(h - frameHeight) > 1) frameHeight = h;
     };
     if (autoHeight) measure();

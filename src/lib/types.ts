@@ -92,7 +92,12 @@ export interface MessageRow {
   has_attachments: boolean;
   message_id: string;
   in_reply_to: string;
+  /** Konuşmadaki ileti sayısı (diğer klasörler dahil) */
   thread_count?: number;
+  /** Konuşma numarası */
+  thread_id?: number;
+  /** Konuşma görünümünde: listelenen klasörde konuşmadaki okunmamış ileti sayısı */
+  thread_unread?: number;
   is_pinned?: boolean;
 }
 

@@ -293,7 +293,7 @@
   const today = () => toTs(startOfDay(new Date())) + 17 * 3600;
   // ------------------------------------------------------------- sağ tık menüsü
   const one = $derived(mail.selected.length === 1 ? mail.messages.find((x) => x.id === mail.selected[0]) : undefined);
-  const allRead = $derived(mail.selected.every((id) => mail.messages.find((x) => x.id === id)?.is_read ?? true));
+  const allRead = $derived(mail.selected.every((id) => { const x = mail.messages.find((x) => x.id === id); return !x || !mail.unread(x); }));
   const senderName = $derived(one ? displayName(one.sender) || splitNameAddr(one.sender).addr : "");
 
   /** Yanıt/iletme önekleri atılmış konu (konuşmayı bulmak için) */
@@ -439,8 +439,8 @@
               data-testid="thread-item"
               class="absolute top-0 right-0 left-0 flex cursor-default items-stretch border-b pr-2 {sel ? 'bg-(--primary-soft) dark:bg-primary/25' : 'bg-[#fafafa] hover:bg-(--primary-faint) dark:bg-white/3 dark:hover:bg-accent/60'}"
               style="transform:translateY({top}px);height:{CHILD}px;contain:layout paint style"
-              onclick={() => mail.select(c.id)}
-              onkeydown={(e) => e.key === "Enter" && void mail.select(c.id)}
+              onclick={() => mail.select(c.id, undefined, true)}
+              onkeydown={(e) => e.key === "Enter" && void mail.select(c.id, undefined, true)}
               ondblclick={() => mail.open(c.id)}
             >
               <span class="ml-5 w-[3px] shrink-0 {c.is_read ? 'bg-border' : 'bg-primary'}"></span>
@@ -460,6 +460,7 @@
             {@const ri = info(m)}
             {@const cats = ri.cats}
             {@const count = mail.conversations ? mail.threadCount(m) : 1}
+            {@const read = !mail.unread(m)}
             <div
               role="option"
               tabindex="-1"
@@ -476,13 +477,13 @@
               <button
                 type="button"
                 class="group/bar flex w-2.5 shrink-0 cursor-pointer items-stretch py-px pl-[2px]"
-                title={m.is_read ? t("mail.mark_unread") : t("mail.mark_read")}
-                aria-label={m.is_read ? t("mail.mark_unread") : t("mail.mark_read")}
+                title={read ? t("mail.mark_unread") : t("mail.mark_read")}
+                aria-label={read ? t("mail.mark_unread") : t("mail.mark_read")}
                 onpointerdown={(e) => e.stopPropagation()}
                 ondblclick={(e) => e.stopPropagation()}
-                onclick={(e) => { e.stopPropagation(); void mail.setRead([m.id], !m.is_read); }}
+                onclick={(e) => { e.stopPropagation(); void mail.setRead([m.id], !read); }}
               >
-                <span class="w-[5px] flex-none {m.is_read ? 'group-hover:bg-[#c8c8c8] group-hover/bar:bg-primary/70 dark:group-hover:bg-white/25' : 'bg-primary group-hover/bar:bg-primary/75'}"></span>
+                <span class="w-[5px] flex-none {read ? 'group-hover:bg-[#c8c8c8] group-hover/bar:bg-primary/70 dark:group-hover:bg-white/25' : 'bg-primary group-hover/bar:bg-primary/75'}"></span>
               </button>
               {#if EXPANDABLE}
                 <!-- Konuşmayı listede aç/kapat (OWA) -->
@@ -509,23 +510,23 @@
               {/if}
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1">
-                  <span class="truncate {m.is_read ? '' : BOLD ? 'font-bold' : 'text-primary'}" style="font-size:{FS}px">{ri.who || t("mail.no_sender")}</span>
+                  <span class="truncate {read ? '' : BOLD ? 'font-bold' : 'text-primary'}" style="font-size:{FS}px">{ri.who || t("mail.no_sender")}</span>
                   {#if count > 1}<span class="text-muted-foreground text-xs">({count})</span>{/if}
                   <span class="flex-1"></span>
                   {#if m.is_answered}<Reply class="text-muted-foreground size-3.5" />{/if}
                   {#if m.has_attachments}<Paperclip class="text-muted-foreground size-3.5" />{/if}
                   {#if m.importance === 2}<AlertCircle class="size-3.5 text-red-600" />{:else if m.importance === 0}<ArrowDown class="size-3.5 text-blue-500" />{/if}
-                  <span class="text-muted-foreground shrink-0 text-xs {m.is_read ? '' : BOLD ? 'text-primary font-semibold' : 'text-primary'}">{ri.date}</span>
+                  <span class="text-muted-foreground shrink-0 text-xs {read ? '' : BOLD ? 'text-primary font-semibold' : 'text-primary'}">{ri.date}</span>
                 </div>
                 <div class="flex items-center gap-1">
                   {#if m.is_draft && !mail.sentLike}<span class="text-xs font-semibold text-red-600">[{t("mail.draft")}]</span>{/if}
                   {#if !PREVIEW}{#each cats as c (c)}<span class="size-2.5 shrink-0 rounded-sm" style="background:{app.categoryColor(c)}" title={c}></span>{/each}{/if}
-                  <span class="truncate {m.is_read ? '' : BOLD ? 'text-primary font-semibold' : 'text-primary'}" style="font-size:{FS}px">{m.subject || t("mail.no_subject")}</span>
+                  <span class="truncate {read ? '' : BOLD ? 'text-primary font-semibold' : 'text-primary'}" style="font-size:{FS}px">{m.subject || t("mail.no_subject")}</span>
                   <span class="flex-1"></span>
                   <div class="hidden shrink-0 items-center gap-0.5 group-hover:flex">
                     <button class="hover:bg-background rounded p-0.5" title={t("common.delete")} onclick={(e) => { e.stopPropagation(); mail.selected = [m.id]; mail.delete(); }}><Trash2 class="size-3.5" /></button>
-                    <button class="hover:bg-background rounded p-0.5" title={m.is_read ? t("mail.mark_unread") : t("mail.mark_read")} onclick={(e) => { e.stopPropagation(); mail.setRead([m.id], !m.is_read); }}>
-                      {#if m.is_read}<Mail class="size-3.5" />{:else}<MailOpen class="size-3.5" />{/if}
+                    <button class="hover:bg-background rounded p-0.5" title={read ? t("mail.mark_unread") : t("mail.mark_read")} onclick={(e) => { e.stopPropagation(); mail.setRead([m.id], !read); }}>
+                      {#if read}<Mail class="size-3.5" />{:else}<MailOpen class="size-3.5" />{/if}
                     </button>
                   </div>
                   <!-- Raptiye (Outlook "Sabitle"): sabitliyse hep görünür, tıklayınca kaldırılır -->

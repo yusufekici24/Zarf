@@ -29,8 +29,8 @@ const readCalls = async (page: Page) => (await calls(page, "set_read")).filter((
 
 test("listede konuşma açılır: Gönderilmiş dahil iletiler alt alta, tıklanan ileti açılır ve okundu olur", async ({ page }) => {
   const errors = await open(page);
-  // Konuşma satırı: gelen kutusundaki iki ileti
-  await expect(page.getByText("(2)")).toBeVisible();
+  // Konuşma satırı: gönderilen yanıt dahil üç ileti (açılınca görünenlerle aynı sayı)
+  await expect(page.getByText("(3)")).toBeVisible();
   await expect(page.getByTestId("thread-item")).toHaveCount(0);
   await page.getByRole("button", { name: "Konuşmayı genişlet" }).click();
   const items = page.getByTestId("thread-item");
@@ -58,7 +58,9 @@ test("okuma bölmesinde iletiler alt alta: gösterilen açık, diğerine tıklay
   await expect(closed).toHaveCount(2);
   await expect(closed.nth(0)).toContainText("Ben");
   await expect(closed.nth(1)).toContainText("Ayşe Yılmaz");
-  await expect.poll(() => readCalls(page)).toContain(13);
+  // Konuşma açılınca bu klasördeki okunmamışların hepsi okundu olur; satır kalın kalmaz
+  await expect.poll(() => readCalls(page)).toEqual(expect.arrayContaining([13, 11]));
+  await expect(page.getByRole("option", { name: /YNT: Bütçe planı/ }).locator(".font-bold")).toHaveCount(0);
   // Açık iletinin çerçevesi içeriği kadar: kısa ileti kısa kalır, kendi kendine uzamaz
   const frame = conv.getByTestId("conversation-open").locator('iframe[title="message"]');
   const h1 = await frame.evaluate((f) => f.getBoundingClientRect().height);
@@ -71,6 +73,24 @@ test("okuma bölmesinde iletiler alt alta: gösterilen açık, diğerine tıklay
   await expect(conv.getByTestId("conversation-item")).toHaveCount(2);
   await expect.poll(() => readCalls(page)).toContain(11);
   expect(errors).toEqual([]);
+});
+
+test("konuşma satırı: en üstteki okunmuş olsa da içinde okunmamış varsa kalın görünür; alt satır yalnızca kendini okur", async ({ page }) => {
+  await installMock(page, fixtures({ messages: MESSAGES.map((m) => (m.id === 13 ? { ...m, is_read: true } : m)), settings: SETTINGS }));
+  await page.goto("/");
+  const head = page.getByRole("option", { name: /YNT: Bütçe planı/ }).first();
+  await expect(head.locator(".font-bold").first()).toBeVisible();
+  await page.getByRole("button", { name: "Konuşmayı genişlet" }).click();
+  // Alt satırda okunmuş iletiye tıklamak konuşmayı okundu yapmaz
+  await page.getByTestId("thread-item").nth(0).click();
+  await expect(body(page)).toContainText("Son hâli ekte");
+  await page.waitForTimeout(300);
+  expect(await readCalls(page)).toEqual([]);
+  await expect(head.locator(".font-bold").first()).toBeVisible();
+  // Baş satırın "okundu" düğmesi konuşmanın tamamını okur
+  await head.getByRole("button", { name: "Okundu olarak işaretle" }).first().click();
+  await expect.poll(() => readCalls(page)).toContain(11);
+  await expect(head.locator(".font-bold")).toHaveCount(0);
 });
 
 test("konuşma sırası: en yeni altta seçilince en eski ileti üstte", async ({ page }) => {

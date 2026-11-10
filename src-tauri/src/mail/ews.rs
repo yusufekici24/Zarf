@@ -125,10 +125,14 @@ pub struct EwsHeader {
     pub is_draft: bool,
     pub item_class: String,
     pub pinned: bool,
+    /// Sunucunun konuşma kimliği (base64; PidTagConversationId, yoksa ConversationIndex'teki GUID)
+    pub conversation: String,
+    pub in_reply_to: String,
+    pub references: String,
 }
 
 /// Başlık için istenen alanlar
-const HEADER_PROPS: &str = r#"<t:AdditionalProperties><t:FieldURI FieldURI="item:Subject"/><t:FieldURI FieldURI="message:From"/><t:FieldURI FieldURI="item:DisplayTo"/><t:FieldURI FieldURI="item:DisplayCc"/><t:FieldURI FieldURI="item:DateTimeReceived"/><t:FieldURI FieldURI="message:IsRead"/><t:FieldURI FieldURI="item:Flag"/><t:FieldURI FieldURI="item:HasAttachments"/><t:FieldURI FieldURI="item:Importance"/><t:FieldURI FieldURI="item:Categories"/><t:FieldURI FieldURI="message:InternetMessageId"/><t:FieldURI FieldURI="item:Preview"/><t:FieldURI FieldURI="item:IsDraft"/><t:FieldURI FieldURI="item:ItemClass"/><t:ExtendedFieldURI PropertyTag="0x0F01" PropertyType="SystemTime"/></t:AdditionalProperties>"#;
+const HEADER_PROPS: &str = r#"<t:AdditionalProperties><t:FieldURI FieldURI="item:Subject"/><t:FieldURI FieldURI="message:From"/><t:FieldURI FieldURI="item:DisplayTo"/><t:FieldURI FieldURI="item:DisplayCc"/><t:FieldURI FieldURI="item:DateTimeReceived"/><t:FieldURI FieldURI="message:IsRead"/><t:FieldURI FieldURI="item:Flag"/><t:FieldURI FieldURI="item:HasAttachments"/><t:FieldURI FieldURI="item:Importance"/><t:FieldURI FieldURI="item:Categories"/><t:FieldURI FieldURI="message:InternetMessageId"/><t:FieldURI FieldURI="item:Preview"/><t:FieldURI FieldURI="item:IsDraft"/><t:FieldURI FieldURI="item:ItemClass"/><t:ExtendedFieldURI PropertyTag="0x0F01" PropertyType="SystemTime"/><t:ExtendedFieldURI PropertyTag="0x3013" PropertyType="Binary"/><t:ExtendedFieldURI PropertyTag="0x0071" PropertyType="Binary"/><t:ExtendedFieldURI PropertyTag="0x1042" PropertyType="String"/><t:ExtendedFieldURI PropertyTag="0x1039" PropertyType="String"/></t:AdditionalProperties>"#;
 
 /// Outlook/OWA "Sabitle": PidTagRenewTime ve PidTagReceivedOrRenewTime 4500 yılına ayarlanır
 const PIN_TIME: &str = "4500-09-01T00:00:00Z";
@@ -148,8 +152,26 @@ impl EwsHeader {
                 }
             })
             .unwrap_or_default();
+        // Genişletilmiş özellik (MAPI etiketi) değeri
+        let ext = |tag: u32| {
+            it.children_named("ExtendedProperty")
+                .find(|p| p.child("ExtendedFieldURI").and_then(|u| u.attr("PropertyTag")).and_then(|t| u32::from_str_radix(t.trim_start_matches("0x"), 16).ok()) == Some(tag))
+                .map(|p| p.text_of("Value").trim().to_string())
+                .unwrap_or_default()
+        };
+        // Konuşma: PidTagConversationId; yoksa PidTagConversationIndex'in 6-22. baytları (aynı GUID)
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let mut conversation = ext(0x3013).split_whitespace().collect::<String>();
+        if conversation.is_empty() {
+            if let Some(g) = b64.decode(ext(0x0071).split_whitespace().collect::<String>()).ok().filter(|b| b.len() >= 22) {
+                conversation = b64.encode(&g[6..22]);
+            }
+        }
         Some(EwsHeader {
             id,
+            conversation,
+            in_reply_to: ext(0x1042),
+            references: ext(0x1039),
             subject: it.text_of("Subject"),
             sender,
             to: it.text_of("DisplayTo").replace("; ", ", "),
@@ -1687,6 +1709,25 @@ mod tests {
         assert_eq!(got, vec![7]);
         // Ağ hatası olduğu gibi döner
         assert!(fetch_split::<u8>(start, end, CAL_CHUNK_SECS, &mut |_, _| Err(MailError::net("yok"))).unwrap_err().is_net());
+    }
+
+    /// Konuşma kimliği ve yanıt başlıkları genişletilmiş özelliklerden okunur
+    #[test]
+    fn header_reads_conversation_properties() {
+        let prop = |tag: &str, ty: &str, v: &str| format!(r#"<ExtendedProperty><ExtendedFieldURI PropertyTag="{tag}" PropertyType="{ty}"/><Value>{v}</Value></ExtendedProperty>"#);
+        let parse = |props: &str| {
+            let xml = format!(r#"<Message><ItemId Id="AAMk1"/><Subject>YNT: Plan</Subject>{props}</Message>"#);
+            EwsHeader::from_element(xml::parse(xml.as_bytes()).unwrap().find("Message").unwrap()).unwrap()
+        };
+        let index: Vec<u8> = (0u8..27).collect();
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let h = parse(&(prop("0x3013", "Binary", "q83vEjRWeJAAAAAAAAAAAA==") + &prop("0x71", "Binary", &b64.encode(&index)) + &prop("0x1042", "String", "&lt;a@x&gt;") + &prop("0x1039", "String", "&lt;r@x&gt; &lt;a@x&gt;")));
+        assert_eq!((h.conversation.as_str(), h.in_reply_to.as_str(), h.references.as_str()), ("q83vEjRWeJAAAAAAAAAAAA==", "<a@x>", "<r@x> <a@x>"));
+        // Kimlik yoksa dizindeki GUID
+        let h = parse(&prop("0x0071", "Binary", &b64.encode(&index)));
+        assert_eq!(h.conversation, b64.encode(&index[6..22]));
+        assert!(!h.pinned);
+        assert_eq!(parse("").conversation, "");
     }
 
     #[test]

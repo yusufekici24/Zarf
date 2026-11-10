@@ -12,12 +12,28 @@ Kurumsal Exchange (EWS) birinci önceliktir, IMAP/SMTP de desteklenir. Arayüz m
 - Paket: `.deb` (glibc 2.39+, yerel derleme) ya da Docker'da Ubuntu 22.04 tabanı (`packaging/build-packages.sh`).
 - Depo: github.com/yusufekici24/linux-mailappv2 (özel). Sürümler Releases'te `Lynora_X.Y.Z_amd64.deb`.
 
+## Konu belgeleri (önce buraya bakın)
+
+Bu dosya genel haritadır. Aşağıdaki konularda ayrıntı (hangi fonksiyon nerede, kurallar, tuzaklar) ayrı
+dosyadadır; ilgili işe başlamadan yalnızca o dosyayı okumak yeter.
+
+| Konu | Dosya |
+|---|---|
+| Şu anki durum: son sürüm, doğrulanmamış noktalar, sıradaki işler | `docs/DURUM.md` |
+| Arama: sözdizimi, ifade ağacı, SQL/AQS, arama kutusu önerileri | `docs/arama.md` |
+| Konuşmalar: `tid`, `thread_keys`, bağlama kuralları, konuşmada okundu | `docs/konusmalar.md` |
+| İleti gövdesi: HTML temizleme, tablo ve resim düzeni | `docs/ileti-govdesi.md` |
+| Linux Posta → Lynora geçişi, bilinen sınırlar | `docs/GECIS.md` |
+
+Yeni bir konu büyüdüğünde (takvim, kurallar, yazma penceresi …) buraya uzun bölüm eklemek yerine `docs/` altına
+dosya açıp bu tabloya satır ekleyin. Bir oturumun sonunda `docs/DURUM.md` güncellenir.
+
 ## Komutlar
 
 ```sh
 npm run tauri dev                       # geliştirme
 npm run check                           # svelte-check (0 hata; 15 eski uyarı var)
-cd src-tauri && cargo test --lib        # Rust birim testleri (~100)
+cd src-tauri && cargo test --lib        # Rust birim testleri (107)
 npm run test:ui                         # Playwright arayüz testleri (sahte arka uç, sistem Chrome'u)
 npx tauri build --bundles deb           # → src-tauri/target/release/bundle/deb/Lynora_X.Y.Z_amd64.deb
 ```
@@ -37,9 +53,10 @@ Kabuk betiklerinde `LC_ALL=C` kullanın: tr_TR yerelinde `[a-z]` aralığı `i`'
 | `src/lib/components/` | Modüller: `mail/`, `calendar/`, `contacts/`, `tasks/`, `notes/`, `dialogs/`, `ribbon/`, `common/`, `ui/` (shadcn) |
 | `src/lib/api.ts` | Rust komutlarına tipli sarmalayıcılar (komut adı = Rust fonksiyon adı) |
 | `src/lib/types.ts` | Rust veri modellerinin TS karşılıkları |
+| `src/lib/search-syntax.ts` | Arama anahtarları ve öneriler; `db.rs` `search_key()` ile aynı kalmalı (`docs/arama.md`) |
 | `locales/tr.json`, `en.json` | Arayüz metinleri; **iki dosyada aynı anahtarlar olmalı**. Rust `t!()`, ön yüz `t()` |
 | `tests/ui/` | Playwright testleri ve `mock-backend.ts` |
-| `docs/GECIS.md` | Geçiş notu, kalan işler, bilinen sınırlar |
+| `docs/` | Konu belgeleri (yukarıdaki tablo) |
 | `packaging/` | Docker paket betiği, `.desktop`, MIME, `postinst.sh` |
 | `.github/workflows/build.yml` | Her push: npm build + svelte-check + `cargo test --lib`. Paket işi yalnızca elle (workflow_dispatch) |
 
@@ -87,9 +104,10 @@ Svelte bileşeni → store (mail/app) → api.ts invoke → commands.rs (#[tauri
 ## Veritabanı (`~/.local/share/lynora/lynora.db`)
 
 Tablolar: `accounts folders messages message_content message_fts fts_build pending_flags contacts contact_groups
-directory recipients calendars events tasks notes rules categories settings dismissed_reminders`.
+directory recipients calendars events tasks notes rules categories settings dismissed_reminders thread_keys`.
 
-- `messages`: liste sütunları + `ns` (önekleri atılmış küçük harfli konu: konuşma ve konu sıralaması dizinden),
+- `messages`: liste sütunları + `ns` (önekleri atılmış küçük harfli konu: konu sıralaması ve konuşma yedek yolu),
+  `conv` (Exchange konuşma kimliği), `tid` (konuşma numarası; `thread_keys` ile hesaplanır, bkz. `docs/konusmalar.md`),
   `remote_id` (Exchange öğe kimliği) ya da `uid` (IMAP), `is_read/is_flagged/is_answered/is_pinned`, `att_names`.
 - `message_content`: gövde ve özgün ileti (`raw`), ayrı tabloda (liste hızlı kalsın). `write_content` UPSERT'tir.
 - `message_fts`: içeriksiz FTS5 arama dizini; tetikleyicilerle güncellenir. `fts_build`: eski iletilerin arka plan kurulum aralığı.
@@ -111,7 +129,8 @@ Büyük düzen değişikliği gerekiyorsa `needs_upgrade()` true döner ve açı
 4. Sunucudan gelen bayraklar **yalnızca** `db.set_flag_from_server` ile yazılır: bekleyen kayıt varsa dokunmaz.
    Bu alanlara `set_message_field` ile sunucu değeri yazmayın.
 5. Otomatik okundu: `mail.autoRead` (`mark_read_delay`; okuma bölmesi kapalıysa yok). Konuşmada açılan ileti
-   (`showOnly`) de okundu olur.
+   (`showOnly`) de okundu olur. Konuşmanın baş satırı açılınca o klasördeki bütün okunmamışlar okundu olur; baş
+   satır içinde okunmamış varken kalın kalır (`mail.unread`, `thread_unread`; bkz. `docs/konusmalar.md`).
 
 ## Exchange takvimi
 
@@ -204,6 +223,10 @@ hata · `mail://bg` arka plan etkinliği · `mail://older` eski iletiler geldi �
   kalın görünüyordu (okunmuş/okunmamış ayırt edilemiyordu). Varsayılan gömülü Noto Sans Variable.
 - EWS: dahili göndericide `EmailAddress` X.500 olabilir (`@` yok; liste başlığında yalnızca ad saklanır), ileti açılınca
   MIME'dan SMTP adresi yazılır. `CalendarView` sayfalanamaz: 1000 öğe sınırı (yukarıda).
+- Konuşmalar konuya göre **birleştirilmez**: bağ Exchange konuşma kimliği ve `References`/`In-Reply-To` ile kurulur
+  (`docs/konusmalar.md`). Arama anahtarı eklerken `search_key()` ve `search-syntax.ts` birlikte değişir (`docs/arama.md`).
+- ammonia `tfoot`'u varsayılan olarak atar; gövdede `overflow-wrap:anywhere` tabloları bozar (`docs/ileti-govdesi.md`).
+- `tests/ui` dosyalarında `process` ve yazımsız `import("/src/…")` kullanmayın: `npm run check` hata verir (bkz. trust.spec).
 - Svelte, öğe kenarındaki boşluğu kırpar: `<span>{x} · </span>` sondaki boşluğu kaybeder; `{" · "}` kullanın.
 - `system_fonts` komutu zaten var (fc-list); Kırtasiye, ileti yazma ve Seçenekler kullanır.
 - `svelte-check` CI'de `--threshold error`; yeni uyarı eklememeye çalışın (sayı 15).

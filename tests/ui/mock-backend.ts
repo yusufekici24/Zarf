@@ -99,10 +99,11 @@ export async function installMock(page: Page, f: Fixtures) {
       };
     };
     const folders = [folder(1, "Gelen Kutusu", "inbox", 0), folder(2, "Gönderilmiş Öğeler", "sent", 1), folder(3, "Silinmiş Öğeler", "trash", 2)];
-    const row = (m: (typeof f.messages)[number], thread_count = 1) => ({
+    const row = (m: (typeof f.messages)[number], thread_count = 1, thread_unread = 0) => ({
       id: m.id, folder_id: m.folder_id, account_id: 1, uid: m.id, subject: m.subject, sender: m.sender, to_addr: "Ben <ben@kurum.com.tr>",
       date: m.date, snippet: m.snippet, is_read: m.is_read, is_flagged: false, is_draft: false, is_answered: false, importance: 1,
       categories: "", has_attachments: !!m.has_attachments, message_id: `<m${m.id}@kurum.com.tr>`, in_reply_to: "", thread_count, is_pinned: false,
+      thread_id: Math.min(...f.messages.filter((x) => ns(x.subject) === ns(m.subject)).map((x) => x.id)), thread_unread,
     });
     const fold = (s: string) => s.toLocaleLowerCase("tr").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/ı/g, "i");
     // Konuşma anahtarı: "RE:/YNT:/Fw:" önekleri atılmış küçük harfli konu (arka uçtaki ns sütunu gibi)
@@ -136,22 +137,42 @@ export async function installMock(page: Page, f: Fixtures) {
           .filter((m) => a.folderId == null || m.folder_id === a.folderId)
           .filter((m) => !q || q.split(/\s+/).every((w) => fold(`${m.subject} ${m.sender} ${m.snippet}`).includes(w)))
           .sort((x, y) => y.date - x.date);
-        // Konuşma görünümü: konu başına en yeni ileti, konuşmadaki ileti sayısıyla
+        // Konuşma görünümü: konuşma başına en yeni ileti; sayı diğer klasörleri de kapsar (çöp
+        // hariç), okunmamışlar yalnızca listedekilerden
         const conv = (a.order as { conversations?: boolean } | undefined)?.conversations;
+        const same = (m: (typeof list)[number]) => (x: (typeof list)[number]) => ns(x.subject) === ns(m.subject);
         const rows = conv
-          ? list.filter((m, i) => list.findIndex((x) => ns(x.subject) === ns(m.subject)) === i).map((m) => row(m, list.filter((x) => ns(x.subject) === ns(m.subject)).length))
+          ? list
+              .filter((m, i) => list.findIndex(same(m)) === i)
+              .map((m) => row(m, f.messages.filter((x) => same(m)(x) && (x.folder_id === m.folder_id || x.folder_id !== 3)).length, list.filter((x) => same(m)(x) && !x.is_read).length))
           : list.map((m) => row(m));
         return { rows, total: rows.length };
       },
       conversation: (a) => {
         const m = f.messages.find((x) => x.id === a.id);
         if (!m) return [];
-        return f.messages.filter((x) => ns(x.subject) === ns(m.subject) && x.folder_id !== 3).sort((x, y) => x.date - y.date).map((x) => row(x));
+        return f.messages.filter((x) => ns(x.subject) === ns(m.subject) && (x.folder_id !== 3 || x.folder_id === m.folder_id)).sort((x, y) => x.date - y.date).map((x) => row(x));
       },
       set_read: (a) => {
         for (const m of f.messages) if ((a.ids as number[]).includes(m.id)) m.is_read = a.value as boolean;
         return null;
       },
+      // Kişi önerileri: göndericilerden, adı ya da adresi yazılanla başlayan sözcük içerenler
+      search_suggest: (a) => {
+        const q = fold(String(a.query ?? "").trim());
+        const seen = new Map<string, { name: string; email: string; count: number }>();
+        for (const m of f.messages) {
+          const p = m.sender.match(/^(.*?)\s*<(.+)>$/);
+          const name = p ? p[1] : "";
+          const email = p ? p[2] : m.sender;
+          if (!q || ![...fold(name).split(/\s+/), fold(email)].some((w) => w.startsWith(q))) continue;
+          const old = seen.get(email);
+          if (old) old.count++;
+          else seen.set(email, { name, email, count: 1 });
+        }
+        return { people: [...seen.values()], attachments: [] };
+      },
+      search_events: () => [],
       system_fonts: () => f.fonts,
       calendar_sync_errors: () => f.calendarErrors,
       list_calendars: () => [{ id: 1, name: "ben@kurum.com.tr", color: "#0f6cbd", visible: true, account_id: 1, owner: "", grp: "", kind: "", remote_id: null }],

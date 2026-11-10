@@ -224,6 +224,9 @@ pub(crate) fn header_to_message(h: &EwsHeader, folder: &Folder, account_id: i64)
         categories: h.categories.join(","),
         has_attachments: h.has_attachments,
         is_pinned: h.pinned,
+        conv: h.conversation.clone(),
+        in_reply_to: h.in_reply_to.clone(),
+        refs: h.references.clone(),
         ..Default::default()
     }
 }
@@ -483,7 +486,9 @@ impl Worker {
         let rules = if is_inbox { self.db.rules(true) } else { vec![] };
         let mut new_msgs = Vec::new();
         for h in headers {
-            if self.db.message_by_remote(folder.id, &h.id).is_some() {
+            if let Some(old) = self.db.message_by_remote(folder.id, &h.id) {
+                // Eski sürümden kalan ileti: konuşma kimliği şimdi öğrenildi
+                self.db.set_conversation(old, &h.conversation, &h.in_reply_to, &h.references);
                 continue;
             }
             for c in &h.categories {

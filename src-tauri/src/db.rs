@@ -287,6 +287,10 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // "RE:/YNT:" önekleri atılmış, küçük harfli konu (konuşma görünümü ve konuya göre sıralama
     // dizinden yapılır; her satırda konu yeniden çözülmez)
     ("messages", "ns", "TEXT"),
+    // Konuşma: Exchange'in konuşma kimliği (yoksa boş) ve iletinin bağlandığı konuşma numarası
+    // (bkz. assign_thread)
+    ("messages", "conv", "TEXT NOT NULL DEFAULT ''"),
+    ("messages", "tid", "INTEGER"),
     ("rules", "remote_id", "TEXT"),
     ("rules", "remote_xml", "TEXT DEFAULT ''"),
     ("rules", "complex", "INTEGER DEFAULT 0"),
@@ -507,8 +511,12 @@ pub struct MessageRow {
     pub remote_id: Option<String>,
     /// Sabitlenmiş (Outlook "Sabitle"): listede en üstte
     pub is_pinned: bool,
-    /// Konuşma görünümünde konudaki ileti sayısı
+    /// Konuşmadaki ileti sayısı (tüm klasörlerde; çöp ve gereksiz hariç)
     pub thread_count: i64,
+    /// Konuşma numarası (aynı konuşmadaki iletilerde aynıdır)
+    pub thread_id: i64,
+    /// Konuşma görünümünde: listelenen klasörde bu konuşmadaki okunmamış ileti sayısı
+    pub thread_unread: i64,
 }
 
 impl MessageRow {
@@ -535,6 +543,8 @@ impl MessageRow {
             remote_id: r.get("remote_id")?,
             is_pinned: r.get::<_, Option<i64>>("is_pinned").unwrap_or(None).unwrap_or(0) != 0,
             thread_count: r.get::<_, i64>("thread_count").unwrap_or(1),
+            thread_id: r.get::<_, Option<i64>>("tid").unwrap_or(None).unwrap_or(0),
+            thread_unread: r.get::<_, i64>("thread_unread").unwrap_or(0),
         })
     }
 
@@ -636,9 +646,44 @@ impl DirRow {
     }
 }
 
+/// Konuşmaya sayılan klasörler: iletinin kendi klasörü (?2) ve çöp/gereksiz dışındakiler
+const THREAD_SCOPE: &str = "(folder_id = ?2 OR folder_id NOT IN (SELECT id FROM folders WHERE role IN ('trash','junk')))";
+
+/// Bağ bilgisi olmayan "YNT: …" iletisi en çok bu kadar önceki aynı konulu iletiye bağlanır (saniye)
+const SUBJECT_THREAD_WINDOW: f64 = 90.0 * 86400.0;
+
+/// İletinin konuşma anahtarları (bkz. Db::assign_thread)
+fn thread_keys(conv: &str, mid: &str, in_reply_to: &str, refs: &str, ns: &str) -> Vec<String> {
+    let ids = |s: &str| -> Vec<String> {
+        s.split(|c: char| c.is_whitespace() || c == ',')
+            .map(|x| x.trim_matches(['<', '>']))
+            .filter(|x| !x.is_empty())
+            .map(|x| format!("m:{x}\u{1f}{ns}"))
+            .collect()
+    };
+    let mut keys = Vec::new();
+    if !conv.is_empty() {
+        keys.push(format!("x:{conv}"));
+    } else {
+        // Çok uzun zincirde en baştaki (kök) ve en sondaki iletiler yeter
+        let r = ids(refs);
+        if r.len() > 24 {
+            keys.extend_from_slice(&r[..4]);
+            keys.extend_from_slice(&r[r.len() - 20..]);
+        } else {
+            keys.extend(r);
+        }
+        keys.extend(ids(in_reply_to));
+    }
+    keys.extend(ids(mid).into_iter().take(1));
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
 const LIST_COLS: &str = "id, folder_id, account_id, uid, subject, sender, to_addr, date, snippet, \
     is_read, is_flagged, is_draft, is_answered, importance, categories, has_attachments, \
-    message_id, in_reply_to, remote_id, is_pinned";
+    message_id, in_reply_to, remote_id, is_pinned, tid";
 
 /// Sunucuyla eşitlenen bayrak sütunları
 pub const FLAG_FIELDS: [&str; 3] = ["is_read", "is_flagged", "is_answered"];
@@ -689,6 +734,8 @@ pub struct Message {
     pub is_pinned: bool,
     /// Eklerin adları (satır başına bir ad)
     pub att_names: String,
+    /// Exchange konuşma kimliği (başka sunucularda boş)
+    pub conv: String,
 }
 
 impl Message {
@@ -722,6 +769,7 @@ impl Message {
             remote_id: r.get("remote_id")?,
             is_pinned: r.get::<_, Option<i64>>("is_pinned").unwrap_or(None).unwrap_or(0) != 0,
             att_names: r.get::<_, Option<String>>("att_names").unwrap_or(None).unwrap_or_default(),
+            conv: r.get::<_, Option<String>>("conv").unwrap_or(None).unwrap_or_default(),
         })
     }
 }
@@ -1281,20 +1329,172 @@ impl Db {
     /// tetikleyiciyle güncellenir (yeni iletide insert_message yazar); gruplama ve sıralama dizinden
     fn init_subject_index(conn: &Connection) -> Result<()> {
         let tx = conn.unchecked_transaction()?;
-        if !tx.prepare("SELECT 1 FROM settings WHERE key = 'subject_index_v1'")?.exists([])? {
+        // v2 (1.7.5): önek listesi genişledi ("RE[2]:", "Cevap:", "AW:" …)
+        if !tx.prepare("SELECT 1 FROM settings WHERE key = 'subject_index_v2'")?.exists([])? {
             tx.execute_batch(
                 "UPDATE messages SET ns = lyn_norm_subject(subject) WHERE ns IS NULL OR ns <> lyn_norm_subject(subject); \
-                 INSERT OR REPLACE INTO settings(key, value) VALUES ('subject_index_v1', '1');",
+                 INSERT OR REPLACE INTO settings(key, value) VALUES ('subject_index_v2', '1');",
             )?;
         }
         tx.execute_batch(
             "CREATE TRIGGER IF NOT EXISTS messages_ns AFTER UPDATE OF subject ON messages WHEN old.subject IS NOT new.subject BEGIN \
                  UPDATE messages SET ns = lyn_norm_subject(new.subject) WHERE id = new.id; \
              END; \
-             CREATE INDEX IF NOT EXISTS idx_messages_ns ON messages(folder_id, ns, date); \
-             CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(ns);",
+             CREATE INDEX IF NOT EXISTS idx_messages_ns ON messages(folder_id, ns, date);",
         )?;
         tx.commit()
+    }
+
+    /// 1.7.5: konuşmalar konuya göre değil, iletilerin birbirine bağına göre kurulur (`tid`).
+    /// Eski iletiler bir kez bağlanır; sonrası insert_message ile.
+    fn init_threads(conn: &mut Connection) -> Result<()> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS thread_keys (
+                 account_id INTEGER NOT NULL, key TEXT NOT NULL, tid INTEGER NOT NULL,
+                 PRIMARY KEY (account_id, key)
+             ) WITHOUT ROWID;
+             CREATE INDEX IF NOT EXISTS idx_thread_keys_tid ON thread_keys(tid);
+             DROP INDEX IF EXISTS idx_messages_thread;
+             CREATE INDEX IF NOT EXISTS idx_messages_subject ON messages(account_id, ns, date);
+             CREATE INDEX IF NOT EXISTS idx_messages_tid ON messages(tid, folder_id);
+             CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(folder_id, tid, date, is_read);",
+        )?;
+        if !conn.prepare("SELECT 1 FROM settings WHERE key = 'threads_v1'")?.exists([])? {
+            let tx = conn.transaction()?;
+            Self::rebuild_threads(&tx)?;
+            tx.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('threads_v1', '1')", [])?;
+            tx.commit()?;
+        }
+        Ok(())
+    }
+
+    /// Bütün konuşmaları baştan kurar (iletiler tarih sırasıyla bağlanır)
+    fn rebuild_threads(c: &Connection) -> Result<()> {
+        c.execute_batch("DELETE FROM thread_keys; UPDATE messages SET tid = NULL WHERE tid IS NOT NULL;")?;
+        let ids: Vec<i64> = {
+            let mut st = c.prepare("SELECT id FROM messages ORDER BY date, id")?;
+            let ids = st.query_map([], |r| r.get(0))?.collect::<Result<Vec<i64>>>()?;
+            ids
+        };
+        for id in ids {
+            Self::assign_thread(c, id)?;
+        }
+        Ok(())
+    }
+
+    /// İletiyi konuşmasına bağlar (`messages.tid`). Bağ, iletinin anahtarlarıyla kurulur
+    /// (`thread_keys`: anahtar → konuşma):
+    /// - Exchange konuşma kimliği varsa o (sunucu yanıt zincirini ve konu değişimini zaten
+    ///   hesaba katmıştır; Outlook ile aynı gruplama),
+    /// - yoksa References/In-Reply-To/Message-ID zinciri, arındırılmış konuyla birlikte (konusu
+    ///   değişen yanıt yeni konuşma başlatır).
+    /// Hiçbir bağ bilgisi taşımayan "YNT: …" iletisi, aynı hesapta aynı konulu en yakın önceki
+    /// iletinin konuşmasına katılır. Öneksiz aynı konulu iletiler (ör. her gün gelen rapor)
+    /// birbirine bağlanmaz. Birden çok konuşmaya değen ileti onları birleştirir; sıra önemsizdir.
+    fn assign_thread(c: &Connection, id: i64) -> Result<()> {
+        type Row = (Option<i64>, String, String, String, String, String, String, f64, Option<i64>);
+        let row: Option<Row> = c
+            .prepare_cached(
+                "SELECT account_id, COALESCE(message_id, ''), COALESCE(in_reply_to, ''), COALESCE(refs, ''), COALESCE(subject, ''), \
+                 COALESCE(ns, ''), conv, COALESCE(date, 0), tid FROM messages WHERE id = ?1",
+            )?
+            .query_row([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)))
+            .optional()?;
+        let Some((account, mid, irt, refs, subject, ns, conv, date, old)) = row else { return Ok(()) };
+        let acct = account.unwrap_or(0);
+        let keys = thread_keys(&conv, &mid, &irt, &refs, &ns);
+        let mut tids: std::collections::BTreeSet<i64> = old.into_iter().collect();
+        {
+            let mut st = c.prepare_cached("SELECT tid FROM thread_keys WHERE account_id = ?1 AND key = ?2")?;
+            for k in &keys {
+                if let Some(t) = st.query_row(params![acct, k], |r| r.get::<_, i64>(0)).optional()? {
+                    tids.insert(t);
+                }
+            }
+        }
+        // Konu yedeği yalnızca Exchange kimliği olmayan iletiler arasında
+        if conv.is_empty() && !ns.is_empty() {
+            let linkless = irt.trim().is_empty() && refs.trim().is_empty();
+            if linkless && crate::mail::has_subject_prefix(&subject) {
+                let t: Option<i64> = c
+                    .prepare_cached(
+                        "SELECT tid FROM messages WHERE account_id IS ?1 AND ns = ?2 AND date <= ?3 AND date > ?3 - ?5 AND id <> ?4 \
+                         AND conv = '' AND tid IS NOT NULL ORDER BY date DESC LIMIT 1",
+                    )?
+                    .query_row(params![account, ns, date, id, SUBJECT_THREAD_WINDOW], |r| r.get(0))
+                    .optional()?;
+                tids.extend(t);
+            }
+            // Bu ileti, kendisinden sonra gelmiş bağsız bir "YNT:" iletisinin en yakın öncülü olabilir
+            let later: Option<(i64, String)> = c
+                .prepare_cached(
+                    "SELECT tid, COALESCE(subject, '') FROM messages WHERE account_id IS ?1 AND ns = ?2 AND date >= ?3 AND date < ?3 + ?5 AND id <> ?4 \
+                     AND conv = '' AND tid IS NOT NULL ORDER BY date LIMIT 1",
+                )?
+                .query_row(params![account, ns, date, id, SUBJECT_THREAD_WINDOW], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()?;
+            if let Some((t, s)) = later {
+                let bare: bool = c
+                    .prepare_cached("SELECT COALESCE(in_reply_to, '') = '' AND COALESCE(refs, '') = '' FROM messages WHERE tid = ?1 AND account_id IS ?2 AND ns = ?3 AND date >= ?4 ORDER BY date LIMIT 1")?
+                    .query_row(params![t, account, ns, date], |r| r.get(0))
+                    .optional()?
+                    .unwrap_or(false);
+                if bare && crate::mail::has_subject_prefix(&s) {
+                    tids.insert(t);
+                }
+            }
+        }
+        let tid = match tids.iter().next() {
+            Some(&t) => t,
+            // Silinmiş konuşmanın numarası yeniden kullanılmaz (anahtarları duruyor olabilir)
+            None => c
+                .prepare_cached("SELECT MAX(COALESCE((SELECT MAX(tid) FROM messages), 0), COALESCE((SELECT MAX(tid) FROM thread_keys), 0)) + 1")?
+                .query_row([], |r| r.get(0))?,
+        };
+        for other in tids.iter().skip(1) {
+            c.prepare_cached("UPDATE messages SET tid = ?1 WHERE tid = ?2")?.execute([tid, *other])?;
+            c.prepare_cached("UPDATE thread_keys SET tid = ?1 WHERE tid = ?2")?.execute([tid, *other])?;
+        }
+        if old != Some(tid) {
+            c.prepare_cached("UPDATE messages SET tid = ?1 WHERE id = ?2")?.execute([tid, id])?;
+        }
+        let mut st = c.prepare_cached("INSERT INTO thread_keys(account_id, key, tid) VALUES (?1, ?2, ?3) ON CONFLICT(account_id, key) DO UPDATE SET tid = excluded.tid")?;
+        for k in &keys {
+            st.execute(params![acct, k, tid])?;
+        }
+        Ok(())
+    }
+
+    /// Exchange'in sonradan öğrenilen konuşma kimliği (ve varsa yanıt başlıkları) yazılır; ileti
+    /// eski (konuya göre kurulmuş) konuşmasından ayrılıp sunucunun konuşmasına bağlanır.
+    /// Döner: ileti değişti mi (kimliği zaten olan iletiye dokunulmaz).
+    pub fn set_conversation(&self, id: i64, conv: &str, in_reply_to: &str, refs: &str) -> bool {
+        if conv.is_empty() {
+            return false;
+        }
+        let mut c = self.conn();
+        let run = |tx: &Connection| -> Result<bool> {
+            let n = tx.prepare_cached(
+                "UPDATE messages SET conv = ?2, in_reply_to = CASE WHEN COALESCE(in_reply_to, '') = '' THEN ?3 ELSE in_reply_to END, \
+                 refs = CASE WHEN COALESCE(refs, '') = '' THEN ?4 ELSE refs END, tid = NULL WHERE id = ?1 AND conv = ''",
+            )?
+            .execute(params![id, conv, in_reply_to, refs])?;
+            if n == 0 {
+                return Ok(false);
+            }
+            // İletinin kendi anahtarı eski konuşmayı gösterir: bırakılırsa ileti oraya geri bağlanır
+            tx.prepare_cached(
+                "DELETE FROM thread_keys WHERE (account_id, key) IN (SELECT COALESCE(account_id, 0), 'm:' || trim(message_id, '<> ') || char(31) || COALESCE(ns, '') FROM messages WHERE id = ?1)",
+            )?
+            .execute([id])?;
+            Self::assign_thread(tx, id)?;
+            Ok(true)
+        };
+        let Ok(tx) = c.transaction() else { return false };
+        match run(&tx) {
+            Ok(changed) => tx.commit().is_ok() && changed,
+            Err(_) => false,
+        }
     }
 
     /// 1.3.0: arama dizini yoksa (ya da sürümü eskiyse) kurulur. O ana kadarki iletiler dizine
@@ -1385,6 +1585,7 @@ impl Db {
             conn.execute_batch(SCHEMA)?;
         }
         Self::init_subject_index(&conn)?;
+        Self::init_threads(&mut conn)?;
         let fts_ready = Self::init_search_index(&conn)?;
         conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_messages_remote ON messages(folder_id, remote_id)")?;
         conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(folder_id, is_read)")?;
@@ -1412,6 +1613,13 @@ impl Db {
             conn.execute_batch(
                 "UPDATE folders SET sync_state = '', full_sync = 0 WHERE account_id IN (SELECT id FROM accounts WHERE kind = 'exchange'); \
                  INSERT OR REPLACE INTO settings(key, value) VALUES ('ews_sync_v2', '1');",
+            )?;
+        }
+        // Eşitleme v3 (1.7.5): başlıklar konuşma kimliğiyle yeniden taranır (bkz. set_conversation)
+        if !conn.prepare("SELECT 1 FROM settings WHERE key = 'ews_sync_v3'")?.exists([])? {
+            conn.execute_batch(
+                "UPDATE folders SET sync_state = '', full_sync = 0 WHERE account_id IN (SELECT id FROM accounts WHERE kind = 'exchange'); \
+                 INSERT OR REPLACE INTO settings(key, value) VALUES ('ews_sync_v3', '1');",
             )?;
         }
         // Sorgu planlayıcı istatistikleri (hızlı; yalnızca gerekirse çalışır). Arama dizininin iç
@@ -1708,6 +1916,7 @@ impl Db {
             [id],
         )?;
         c.execute("DELETE FROM folders WHERE account_id = ?1", [id])?;
+        c.execute("DELETE FROM thread_keys WHERE account_id = ?1", [id])?;
         // Sunucudan eşitlenen takvim ve kişiler hesapla gider
         c.execute("DELETE FROM events WHERE calendar_id IN (SELECT id FROM calendars WHERE account_id = ?1 AND kind = 'dav')", [id])?;
         c.execute("DELETE FROM calendars WHERE account_id = ?1 AND kind = 'dav'", [id])?;
@@ -2002,46 +2211,10 @@ impl Db {
 
     // ------------------------------------------------------------------ iletiler
     /// `fts`: arama dizini hazır (değilse metin sütunları LIKE ile taranır)
-    fn filter_sql(search: &str, filter: &MsgFilter, fts: bool, sql: &mut String, args: &mut Vec<String>) {
-        for term in parse_search(search) {
-            match term {
-                SearchTerm::Field(cols, v) => {
-                    // Exchange/Outlook gibi: sözcük başı eşleşmesi, Türkçe harf ve aksan duyarsız.
-                    // Birden çok sözcüklü değer (tırnaklı ifade, e-posta adresi) aynı alanda arka
-                    // arkaya geçmeli. Önce hızlı ön eleme (dizin ya da en uzun sözcükle LIKE),
-                    // sonra kesin denetim.
-                    let words = search_words(&v);
-                    let Some(longest) = words.iter().max_by_key(|w| w.chars().count()) else { continue };
-                    let phrase = words.len() > 1;
-                    let col = |c: &'static str| -> &'static str { if c == "body_text" { BODY_TEXT_SQL } else { c } };
-                    let exact: Vec<String> = cols.iter().map(|c| format!("lyn_match({}, ?, {})", col(c), phrase as i32)).collect();
-                    if fts {
-                        // Dizin sözcük başı eşleşmesini zaten kesin yapar; yalnızca sözcüklerin
-                        // arka arkaya geçmesi (ifade) satırın kendisinde denetlenir
-                        sql.push_str(" AND id IN (SELECT rowid FROM message_fts WHERE message_fts MATCH ?)");
-                        args.push(fts_query(cols, &words));
-                        if !phrase {
-                            continue;
-                        }
-                        sql.push_str(&format!(" AND ({})", exact.join(" OR ")));
-                    } else {
-                        let pre: Vec<String> = cols.iter().map(|c| format!("{} LIKE ?", col(c))).collect();
-                        sql.push_str(&format!(" AND ({}) AND ({})", pre.join(" OR "), exact.join(" OR ")));
-                        for _ in cols {
-                            args.push(like_pattern(longest));
-                        }
-                    }
-                    for _ in cols {
-                        args.push(words.join(" "));
-                    }
-                }
-                SearchTerm::Sql(cond) => {
-                    sql.push_str(" AND ");
-                    sql.push_str(cond);
-                }
-                SearchTerm::DateAfter(ts) => sql.push_str(&format!(" AND date >= {ts}")),
-                SearchTerm::DateBefore(ts) => sql.push_str(&format!(" AND date < {ts}")),
-            }
+    fn filter_sql(search: &SearchExpr, filter: &MsgFilter, fts: bool, sql: &mut String, args: &mut Vec<String>) {
+        if let Some(cond) = expr_sql(search, fts, args) {
+            sql.push_str(" AND ");
+            sql.push_str(&cond);
         }
         match filter {
             MsgFilter::All => {}
@@ -2057,7 +2230,7 @@ impl Db {
     }
 
     /// Aramaya uyan ileti sayısı (en çok 1'e kadar bakılır: yalnızca var/yok için)
-    fn search_count(&self, folder_id: Option<i64>, search: &str, filter: &MsgFilter) -> i64 {
+    fn search_count(&self, folder_id: Option<i64>, search: &SearchExpr, filter: &MsgFilter) -> i64 {
         let mut args: Vec<String> = Vec::new();
         let wh = self.where_sql(folder_id, search, filter, &mut args);
         self.rconn()
@@ -2070,7 +2243,39 @@ impl Db {
         self.messages_page(folder_id, search, filter, &ListOrder::default(), 0, i64::MAX).0
     }
 
-    fn where_sql(&self, folder_id: Option<i64>, search: &str, filter: &MsgFilter, args: &mut Vec<String>) -> String {
+    /// Kişi alanında aranan tam adres, o kişinin bilinen adlarıyla da aranır: Exchange'den yalnızca
+    /// başlığı alınmış iletilerde alıcılar adlarıyla durur ("kime:ali.veli@kurum.com.tr" yine bulur)
+    fn expand_people(&self, e: SearchExpr) -> SearchExpr {
+        match e {
+            SearchExpr::And(v) => SearchExpr::And(v.into_iter().map(|x| self.expand_people(x)).collect()),
+            SearchExpr::Or(v) => SearchExpr::Or(v.into_iter().map(|x| self.expand_people(x)).collect()),
+            SearchExpr::Not(x) => SearchExpr::Not(Box::new(self.expand_people(*x))),
+            SearchExpr::Term(SearchTerm::Field(cols, v)) if [PEOPLE_COLS, FROM_COLS, TO_COLS, CC_COLS, BCC_COLS].contains(&cols) && v.contains('@') && !v.contains(char::is_whitespace) => {
+                let addr = v.trim_matches(['<', '>']).to_string();
+                let mut names: Vec<String> = {
+                    let c = self.rconn();
+                    let q = |sql: &str| -> Vec<String> {
+                        c.prepare_cached(sql).and_then(|mut st| st.query_map([&addr], |r| r.get::<_, String>(0)).map(|r| r.flatten().collect())).unwrap_or_default()
+                    };
+                    let mut n = q("SELECT name FROM directory WHERE email = ?1 COLLATE NOCASE AND name <> '' LIMIT 2");
+                    n.extend(q("SELECT display_name FROM contacts WHERE (email = ?1 COLLATE NOCASE OR email2 = ?1 COLLATE NOCASE) AND display_name <> '' LIMIT 2"));
+                    n
+                };
+                if names.is_empty() {
+                    names.extend(name_from_address(&addr));
+                }
+                names.retain(|n| search_words(n) != search_words(&addr));
+                names.sort();
+                names.dedup();
+                let mut alts = vec![SearchExpr::Term(SearchTerm::Field(cols, v))];
+                alts.extend(names.into_iter().map(|n| SearchExpr::Term(SearchTerm::Field(cols, n))));
+                if alts.len() == 1 { alts.pop().unwrap() } else { SearchExpr::Or(alts) }
+            }
+            t => t,
+        }
+    }
+
+    fn where_sql(&self, folder_id: Option<i64>, search: &SearchExpr, filter: &MsgFilter, args: &mut Vec<String>) -> String {
         let mut sql = String::from(" WHERE 1=1");
         if let Some(f) = folder_id {
             sql.push_str(&format!(" AND folder_id = {f}"));
@@ -2078,7 +2283,7 @@ impl Db {
             // Tüm posta kutularında: çöp ve gereksiz hariç
             sql.push_str(" AND folder_id NOT IN (SELECT id FROM folders WHERE role IN ('trash','junk'))");
         }
-        Self::filter_sql(search, filter, self.fts_ready.load(std::sync::atomic::Ordering::Relaxed), &mut sql, args);
+        Self::filter_sql(&self.expand_people(search.clone()), filter, self.fts_ready.load(std::sync::atomic::Ordering::Relaxed), &mut sql, args);
         sql
     }
 
@@ -2088,16 +2293,12 @@ impl Db {
         // "ahmet emre aydın" gibi birden çok düz sözcük: önce ifade olarak (ad soyad gibi arka
         // arkaya) aranır; eşleşme varsa yalnızca bunlar gösterilir (dağıtım listelerinde ayrı
         // ayrı geçen Ahmet, Emre, Aydın'lar sonuçları doldurmaz), yoksa tüm sözcükler aranır
-        let phrased;
         let search = match phrase_variant(search) {
-            Some(p) if self.search_count(folder_id, &p, filter) > 0 => {
-                phrased = p;
-                phrased.as_str()
-            }
-            _ => search,
+            Some(p) if self.search_count(folder_id, &p, filter) > 0 => p,
+            _ => parse_query(search),
         };
         let mut args: Vec<String> = Vec::new();
-        let wh = self.where_sql(folder_id, search, filter, &mut args);
+        let wh = self.where_sql(folder_id, &search, filter, &mut args);
         let dir = if order.desc { "DESC" } else { "ASC" };
         let key = match order.by.as_str() {
             "from" => format!("ltrim(sender, '\" ') COLLATE NOCASE {dir}, "),
@@ -2114,16 +2315,16 @@ impl Db {
         let order_sql = format!(" ORDER BY {pin}{key}date {dir}, id {dir}");
         let c = self.rconn();
         let (sql, count_sql) = if order.conversations {
-            // Konu başına en yeni ileti ve konuşmadaki ileti sayısı dizinden (folder_id, ns, date)
-            // bulunur; yalnızca bu satırlar okunur. SQLite: tek MAX() içeren gruplamada yalın
-            // sütun (id) en büyük değerli satırdandır.
+            // Konuşma başına en yeni ileti ve okunmamış sayısı dizinden (folder_id, tid, date,
+            // is_read) bulunur; yalnızca bu satırlar okunur. SQLite: tek MAX() içeren gruplamada
+            // yalın sütun (id) en büyük değerli satırdandır.
             (
                 format!(
-                    "SELECT {LIST_COLS}, g.n AS thread_count FROM messages JOIN \
-                     (SELECT id AS head, MAX(date) AS newest, COUNT(*) AS n FROM messages{wh} GROUP BY ns) g ON messages.id = g.head\
+                    "SELECT {LIST_COLS}, g.u AS thread_unread FROM messages JOIN \
+                     (SELECT id AS head, MAX(date) AS newest, SUM(is_read = 0) AS u FROM messages{wh} GROUP BY tid) g ON messages.id = g.head\
                      {order_sql} LIMIT {limit} OFFSET {offset}"
                 ),
-                format!("SELECT COUNT(DISTINCT ns) FROM messages{wh}"),
+                format!("SELECT COUNT(DISTINCT tid) FROM messages{wh}"),
             )
         } else {
             (
@@ -2131,13 +2332,22 @@ impl Db {
                 format!("SELECT COUNT(*) FROM messages{wh}"),
             )
         };
-        let rows: Vec<MessageRow> = match c.prepare(&sql) {
+        let mut rows: Vec<MessageRow> = match c.prepare(&sql) {
             Ok(mut st) => st
                 .query_map(rusqlite::params_from_iter(args.iter()), MessageRow::from_row)
                 .map(|r| r.flatten().collect())
                 .unwrap_or_default(),
             Err(_) => vec![],
         };
+        // Konuşmadaki ileti sayısı (diğer klasörlerdekiler, ör. gönderilen yanıtlar dahil) yalnızca
+        // sayfadaki satırlar için sayılır
+        if order.conversations {
+            if let Ok(mut st) = c.prepare_cached(&format!("SELECT COUNT(*) FROM messages WHERE tid = ?1 AND {THREAD_SCOPE}")) {
+                for m in &mut rows {
+                    m.thread_count = st.query_row([m.thread_id, m.folder_id], |r| r.get(0)).unwrap_or(1);
+                }
+            }
+        }
         // Toplam yalnızca ilk sayfada hesaplanır (sonraki sayfalarda -1)
         let total = if offset == 0 {
             if (rows.len() as i64) < limit {
@@ -2180,18 +2390,14 @@ impl Db {
         st.query_map([mid], MessageRow::from_row).unwrap().flatten().collect()
     }
 
-    /// Bir konuşmaya ait iletiler (tüm klasörlerde, çöp ve gereksiz hariç): konuşma görünümündeki
-    /// gruplamayla aynı anahtar (arındırılmış konu), dizinden
+    /// Bir konuşmaya ait iletiler (iletinin kendi klasörü ve diğer klasörler; çöp ve gereksiz
+    /// hariç): konuşma görünümündeki gruplamayla aynı anahtar (`tid`), dizinden
     pub fn conversation(&self, m: &MessageRow) -> Vec<MessageRow> {
-        let ns = crate::mail::normalize_subject(&m.subject).to_lowercase();
         let c = self.rconn();
-        let Ok(mut st) = c.prepare_cached(&format!(
-            "SELECT {LIST_COLS} FROM messages WHERE ns = ?1 AND folder_id NOT IN \
-             (SELECT id FROM folders WHERE role IN ('trash','junk')) ORDER BY date"
-        )) else {
+        let Ok(mut st) = c.prepare_cached(&format!("SELECT {LIST_COLS} FROM messages WHERE tid = ?1 AND {THREAD_SCOPE} ORDER BY date, id")) else {
             return vec![];
         };
-        st.query_map([ns], MessageRow::from_row).map(|r| r.flatten().collect()).unwrap_or_default()
+        st.query_map([m.thread_id, m.folder_id], MessageRow::from_row).map(|r| r.flatten().collect()).unwrap_or_default()
     }
 
     pub fn insert_message(&self, m: &Message) -> Result<i64> {
@@ -2200,14 +2406,15 @@ impl Db {
         tx.execute(
             "INSERT INTO messages(folder_id, account_id, uid, message_id, in_reply_to, refs, subject, \
              sender, to_addr, cc, bcc, date, snippet, is_read, is_flagged, \
-             is_draft, is_answered, importance, categories, has_attachments, pending, remote_id, is_pinned, att_names, ns) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,lyn_norm_subject(?7))",
+             is_draft, is_answered, importance, categories, has_attachments, pending, remote_id, is_pinned, att_names, conv, ns) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,lyn_norm_subject(?7))",
             params![m.folder_id, m.account_id, m.uid, m.message_id, m.in_reply_to, m.refs, m.subject,
                 m.sender, m.to_addr, m.cc, m.bcc, m.date, m.snippet,
                 m.is_read as i64, m.is_flagged as i64, m.is_draft as i64, m.is_answered as i64,
-                m.importance, m.categories, m.has_attachments as i64, m.pending, m.remote_id, m.is_pinned as i64, m.att_names],
+                m.importance, m.categories, m.has_attachments as i64, m.pending, m.remote_id, m.is_pinned as i64, m.att_names, m.conv],
         )?;
         let id = tx.last_insert_rowid();
+        Self::assign_thread(&tx, id)?;
         // Yalnızca başlığı inmiş (Exchange) iletinin gövde satırı yoktur
         if !m.raw.is_empty() || !m.body_text.is_empty() || !m.body_html.is_empty() {
             Self::write_content(&tx, id, m)?;
@@ -2229,6 +2436,8 @@ impl Db {
     pub fn update_message_content(&self, id: i64, m: &Message) {
         let mut c = self.conn();
         let Ok(tx) = c.transaction() else { return };
+        let ns = |tx: &Connection| tx.query_row("SELECT COALESCE(ns, '') FROM messages WHERE id = ?1", [id], |r| r.get::<_, String>(0)).unwrap_or_default();
+        let before = ns(&tx);
         let updated = tx.execute(
             "UPDATE messages SET sender=?1, to_addr=?2, cc=?3, bcc=?4, \
              in_reply_to=?5, refs=?6, has_attachments=?7, snippet=?8, att_names=?12, \
@@ -2237,8 +2446,17 @@ impl Db {
             params![m.sender, m.to_addr, m.cc, m.bcc, m.in_reply_to, m.refs,
                 m.has_attachments as i64, m.snippet, m.message_id, id, m.subject, m.att_names],
         );
-        // İleti bu arada silindiyse gövde yazılmaz
-        if matches!(updated, Ok(n) if n > 0) && Self::write_content(&tx, id, m).is_ok() {
+        // Konusu düzelen (bozuk kodlu) ileti eski konuşmasından ayrılır
+        if ns(&tx) != before {
+            let _ = tx.execute(
+                "DELETE FROM thread_keys WHERE (account_id, key) IN (SELECT COALESCE(account_id, 0), 'm:' || trim(message_id, '<> ') || char(31) || ?2 FROM messages WHERE id = ?1)",
+                params![id, before],
+            );
+            let _ = tx.execute("UPDATE messages SET tid = NULL WHERE id = ?1", [id]);
+        }
+        // İleti bu arada silindiyse gövde yazılmaz. Yanıt başlıkları şimdi öğrenildi: konuşma bağı
+        // yenilenir.
+        if matches!(updated, Ok(n) if n > 0) && Self::write_content(&tx, id, m).is_ok() && Self::assign_thread(&tx, id).is_ok() {
             let _ = tx.commit();
         }
     }
@@ -3229,149 +3447,577 @@ impl Db {
 
 // ======================================================================= arama sözdizimi
 /// Outlook benzeri arama terimi
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum SearchTerm {
     Field(&'static [&'static str], String),
     Sql(&'static str),
     DateAfter(i64),
     DateBefore(i64),
+    /// Klasör adı ya da türü ("klasör:arşiv", "in:sent")
+    Folder(String),
+}
+
+/// Çözülmüş arama: terimler VE / VEYA / DEĞİL ile bağlanır
+#[derive(Debug, PartialEq, Clone)]
+pub enum SearchExpr {
+    And(Vec<SearchExpr>),
+    Or(Vec<SearchExpr>),
+    Not(Box<SearchExpr>),
+    Term(SearchTerm),
 }
 
 const ALL_COLS: &[&str] = &["subject", "sender", "to_addr", "cc", "body_text", "categories", "att_names"];
 /// "kişi:" (Outlook "Katılımcılar"): gönderen ya da alıcılardan biri
 const PEOPLE_COLS: &[&str] = &["sender", "to_addr", "cc"];
+const FROM_COLS: &[&str] = &["sender"];
+const TO_COLS: &[&str] = &["to_addr", "cc"];
+const CC_COLS: &[&str] = &["cc"];
+const BCC_COLS: &[&str] = &["bcc"];
+
+/// Anahtar sözcüğün (katlanmış) asıl adı: "Kimden", "FROM", "gönderen" → "from"
+fn search_key(k: &str) -> Option<&'static str> {
+    Some(match search_fold(k).as_str() {
+        "from" | "kimden" | "gonderen" => "from",
+        "to" | "kime" | "alici" => "to",
+        "cc" | "bilgi" => "cc",
+        "bcc" | "gizli" => "bcc",
+        "subject" | "konu" => "subject",
+        "participants" | "participant" | "kisi" | "katilimci" => "participants",
+        "attachmentname" | "filename" | "ekadi" | "dosya" => "attachment",
+        "body" | "govde" | "metin" => "body",
+        "category" | "categories" | "kategori" => "category",
+        "has" | "hasattachment" | "hasattachments" | "ekvar" | "ek" | "attachment" | "attachments" => "has",
+        "is" | "durum" => "is",
+        "importance" | "onem" => "importance",
+        "after" | "since" | "sonra" => "after",
+        "before" | "once" => "before",
+        "on" | "tarih" | "received" | "date" | "sent" => "on",
+        "folder" | "in" | "klasor" => "folder",
+        _ => return None,
+    })
+}
+
+#[derive(Debug, PartialEq)]
+enum Tok {
+    Open,
+    Close,
+    Or,
+    And,
+    Not,
+    /// "kimden:(" — parantezdeki sözcüklerin hepsi bu alanda aranır
+    Group(&'static str),
+    Word(Option<&'static str>, String),
+}
+
+/// Aramayı parçalara ayırır: tırnak içi tek parça, "anahtar: değer" (iki noktadan sonra boşluk
+/// olabilir), parantez, VEYA/OR, VE/AND, DEĞİL/NOT (büyük harfle) ve baştaki "-".
+fn search_tokens(q: &str) -> Vec<Tok> {
+    let ch: Vec<char> = q.chars().collect();
+    let (mut out, mut i, mut depth) = (Vec::new(), 0usize, 0usize);
+    while i < ch.len() {
+        let c = ch[i];
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
+        if c == '(' {
+            out.push(Tok::Open);
+            depth += 1;
+            i += 1;
+            continue;
+        }
+        if c == ')' && depth > 0 {
+            out.push(Tok::Close);
+            depth -= 1;
+            i += 1;
+            continue;
+        }
+        if c == '-' && ch.get(i + 1).is_some_and(|n| n.is_alphanumeric() || *n == '"' || *n == '(') {
+            out.push(Tok::Not);
+            i += 1;
+            continue;
+        }
+        // Sözcük
+        let (mut cur, mut key, mut quoted, mut any_quote, mut inner) = (String::new(), None, false, false, 0usize);
+        let mut group = false;
+        while i < ch.len() {
+            let c = ch[i];
+            if c == '"' {
+                quoted = !quoted;
+                any_quote = true;
+            } else if quoted {
+                cur.push(c);
+            } else if c.is_whitespace() {
+                break;
+            } else if c == ':' && key.is_none() && !any_quote && search_key(&cur).is_some() {
+                key = search_key(&cur);
+                cur.clear();
+                // "kimden: ali" — değer boşluktan sonra da gelebilir
+                let mut j = i + 1;
+                while ch.get(j).is_some_and(|n| n.is_whitespace()) {
+                    j += 1;
+                }
+                if ch.get(j) == Some(&'(') {
+                    group = true;
+                    i = j;
+                    break;
+                }
+                if j < ch.len() {
+                    i = j;
+                    continue;
+                }
+            } else if c == '(' {
+                inner += 1;
+                cur.push(c);
+            } else if c == ')' {
+                if inner == 0 && depth > 0 {
+                    break;
+                }
+                inner = inner.saturating_sub(1);
+                cur.push(c);
+            } else {
+                cur.push(c);
+            }
+            i += 1;
+        }
+        if group {
+            out.push(Tok::Group(key.unwrap_or("")));
+            continue;
+        }
+        if key.is_none() && !any_quote {
+            match cur.as_str() {
+                "OR" | "VEYA" | "|" | "||" => {
+                    out.push(Tok::Or);
+                    continue;
+                }
+                "AND" | "VE" | "&" | "&&" => {
+                    out.push(Tok::And);
+                    continue;
+                }
+                "NOT" | "DEĞİL" | "DEGIL" => {
+                    out.push(Tok::Not);
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        // "tarih:bu hafta", "on:last month" — iki sözcüklü dönem tırnaksız da yazılabilir
+        if matches!(key, Some("on" | "after" | "before")) && !any_quote && matches!(search_fold(&cur).as_str(), "bu" | "gecen" | "this" | "last") {
+            let rest: String = ch[i..].iter().collect();
+            if let Some(next) = rest.split_whitespace().next().filter(|n| matches!(search_fold(n).as_str(), "hafta" | "ay" | "yil" | "week" | "month" | "year")) {
+                cur.push_str(next);
+                i += rest[..rest.find(next).unwrap_or(0)].chars().count() + next.chars().count();
+            }
+        }
+        if !cur.trim().is_empty() {
+            out.push(Tok::Word(key, cur));
+        }
+    }
+    out
+}
+
+fn day_ts(d: chrono::NaiveDate) -> i64 {
+    use chrono::{Local, TimeZone};
+    // Yaz saati geçişinde gece yarısı yoksa günün ilk geçerli anı
+    d.and_hms_opt(0, 0, 0).and_then(|t| Local.from_local_datetime(&t).earliest()).map(|t| t.timestamp()).unwrap_or(0)
+}
+
+/// Tarih değeri → [başlangıç, bitiş) günleri: "2026-03-05", "05.03.2026", "2026-03", "03.2026",
+/// "2026", "bugün", "dün", "bu hafta", "geçen ay", "mart", "7g" (son 7 gün), "2h", "3a", "1y"
+fn parse_period(v: &str, today: chrono::NaiveDate) -> Option<(chrono::NaiveDate, chrono::NaiveDate)> {
+    use chrono::{Datelike, Duration, Months, NaiveDate};
+    let v: String = search_fold(v).chars().filter(|c| !c.is_whitespace() && *c != '_').collect();
+    let day = |d: NaiveDate| Some((d, d + Duration::days(1)));
+    let month = |y: i32, m: u32| {
+        let s = NaiveDate::from_ymd_opt(y, m, 1)?;
+        Some((s, s.checked_add_months(Months::new(1))?))
+    };
+    let year = |y: i32| Some((NaiveDate::from_ymd_opt(y, 1, 1)?, NaiveDate::from_ymd_opt(y + 1, 1, 1)?));
+    let week = today - Duration::days(today.weekday().num_days_from_monday() as i64);
+    match v.as_str() {
+        "today" | "bugun" => return day(today),
+        "yesterday" | "dun" => return day(today - Duration::days(1)),
+        "thisweek" | "buhafta" => return Some((week, week + Duration::days(7))),
+        "lastweek" | "gecenhafta" => return Some((week - Duration::days(7), week)),
+        "thismonth" | "buay" => return month(today.year(), today.month()),
+        "lastmonth" | "gecenay" => {
+            let p = today.with_day(1)?.checked_sub_months(Months::new(1))?;
+            return month(p.year(), p.month());
+        }
+        "thisyear" | "buyil" => return year(today.year()),
+        "lastyear" | "gecenyil" => return year(today.year() - 1),
+        _ => {}
+    }
+    const MONTHS: [&[&str]; 12] = [
+        &["ocak", "january", "jan"], &["subat", "february", "feb"], &["mart", "march", "mar"], &["nisan", "april", "apr"],
+        &["mayis", "may"], &["haziran", "june", "jun"], &["temmuz", "july", "jul"], &["agustos", "august", "aug"],
+        &["eylul", "september", "sep"], &["ekim", "october", "oct"], &["kasim", "november", "nov"], &["aralik", "december", "dec"],
+    ];
+    if let Some(m) = MONTHS.iter().position(|n| n.contains(&v.as_str())) {
+        // Henüz gelmemiş ay geçen yılındır
+        let m = m as u32 + 1;
+        return month(if m > today.month() { today.year() - 1 } else { today.year() }, m);
+    }
+    // Göreli: son N gün/hafta/ay/yıl
+    if v.len() >= 2 && v.is_char_boundary(v.len() - 1) {
+        let (n, unit) = v.split_at(v.len() - 1);
+        if let Ok(n) = n.parse::<u32>() {
+            let end = today + Duration::days(1);
+            let start = match unit {
+                "d" | "g" => Some(today - Duration::days(n as i64)),
+                "w" | "h" => Some(today - Duration::days(7 * n as i64)),
+                "m" | "a" => today.checked_sub_months(Months::new(n)),
+                "y" => today.checked_sub_months(Months::new(12 * n)),
+                _ => None,
+            };
+            if let Some(s) = start {
+                return Some((s, end));
+            }
+        }
+    }
+    for f in ["%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%Y/%m/%d"] {
+        if let Ok(d) = NaiveDate::parse_from_str(&v, f) {
+            return day(d);
+        }
+    }
+    let nums: Vec<&str> = v.split(['-', '.', '/']).collect();
+    let n = |s: &str| s.parse::<u32>().ok();
+    match nums.as_slice() {
+        [y] if y.len() == 4 => year(n(y).filter(|y| (1980..2200).contains(y))? as i32),
+        [y, m] if y.len() == 4 => month(n(y)? as i32, n(m)?),
+        [m, y] if y.len() == 4 => month(n(y)? as i32, n(m)?),
+        _ => None,
+    }
+}
+
+/// Tarih terimi: `key` after/before/on; değer dönem, karşılaştırma (">=2026-01-01") ya da
+/// aralık ("2026-01-01..2026-02-15") olabilir
+fn date_terms(key: &str, val: &str, today: chrono::NaiveDate) -> Option<Vec<SearchTerm>> {
+    let p = |v: &str| parse_period(v, today);
+    let (after, before) = (|d| SearchTerm::DateAfter(day_ts(d)), |d| SearchTerm::DateBefore(day_ts(d)));
+    let v = val.trim();
+    Some(match key {
+        "after" => vec![after(p(v)?.0)],
+        "before" => vec![before(p(v)?.0)],
+        _ => {
+            if let Some((a, b)) = v.split_once("..") {
+                vec![after(p(a)?.0), before(p(b)?.1)]
+            } else if let Some(r) = v.strip_prefix(">=") {
+                vec![after(p(r)?.0)]
+            } else if let Some(r) = v.strip_prefix("<=") {
+                vec![before(p(r)?.1)]
+            } else if let Some(r) = v.strip_prefix('>') {
+                vec![after(p(r)?.1)]
+            } else if let Some(r) = v.strip_prefix('<') {
+                vec![before(p(r)?.0)]
+            } else {
+                let (s, e) = p(v)?;
+                vec![after(s), before(e)]
+            }
+        }
+    })
+}
+
+/// Tek terim; anlaşılmayan değer ("is:xyz", "tarih:abc") düz metin olarak aranır
+fn search_term(key: Option<&'static str>, val: &str, today: chrono::NaiveDate) -> Option<SearchExpr> {
+    use SearchTerm::*;
+    let field = |cols: &'static [&'static str]| Some(SearchExpr::Term(Field(cols, val.to_string())));
+    let sql = |s: &'static str| Some(SearchExpr::Term(Sql(s)));
+    let Some(key) = key else { return field(ALL_COLS) };
+    let lv = search_fold(val.trim());
+    let literal = || Some(SearchExpr::Term(Field(ALL_COLS, format!("{key}:{val}"))));
+    match key {
+        "from" => field(FROM_COLS),
+        "to" => field(TO_COLS),
+        "cc" => field(CC_COLS),
+        "bcc" => field(BCC_COLS),
+        "subject" => field(&["subject"]),
+        "participants" => field(PEOPLE_COLS),
+        "attachment" => field(&["att_names"]),
+        "body" => field(&["body_text"]),
+        "category" => field(&["categories"]),
+        "has" => sql(if matches!(lv.as_str(), "yes" | "true" | "evet" | "var" | "attachment" | "attachments" | "ek" | "1") { "has_attachments = 1" } else { "has_attachments = 0" }),
+        "is" => match lv.as_str() {
+            "unread" | "okunmamis" | "okunmadi" => sql("is_read = 0"),
+            "read" | "okunmus" | "okundu" => sql("is_read = 1"),
+            "flagged" | "bayrakli" | "isaretli" => sql("is_flagged = 1"),
+            "unflagged" | "bayraksiz" => sql("is_flagged = 0"),
+            "important" | "onemli" => sql("importance = 2"),
+            "replied" | "answered" | "yanitlandi" | "yanitlanmis" => sql("is_answered = 1"),
+            "unreplied" | "unanswered" | "yanitlanmadi" | "yanitlanmamis" => sql("is_answered = 0"),
+            "draft" | "taslak" => sql("is_draft = 1"),
+            "pinned" | "sabit" | "sabitlenmis" => sql("is_pinned = 1"),
+            _ => literal(),
+        },
+        "importance" => match lv.as_str() {
+            "high" | "yuksek" => sql("importance = 2"),
+            "low" | "dusuk" => sql("importance = 0"),
+            "normal" => sql("importance = 1"),
+            _ => literal(),
+        },
+        "after" | "before" | "on" => match date_terms(key, val, today) {
+            Some(mut t) if t.len() == 1 => t.pop().map(SearchExpr::Term),
+            Some(t) => Some(SearchExpr::And(t.into_iter().map(SearchExpr::Term).collect())),
+            None => literal(),
+        },
+        "folder" => Some(SearchExpr::Term(Folder(val.to_string()))),
+        _ => field(ALL_COLS),
+    }
+}
+
+struct SearchParser {
+    toks: Vec<Tok>,
+    pos: usize,
+    today: chrono::NaiveDate,
+}
+
+impl SearchParser {
+    fn or(&mut self, key: Option<&'static str>) -> Option<SearchExpr> {
+        let mut alts = Vec::new();
+        loop {
+            alts.extend(self.and(key));
+            if self.toks.get(self.pos) != Some(&Tok::Or) {
+                break;
+            }
+            self.pos += 1;
+        }
+        match alts.len() {
+            0 => None,
+            1 => alts.pop(),
+            _ => Some(SearchExpr::Or(alts)),
+        }
+    }
+
+    fn and(&mut self, key: Option<&'static str>) -> Option<SearchExpr> {
+        let mut items = Vec::new();
+        while let Some(t) = self.toks.get(self.pos) {
+            match t {
+                Tok::Or | Tok::Close => break,
+                Tok::And => self.pos += 1,
+                _ => match self.unary(key) {
+                    // Aynı düzeydeki VE'ler tek listede
+                    Some(SearchExpr::And(v)) => items.extend(v),
+                    Some(e) => items.push(e),
+                    None => {}
+                },
+            }
+        }
+        match items.len() {
+            0 => None,
+            1 => items.pop(),
+            _ => Some(SearchExpr::And(items)),
+        }
+    }
+
+    fn unary(&mut self, key: Option<&'static str>) -> Option<SearchExpr> {
+        let t = self.toks.get(self.pos)?;
+        self.pos += 1;
+        match t {
+            Tok::Not => self.unary(key).map(|e| SearchExpr::Not(Box::new(e))),
+            Tok::Open => self.group(key),
+            Tok::Group(k) => {
+                let k = *k;
+                self.pos += 1; // "("
+                self.group(Some(k))
+            }
+            Tok::Word(k, v) => search_term(k.or(key), v, self.today),
+            _ => None,
+        }
+    }
+
+    fn group(&mut self, key: Option<&'static str>) -> Option<SearchExpr> {
+        let e = self.or(key);
+        if self.toks.get(self.pos) == Some(&Tok::Close) {
+            self.pos += 1;
+        }
+        e
+    }
+}
+
+fn parse_query_at(q: &str, today: chrono::NaiveDate) -> SearchExpr {
+    let mut p = SearchParser { toks: search_tokens(q), pos: 0, today };
+    let mut items = Vec::new();
+    // Fazladan ")" aramayı kesmez
+    while p.pos < p.toks.len() {
+        items.extend(p.or(None));
+        if p.toks.get(p.pos) == Some(&Tok::Close) {
+            p.pos += 1;
+        }
+    }
+    match items.len() {
+        1 => items.pop().unwrap(),
+        _ => SearchExpr::And(items),
+    }
+}
+
+/// `kimden:ali konu:"aylık rapor" (fatura VEYA makbuz) -taslak tarih:bu hafta` gibi aramaları çözer.
+/// Türkçe ve İngilizce anahtar sözcükler (büyük/küçük harf ayırmadan; "Kimden: ali" de olur);
+/// yan yana terimler VE'dir.
+pub fn parse_query(q: &str) -> SearchExpr {
+    parse_query_at(q, chrono::Local::now().date_naive())
+}
+
+/// En üst düzeydeki terimler (sınamalar için)
+#[cfg(test)]
+pub fn parse_search(q: &str) -> Vec<SearchTerm> {
+    match parse_query(q) {
+        SearchExpr::And(v) => v.into_iter().filter_map(|e| if let SearchExpr::Term(t) = e { Some(t) } else { None }).collect(),
+        SearchExpr::Term(t) => vec![t],
+        _ => vec![],
+    }
+}
 
 /// Anahtarsız düz sözcükler (en az iki) tek bir ifadede birleştirilir: `ahmet emre aydın
 /// is:unread` → `"ahmet emre aydın" is:unread`. Birleştirilecek sözcük yoksa None.
-pub fn phrase_variant(q: &str) -> Option<String> {
+pub fn phrase_variant(q: &str) -> Option<SearchExpr> {
     if q.contains('"') {
         return None;
     }
-    let toks: Vec<&str> = q.split_whitespace().collect();
-    let plain: Vec<&str> = toks.iter().copied().filter(|t| matches!(parse_search(t).as_slice(), [SearchTerm::Field(c, _)] if *c == ALL_COLS)).collect();
-    if plain.len() < 2 {
+    let SearchExpr::And(items) = parse_query(q) else { return None };
+    let plain = |e: &SearchExpr| matches!(e, SearchExpr::Term(SearchTerm::Field(c, _)) if *c == ALL_COLS);
+    let words: Vec<&str> = items.iter().filter_map(|e| if let SearchExpr::Term(SearchTerm::Field(c, v)) = e { (*c == ALL_COLS).then_some(v.as_str()) } else { None }).collect();
+    if words.len() < 2 {
         return None;
     }
-    let rest: Vec<&str> = toks.iter().copied().filter(|t| !plain.contains(t)).collect();
-    let mut out = format!("\"{}\"", plain.join(" "));
-    for r in rest {
-        out.push(' ');
-        out.push_str(r);
-    }
-    Some(out)
+    let mut out = vec![SearchExpr::Term(SearchTerm::Field(ALL_COLS, words.join(" ")))];
+    out.extend(items.iter().filter(|e| !plain(e)).cloned());
+    Some(if out.len() == 1 { out.pop().unwrap() } else { SearchExpr::And(out) })
 }
 
 /// Aramayı Exchange'in sorgu diline (AQS) çevirir (sunucuda arama için).
 pub fn search_to_aqs(q: &str) -> String {
+    expr_to_aqs(&parse_query(q))
+}
+
+pub fn expr_to_aqs(e: &SearchExpr) -> String {
     let quote = |v: &str| if v.contains(char::is_whitespace) { format!("\"{}\"", v.replace('"', "")) } else { v.to_string() };
-    let day = |t: i64| chrono::DateTime::from_timestamp(t, 0).map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default();
-    parse_search(q)
-        .into_iter()
-        .map(|t| match t {
-            SearchTerm::Field(cols, v) if cols == ALL_COLS => quote(&v),
-            SearchTerm::Field(cols, v) if cols == PEOPLE_COLS => format!("participants:{}", quote(&v)),
+    let day = |t: i64| chrono::DateTime::from_timestamp(t, 0).map(|d| d.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string()).unwrap_or_default();
+    let list = |v: &[SearchExpr], sep: &str, top: bool| {
+        let parts: Vec<String> = v.iter().map(|x| aqs_part(x)).filter(|s| !s.is_empty()).collect();
+        if parts.len() > 1 && !top { format!("({})", parts.join(sep)) } else { parts.join(sep) }
+    };
+    fn aqs_part(e: &SearchExpr) -> String {
+        match e {
+            SearchExpr::And(v) if v.len() > 1 => format!("({})", expr_to_aqs(e)),
+            _ => expr_to_aqs(e),
+        }
+    }
+    match e {
+        SearchExpr::And(v) => list(v, " ", true),
+        SearchExpr::Or(v) => list(v, " OR ", false),
+        SearchExpr::Not(x) => {
+            let s = aqs_part(x);
+            if s.is_empty() { s } else { format!("NOT {s}") }
+        }
+        SearchExpr::Term(t) => match t {
+            SearchTerm::Field(cols, v) if *cols == ALL_COLS => quote(v),
+            SearchTerm::Field(cols, v) if *cols == PEOPLE_COLS => format!("participants:{}", quote(v)),
             SearchTerm::Field(cols, v) => {
                 let key = match cols.first().copied() {
                     Some("sender") => "from",
                     Some("to_addr") => "to",
                     Some("cc") => "cc",
+                    Some("bcc") => "bcc",
                     Some("subject") => "subject",
                     Some("body_text") => "body",
                     Some("categories") => "category",
                     Some("att_names") => "attachment",
                     _ => "",
                 };
-                if key.is_empty() { quote(&v) } else { format!("{key}:{}", quote(&v)) }
+                if key.is_empty() { quote(v) } else { format!("{key}:{}", quote(v)) }
             }
             SearchTerm::Sql("has_attachments = 1") => "hasattachment:true".into(),
             SearchTerm::Sql("has_attachments = 0") => "hasattachment:false".into(),
             SearchTerm::Sql("is_read = 0") => "isread:false".into(),
             SearchTerm::Sql("is_read = 1") => "isread:true".into(),
             SearchTerm::Sql("is_flagged = 1") => "isflagged:true".into(),
+            SearchTerm::Sql("is_flagged = 0") => "isflagged:false".into(),
             SearchTerm::Sql("importance = 2") => "importance:high".into(),
-            SearchTerm::Sql(_) => String::new(),
-            SearchTerm::DateAfter(t) => format!("received:>={}", day(t)),
-            SearchTerm::DateBefore(t) => format!("received:<{}", day(t)),
-        })
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+            SearchTerm::Sql("importance = 1") => "importance:normal".into(),
+            SearchTerm::Sql("importance = 0") => "importance:low".into(),
+            // Yanıtlandı/taslak/sabit ve klasör sunucu sorgusuna çevrilmez (yerelde süzülür)
+            SearchTerm::Sql(_) | SearchTerm::Folder(_) => String::new(),
+            SearchTerm::DateAfter(t) => format!("received:>={}", day(*t)),
+            SearchTerm::DateBefore(t) => format!("received:<{}", day(*t)),
+        },
+    }
 }
 
-fn parse_day(v: &str) -> Option<i64> {
-    use chrono::{Local, NaiveDate, TimeZone};
-    let d = NaiveDate::parse_from_str(v, "%Y-%m-%d").or_else(|_| NaiveDate::parse_from_str(v, "%d.%m.%Y")).ok()?;
-    Local.from_local_datetime(&d.and_hms_opt(0, 0, 0)?).single().map(|t| t.timestamp())
+/// Klasör türü adı ("gelen", "sent", "çöp") → rol
+fn folder_role(v: &str) -> &'static str {
+    match search_fold(v.trim()).as_str() {
+        "inbox" | "gelen" | "gelenkutusu" => "inbox",
+        "sent" | "gonderilmis" | "gonderilen" | "giden" => "sent",
+        "drafts" | "draft" | "taslak" | "taslaklar" => "drafts",
+        "trash" | "deleted" | "silinmis" | "silinen" | "cop" => "trash",
+        "junk" | "spam" | "gereksiz" => "junk",
+        "archive" | "arsiv" => "archive",
+        _ => "",
+    }
 }
 
-/// "kimden:ali konu:"aylık rapor" has:attachment fatura" gibi aramaları çözer.
-/// Türkçe ve İngilizce anahtar sözcükler desteklenir; kalan sözcüklerin hepsi aranır.
-pub fn parse_search(q: &str) -> Vec<SearchTerm> {
-    // Sözcüklere ayır (tırnak içi tek parça)
-    let mut toks = Vec::new();
-    let mut cur = String::new();
-    let mut quoted = false;
-    for c in q.chars() {
-        match c {
-            '"' => quoted = !quoted,
-            c if c.is_whitespace() && !quoted => {
-                if !cur.is_empty() {
-                    toks.push(std::mem::take(&mut cur));
+/// Aramanın SQL koşulu (boş arama: None). `args`: soru işaretlerinin değerleri, sırayla.
+fn expr_sql(e: &SearchExpr, fts: bool, args: &mut Vec<String>) -> Option<String> {
+    let list = |v: &[SearchExpr], sep: &str, args: &mut Vec<String>| {
+        let parts: Vec<String> = v.iter().filter_map(|x| expr_sql(x, fts, args)).collect();
+        (!parts.is_empty()).then(|| format!("({})", parts.join(sep)))
+    };
+    match e {
+        SearchExpr::And(v) => list(v, " AND ", args),
+        SearchExpr::Or(v) => list(v, " OR ", args),
+        SearchExpr::Not(x) => expr_sql(x, fts, args).map(|s| format!("({s} IS NOT 1)")),
+        SearchExpr::Term(SearchTerm::Sql(cond)) => Some(format!("({cond})")),
+        SearchExpr::Term(SearchTerm::DateAfter(ts)) => Some(format!("(date >= {ts})")),
+        SearchExpr::Term(SearchTerm::DateBefore(ts)) => Some(format!("(date < {ts})")),
+        SearchExpr::Term(SearchTerm::Folder(v)) => {
+            let words = search_words(v);
+            if words.is_empty() {
+                return None;
+            }
+            args.push(words.join(" "));
+            args.push(folder_role(v).to_string());
+            Some("(folder_id IN (SELECT id FROM folders WHERE lyn_match(name, ?, 0) OR role = ?))".into())
+        }
+        SearchExpr::Term(SearchTerm::Field(cols, v)) => {
+            // Exchange/Outlook gibi: sözcük başı eşleşmesi, Türkçe harf ve aksan duyarsız.
+            // Birden çok sözcüklü değer (tırnaklı ifade, e-posta adresi) aynı alanda arka
+            // arkaya geçmeli. Önce hızlı ön eleme (dizin ya da en uzun sözcükle LIKE),
+            // sonra kesin denetim.
+            let words = search_words(v);
+            let longest = words.iter().max_by_key(|w| w.chars().count())?;
+            let phrase = words.len() > 1;
+            let col = |c: &'static str| -> &'static str { if c == "body_text" { BODY_TEXT_SQL } else { c } };
+            let exact: Vec<String> = cols.iter().map(|c| format!("lyn_match({}, ?, {})", col(c), phrase as i32)).collect();
+            let mut sql;
+            // Gizli alıcılar dizinde yok
+            if fts && cols.iter().all(|c| ALL_COLS.contains(c)) {
+                // Dizin sözcük başı eşleşmesini zaten kesin yapar; yalnızca sözcüklerin
+                // arka arkaya geçmesi (ifade) satırın kendisinde denetlenir
+                sql = String::from("id IN (SELECT rowid FROM message_fts WHERE message_fts MATCH ?)");
+                args.push(fts_query(cols, &words));
+                if !phrase {
+                    return Some(format!("({sql})"));
+                }
+                sql.push_str(&format!(" AND ({})", exact.join(" OR ")));
+            } else {
+                let pre: Vec<String> = cols.iter().map(|c| format!("{} LIKE ?", col(c))).collect();
+                sql = format!("({}) AND ({})", pre.join(" OR "), exact.join(" OR "));
+                for _ in cols.iter() {
+                    args.push(like_pattern(longest));
                 }
             }
-            c => cur.push(c),
+            for _ in cols.iter() {
+                args.push(words.join(" "));
+            }
+            Some(format!("({sql})"))
         }
     }
-    if !cur.is_empty() {
-        toks.push(cur);
-    }
-    let mut out = Vec::new();
-    for tok in toks {
-        let (key, val) = match tok.split_once(':') {
-            Some((k, v)) if !v.is_empty() && !k.contains('@') => (k.to_lowercase(), v.to_string()),
-            _ => (String::new(), tok.clone()),
-        };
-        let lv = val.to_lowercase();
-        let yes = matches!(lv.as_str(), "yes" | "true" | "evet" | "var" | "attachment" | "attachments" | "ek");
-        let term = match key.as_str() {
-            "from" | "kimden" | "gönderen" => SearchTerm::Field(&["sender"], val),
-            "to" | "kime" | "alıcı" => SearchTerm::Field(&["to_addr", "cc"], val),
-            "cc" | "bilgi" => SearchTerm::Field(&["cc"], val),
-            "subject" | "konu" => SearchTerm::Field(&["subject"], val),
-            "participants" | "kişi" | "kisi" | "katılımcı" => SearchTerm::Field(PEOPLE_COLS, val),
-            "attachmentname" | "filename" | "ekadı" | "ekadi" | "dosya" => SearchTerm::Field(&["att_names"], val),
-            "body" | "gövde" | "metin" => SearchTerm::Field(&["body_text"], val),
-            "category" | "categories" | "kategori" => SearchTerm::Field(&["categories"], val),
-            "has" | "hasattachment" | "hasattachments" | "ekvar" | "ek" | "attachment" | "attachments" => {
-                if yes || lv == "attachment" { SearchTerm::Sql("has_attachments = 1") } else { SearchTerm::Sql("has_attachments = 0") }
-            }
-            "is" | "durum" => match lv.as_str() {
-                "unread" | "okunmamış" | "okunmadı" => SearchTerm::Sql("is_read = 0"),
-                "read" | "okunmuş" | "okundu" => SearchTerm::Sql("is_read = 1"),
-                "flagged" | "bayraklı" | "işaretli" => SearchTerm::Sql("is_flagged = 1"),
-                "important" | "önemli" => SearchTerm::Sql("importance = 2"),
-                _ => SearchTerm::Field(ALL_COLS, tok.clone()),
-            },
-            "after" | "since" | "sonra" | "received>" => match parse_day(&val) {
-                Some(t) => SearchTerm::DateAfter(t),
-                None => SearchTerm::Field(ALL_COLS, tok.clone()),
-            },
-            "before" | "önce" | "received<" => match parse_day(&val) {
-                Some(t) => SearchTerm::DateBefore(t),
-                None => SearchTerm::Field(ALL_COLS, tok.clone()),
-            },
-            "on" | "tarih" | "received" => match parse_day(&val) {
-                Some(t) => {
-                    out.push(SearchTerm::DateAfter(t));
-                    SearchTerm::DateBefore(t + 86400)
-                }
-                None => SearchTerm::Field(ALL_COLS, tok.clone()),
-            },
-            _ => SearchTerm::Field(ALL_COLS, tok.clone()),
-        };
-        out.push(term);
-    }
-    out
+}
+
+/// "ad.soyad@kurum.com.tr" → "ad soyad" (adres defterinde adı bulunmayan kişi için tahmin)
+fn name_from_address(addr: &str) -> Option<String> {
+    let parts: Vec<&str> = addr.split('@').next()?.split(['.', '_', '-']).filter(|p| !p.is_empty()).collect();
+    (parts.len() >= 2 && parts.iter().all(|p| p.chars().count() >= 2 && p.chars().all(char::is_alphabetic))).then(|| parts.join(" "))
 }
 
 #[cfg(test)]
@@ -3387,7 +4033,7 @@ mod search_tests {
         assert!(words_match("Ahmet Yılmaz, Emre Kaya, Ali Aydın", &w("ahmet emre aydın"), false));
         assert!(!words_match("Kemre Bey", &w("emre"), false));
         assert!(words_match("Şükrü Çağlar", &w("sukru caglar"), true));
-        assert_eq!(phrase_variant("ahmet emre aydın is:unread").as_deref(), Some("\"ahmet emre aydın\" is:unread"));
+        assert_eq!(phrase_variant("ahmet emre aydın is:unread"), Some(parse_query("\"ahmet emre aydın\" is:unread")));
         assert_eq!(phrase_variant("ahmet"), None);
         let db = Db::open_memory().unwrap();
         let n: bool = db.rconn().query_row("SELECT lyn_match('Ahmet Emre AYDIN', 'ahmet emre aydin', 1)", [], |r| r.get(0)).unwrap();
@@ -3775,16 +4421,99 @@ mod search_tests {
         let other = add(inbox, "Bütçe toplantısı notları", 5.0);
         let ids = |m: i64| db.conversation(&db.message_row(m).unwrap()).iter().map(|r| r.id).collect::<Vec<_>>();
         assert_eq!(ids(c), vec![a, b, c]);
-        // Konuşma görünümünde gelen kutusu: aynı konu tek satır, sayı 2
+        assert_eq!(ids(other), vec![other]);
+        // Konuşma görünümünde gelen kutusu: konuşma tek satır; sayı gönderilen yanıtı da kapsar
+        // (çöptekini kapsamaz), okunmamışlar yalnızca bu klasörden
         let conv = ListOrder { conversations: true, ..ListOrder::default() };
         let (rows, total) = db.messages_page(Some(inbox), "", &MsgFilter::All, &conv, 0, 50);
         let head = rows.iter().find(|r| r.id == c).unwrap();
-        assert_eq!((head.thread_count, rows.iter().any(|r| r.id == a)), (2, false));
+        assert_eq!((head.thread_count, head.thread_unread, rows.iter().any(|r| r.id == a)), (3, 2, false));
         assert_eq!(total as usize, rows.len());
-        // Konu değişince (ör. bozuk kodlu konu düzeltildi) konuşması da değişir
-        db.conn().execute("UPDATE messages SET subject = 'Bütçe toplantısı notları' WHERE id = ?1", [b]).unwrap();
-        assert_eq!(ids(other), vec![b, other]);
-        assert_eq!(ids(a), vec![a, c]);
+        // Çöp kutusunda kendi iletisi de görünür
+        let (rows, _) = db.messages_page(Some(trash), "", &MsgFilter::All, &conv, 0, 50);
+        assert_eq!(rows[0].thread_count, 4);
+        assert_eq!(db.conversation(&rows[0]).len(), 4);
+    }
+
+    /// Konuşmalar yanıt başlıklarıyla kurulur; konu yalnızca başlıksız yanıtlarda yedektir
+    #[test]
+    fn threads_follow_reply_headers() {
+        let db = Db::open_memory().unwrap();
+        let inbox = db.folder_by_role(None, "inbox").unwrap().id;
+        let add = |subject: &str, mid: &str, irt: &str, refs: &str, conv: &str, date: f64| {
+            let m = Message { folder_id: inbox, subject: subject.into(), message_id: mid.into(), in_reply_to: irt.into(), refs: refs.into(), conv: conv.into(), date, ..Default::default() };
+            db.insert_message(&m).unwrap()
+        };
+        let tid = |id: i64| db.message_row(id).unwrap().thread_id;
+        // Her gün gelen aynı konulu rapor: ayrı konuşmalar
+        let (r1, r2) = (add("Günlük rapor", "<r1@x>", "", "", "", 1.0), add("Günlük rapor", "<r2@x>", "", "", "", 2.0));
+        assert_ne!(tid(r1), tid(r2));
+        // Başlıksız yanıt en yakın önceki aynı konulu iletiye bağlanır
+        let r3 = add("YNT: Günlük rapor", "<r3@x>", "", "", "", 3.0);
+        assert_eq!(tid(r3), tid(r2));
+        // Zincir: yanıt kökten önce gelse de (sıra önemsiz) aynı konuşma
+        let b = add("RE: Plan", "<b@x>", "<a@x>", "<a@x>", "", 11.0);
+        let c = add("RE: Plan", "<c@x>", "<b@x>", "<a@x> <b@x>", "", 12.0);
+        let a = add("Plan", "a@x", "", "", "", 10.0);
+        assert_eq!((tid(a), tid(b)), (tid(c), tid(c)));
+        // İki ayrı parça ortak ata gelince birleşir
+        let e = add("RE: Sözleşme", "<e@x>", "<d@x>", "<root@x> <d@x>", "", 21.0);
+        let f = add("RE: Sözleşme", "<f@x>", "<g@x>", "<g@x>", "", 22.0);
+        assert_ne!(tid(e), tid(f));
+        let g = add("RE: Sözleşme", "<g@x>", "<root@x>", "<root@x>", "", 20.0);
+        assert_eq!((tid(e), tid(f)), (tid(g), tid(g)));
+        // Konusu değiştirilen yanıt yeni konuşma başlatır
+        let h = add("Bambaşka konu", "<h@x>", "<c@x>", "<a@x> <b@x> <c@x>", "", 13.0);
+        assert_ne!(tid(h), tid(a));
+        // Exchange kimliği: konu farklı olsa da aynı konuşma; aynı konulu başka kimlik ayrı
+        let (x1, x2, x3) = (add("Teklif", "", "", "", "AAQk1", 30.0), add("YNT: Teklif (güncel)", "", "", "", "AAQk1", 31.0), add("YNT: Teklif", "", "", "", "AAQk2", 32.0));
+        assert_eq!(tid(x1), tid(x2));
+        assert_ne!(tid(x1), tid(x3));
+        // Kimliği sonradan öğrenilen ileti konuya göre kurulmuş konuşmadan ayrılır
+        let (y1, y2) = (add("Davet", "<y1@x>", "", "", "", 40.0), add("RE: Davet", "<y2@x>", "", "", "", 41.0));
+        assert_eq!(tid(y1), tid(y2));
+        assert!(db.set_conversation(y2, "AAQk9", "", ""));
+        assert!(!db.set_conversation(y2, "AAQk7", "", ""));
+        assert_ne!(tid(y1), tid(y2));
+        assert!(db.set_conversation(y1, "AAQk9", "", ""));
+        assert_eq!(tid(y1), tid(y2));
+        // Baştan kurulunca aynı gruplar çıkar
+        let groups = |db: &Db| {
+            let ids = [r1, r2, r3, a, b, c, e, f, g, h, x1, x2, x3, y1, y2];
+            let t: Vec<i64> = ids.iter().map(|&i| db.message_row(i).unwrap().thread_id).collect();
+            t.iter().map(|x| t.iter().position(|y| y == x).unwrap()).collect::<Vec<_>>()
+        };
+        let before = groups(&db);
+        Db::rebuild_threads(&db.conn()).unwrap();
+        assert_eq!(groups(&db), before);
+    }
+
+    /// Eski veritabanının bir kerelik konuşma kurulumu yeterince hızlı mı (elle: --ignored)
+    #[test]
+    #[ignore]
+    fn rebuild_threads_speed() {
+        let db = Db::open_memory().unwrap();
+        let inbox = db.folder_by_role(None, "inbox").unwrap().id;
+        {
+            let mut c = db.conn();
+            let tx = c.transaction().unwrap();
+            for i in 0..100_000i64 {
+                let (k, n) = (i / 4, i % 4);
+                let subj = if n == 0 { format!("Konu {}", k % 5000) } else { format!("RE: Konu {}", k % 5000) };
+                let refs = if n > 1 { format!("<m{}@x>", i - 1) } else { String::new() };
+                tx.execute(
+                    "INSERT INTO messages(folder_id, account_id, subject, ns, message_id, refs, date) VALUES (?1, 1, ?2, lyn_norm_subject(?2), ?3, ?4, ?5)",
+                    params![inbox, subj, format!("<m{i}@x>"), refs, i as f64 * 60.0],
+                )
+                .unwrap();
+            }
+            tx.commit().unwrap();
+        }
+        let t = std::time::Instant::now();
+        Db::rebuild_threads(&db.conn()).unwrap();
+        let n: i64 = db.conn().query_row("SELECT COUNT(DISTINCT tid) FROM messages WHERE account_id = 1", [], |r| r.get(0)).unwrap();
+        eprintln!("rebuild 100k: {:?}, {n} konuşma", t.elapsed());
+        assert_eq!(n, 25_000);
     }
 
     /// Kullanıcının bayrak değişikliği sunucuya yazılana kadar bekler: eşitleme bu arada
@@ -3899,6 +4628,86 @@ mod search_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Arama dili: VEYA/DEĞİL/parantez, "anahtar: değer", alan grubu, tarih dönemleri
+    #[test]
+    fn search_language() {
+        use SearchExpr::*;
+        let f = |cols: &'static [&'static str], v: &str| Term(SearchTerm::Field(cols, v.into()));
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 10).unwrap(); // salı
+        let p = |q: &str| parse_query_at(q, today);
+        let d = |y, m, dd| day_ts(chrono::NaiveDate::from_ymd_opt(y, m, dd).unwrap());
+        let range = |a, b| And(vec![Term(SearchTerm::DateAfter(a)), Term(SearchTerm::DateBefore(b))]);
+        // Anahtar büyük/küçük harf ayırmaz; iki noktadan sonra boşluk olabilir
+        assert_eq!(p("From: ali To:veli"), And(vec![f(FROM_COLS, "ali"), f(TO_COLS, "veli")]));
+        assert_eq!(p("KİMDEN: \"ali veli\""), f(FROM_COLS, "ali veli"));
+        assert_eq!(p("kimden:"), And(vec![]));
+        assert_eq!(p("gizli:ali"), f(BCC_COLS, "ali"));
+        // VEYA, DEĞİL, parantez; küçük harfli "ve"/"or" sıradan sözcüktür
+        assert_eq!(p("fatura OR makbuz"), Or(vec![f(ALL_COLS, "fatura"), f(ALL_COLS, "makbuz")]));
+        assert_eq!(p("kimden:ali (fatura VEYA makbuz) -taslak"), And(vec![f(FROM_COLS, "ali"), Or(vec![f(ALL_COLS, "fatura"), f(ALL_COLS, "makbuz")]), Not(Box::new(f(ALL_COLS, "taslak")))]));
+        assert_eq!(p("NOT from:ali"), Not(Box::new(f(FROM_COLS, "ali"))));
+        assert_eq!(p("ali ve veli"), And(vec![f(ALL_COLS, "ali"), f(ALL_COLS, "ve"), f(ALL_COLS, "veli")]));
+        // Alan grubu: parantezdeki sözcükler o alanda
+        assert_eq!(p("from:(ali OR veli) rapor"), And(vec![Or(vec![f(FROM_COLS, "ali"), f(FROM_COLS, "veli")]), f(ALL_COLS, "rapor")]));
+        // Sözcüğün içindeki tire ve parantez ayırmaz; kapanmamış parantez aramayı bozmaz
+        assert_eq!(p("e-posta Teklif(2)"), And(vec![f(ALL_COLS, "e-posta"), f(ALL_COLS, "Teklif(2)")]));
+        assert_eq!(p("(ali veli"), And(vec![f(ALL_COLS, "ali"), f(ALL_COLS, "veli")]));
+        assert_eq!(p("ali) veli"), And(vec![f(ALL_COLS, "ali)"), f(ALL_COLS, "veli")]));
+        // Tarihler
+        assert_eq!(p("tarih:bugün"), range(d(2026, 11, 10), d(2026, 11, 11)));
+        assert_eq!(p("tarih:bu hafta rapor"), And(vec![Term(SearchTerm::DateAfter(d(2026, 11, 9))), Term(SearchTerm::DateBefore(d(2026, 11, 16))), f(ALL_COLS, "rapor")]));
+        assert_eq!(p("on:\"last month\""), range(d(2026, 10, 1), d(2026, 11, 1)));
+        assert_eq!(p("received:2026-01-15..2026-02-01"), range(d(2026, 1, 15), d(2026, 2, 2)));
+        assert_eq!(p("tarih:>=01.03.2026"), Term(SearchTerm::DateAfter(d(2026, 3, 1))));
+        assert_eq!(p("tarih:2025"), range(d(2025, 1, 1), d(2026, 1, 1)));
+        assert_eq!(p("tarih:aralık"), range(d(2025, 12, 1), d(2026, 1, 1)));
+        assert_eq!(p("sonra:7g"), Term(SearchTerm::DateAfter(d(2026, 11, 3))));
+        assert_eq!(p("tarih:yarın"), f(ALL_COLS, "on:yarın"));
+        // Durumlar
+        assert_eq!(p("is:replied önem:yüksek klasör:arşiv"), And(vec![Term(SearchTerm::Sql("is_answered = 1")), Term(SearchTerm::Sql("importance = 2")), Term(SearchTerm::Folder("arşiv".into()))]));
+        // Sunucu sorgusu
+        assert_eq!(search_to_aqs("from:(ali OR veli) -taslak (fatura VEYA makbuz) is:replied"), "(from:ali OR from:veli) NOT taslak (fatura OR makbuz)");
+        assert_eq!(expr_to_aqs(&p("NOT (ali veli) tarih:bugün")), "NOT (ali veli) received:>=2026-11-10 received:<2026-11-11");
+    }
+
+    /// Arama ağacı hem dizinle hem dizinsiz aynı sonucu verir; adres kişinin adıyla da bulunur
+    #[test]
+    fn search_expressions_filter_rows() {
+        let db = Db::open_memory().unwrap();
+        let inbox = db.folder_by_role(None, "inbox").unwrap().id;
+        let sent = db.folder_by_role(None, "sent").unwrap().id;
+        let _ = db.conn().execute("DELETE FROM messages", []);
+        let add = |folder: i64, subject: &str, sender: &str, to: &str, bcc: &str| {
+            db.insert_message(&Message { folder_id: folder, subject: subject.into(), sender: sender.into(), to_addr: to.into(), bcc: bcc.into(), date: 100.0, ..Default::default() }).unwrap()
+        };
+        let a = add(inbox, "Fatura ekim", "Ali Veli <ali.veli@kurum.com.tr>", "Ben", "");
+        let b = add(inbox, "Makbuz", "Ayşe Kaya <ayse@kurum.com.tr>", "Ali Veli", "");
+        let c = add(sent, "Fatura taslak", "Ben <ben@kurum.com.tr>", "Mehmet Öz", "gizli.kisi@x.com");
+        let d = add(inbox, "Toplantı", "Zeynep Demir <zeynep@kurum.com.tr>", "Çağrı Şen", "");
+        db.conn().execute("INSERT INTO directory(account_id, email, name) VALUES (1, 'cagri.s@kurum.com.tr', 'Çağrı Şen')", []).unwrap();
+        for fts in [true, false] {
+            db.fts_ready.store(fts, std::sync::atomic::Ordering::Relaxed);
+            let ids = |q: &str| {
+                let mut v: Vec<i64> = db.messages(None, q, &MsgFilter::All).iter().map(|m| m.id).collect();
+                v.sort();
+                v
+            };
+            assert_eq!(ids("fatura OR makbuz"), vec![a, b, c], "fts={fts}");
+            assert_eq!(ids("fatura -taslak"), vec![a]);
+            assert_eq!(ids("(fatura VEYA makbuz) NOT from:ali"), vec![b, c]);
+            assert_eq!(ids("from:(ali OR zeynep)"), vec![a, d]);
+            assert_eq!(ids("Kimden: ali"), vec![a]);
+            assert_eq!(ids("bcc:gizli"), vec![c]);
+            assert_eq!(ids("klasör:gönderilmiş"), vec![c]);
+            assert_eq!(ids("in:inbox -fatura"), vec![b, d]);
+            // Alıcı başlıkta yalnızca adıyla duruyor: adresle arama yine bulur
+            assert_eq!(ids("to:ali.veli@kurum.com.tr"), vec![b]);
+            assert_eq!(ids("kime:cagri.s@kurum.com.tr"), vec![d]);
+            assert_eq!(ids("kişi:ali.veli@kurum.com.tr"), vec![a, b]);
+            assert_eq!(ids("tarih:2020"), Vec::<i64>::new());
+        }
+    }
+
     #[test]
     fn parses_outlook_style_queries() {
         let t = parse_search(r#"kimden:ali konu:"aylık rapor" has:attachment fatura is:unread"#);
@@ -4004,7 +4813,7 @@ mod search_tests {
         let inbox = db.folder_by_role(None, "inbox").unwrap();
         let _ = db.conn().execute("DELETE FROM messages", []);
         for i in 0..1200 {
-            let subj = if i % 3 == 0 { format!("RE: Konu {}", i / 3) } else { format!("Konu {}", i / 3) };
+            let subj = if i % 3 == 0 { format!("Konu {}", i / 3) } else { format!("RE: Konu {}", i / 3) };
             let m = Message { folder_id: inbox.id, subject: subj, sender: format!("K{} <k@x.com>", i % 7), date: 1000.0 + i as f64, ..Default::default() };
             db.insert_message(&m).unwrap();
         }

@@ -39,8 +39,11 @@ Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svel
 - Gönderimi geri alma, teslimi geciktirme, taslakların otomatik kaydı, imzalar, okundu bilgisi, önem düzeyi.
 - Toplantı davetlerini Kabul Et / Belki / Reddet ile yanıtlama.
 - Ofis dışında yanıtı (Exchange'de sunucuda çalışır).
-- Arama işleçleri: `kimden:ali konu:"aylık rapor" has:attachment is:unread after:2026-01-01`.
-  İngilizce karşılıkları da çalışır: `from:`, `to:`, `subject:`, `body:`, `category:`, `before:`, `on:`.
+- Arama dili: `kimden:ali (fatura VEYA makbuz) -taslak tarih:bu hafta ek:var durum:okunmamış`. Alanlar
+  (`kimden:`, `kime:`, `bilgi:`, `kişi:`, `konu:`, `gövde:`, `ekadı:`, `kategori:`, `klasör:`, `tarih:`, `sonra:`,
+  `önce:`), VEYA / DEĞİL / parantez, tırnak içinde tam ifade ve göreli tarihler (`dün`, `geçen ay`, `7g`,
+  `2026-01-01..2026-03-31`). İngilizce karşılıkları da çalışır (`from:`, `to:`, `subject:`, `has:`, `is:`, `OR`, `NOT`).
+  Arama kutusu yazarken alanları, değerlerini ve alanın içinde kişileri önerir.
 
 **Görünüm**
 - **Renk teması:** Üst çubuktaki palet düğmesi rengi tek tıkla değiştirir: mavi (varsayılan), mor, kırmızı, pembe,
@@ -124,7 +127,7 @@ istenir.
 | Ubuntu 24.04 ve sonrası, Debian 13 ve türevleri (glibc 2.39+) | `Lynora_*_amd64.deb` |
 
 ```sh
-sudo apt install ./Lynora_1.5.0_amd64.deb      # bağımlılıklar otomatik kurulur
+sudo apt install ./Lynora_1.7.5_amd64.deb      # bağımlılıklar otomatik kurulur
 ```
 
 Paketler GitHub **Releases** sayfasında yayımlanır. Debian 12, Ubuntu 22.04 ve Pardus 23 gibi eski dağıtımlar için

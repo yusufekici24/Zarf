@@ -207,25 +207,44 @@ pub fn bare_addresses(text: &str) -> Vec<String> {
     split_addresses(text).iter().map(|a| split_name_addr(a).1).filter(|a| !a.is_empty()).collect()
 }
 
-/// Konu başındaki RE:/FW:/YNT:/İLT: öneklerini temizler.
-pub fn normalize_subject(s: &str) -> String {
-    let mut s = s.trim().to_string();
-    'outer: loop {
-        for p in ["re:", "fw:", "fwd:", "ynt:", "yanıt:", "ilt:", "i̇lt:", "ilet:", "aw:", "wg:", "tr:", "rv:"] {
-            // Önekin karakter sayısı küçük harfe çevirince değişebilir ("İLT:" → "i̇lt:"),
-            // bu yüzden baştaki 1..=n karakter ayrı ayrı karşılaştırılır.
-            let n = p.chars().count();
-            for k in 1..=n {
-                let Some((end, _)) = s.char_indices().nth(k).or(if s.chars().count() == k { Some((s.len(), ' ')) } else { None }) else { break };
-                if s[..end].to_lowercase() == p {
-                    s = s[end..].trim().to_string();
-                    continue 'outer;
-                }
+/// Yanıt/iletme önekleri (küçük harf, noktasız): İngilizce, Türkçe, Almanca, Fransızca, İspanyolca,
+/// İskandinav dilleri
+const SUBJECT_PREFIXES: &[&str] = &["re", "fw", "fwd", "ynt", "yanıt", "yanit", "ilt", "ilet", "cevap", "cvp", "aw", "wg", "antw", "tr", "rv", "sv", "vs"];
+
+/// Konunun başındaki tek bir yanıt/iletme önekinin bayt uzunluğu: "RE:", "Fwd :", "YNT[2]:",
+/// "RE(3):", "İLT:" gibi (harfler, isteğe bağlı sayaç, isteğe bağlı boşluk, iki nokta)
+fn subject_prefix_len(s: &str) -> Option<usize> {
+    let letters = s.find(|c: char| !c.is_alphabetic() && c != '\u{307}').unwrap_or(s.len());
+    // "İ" küçülünce "i" + birleşen nokta olur
+    let word: String = s[..letters].to_lowercase().chars().filter(|c| *c != '\u{307}').collect();
+    if !SUBJECT_PREFIXES.contains(&word.as_str()) {
+        return None;
+    }
+    let mut rest = &s[letters..];
+    for (open, close) in [('[', ']'), ('(', ')')] {
+        if let Some(inner) = rest.strip_prefix(open) {
+            let digits = inner.find(|c: char| !c.is_ascii_digit()).unwrap_or(inner.len());
+            if digits > 0 && inner[digits..].starts_with(close) {
+                rest = &inner[digits + 1..];
             }
         }
-        break;
     }
-    s
+    let rest = rest.trim_start_matches([' ', '\u{a0}']);
+    rest.starts_with([':', '：']).then(|| s.len() - rest.len() + rest.chars().next().map_or(0, char::len_utf8))
+}
+
+/// Konu başındaki RE:/FW:/YNT:/İLT: öneklerini temizler.
+pub fn normalize_subject(s: &str) -> String {
+    let mut s = s.trim();
+    while let Some(n) = subject_prefix_len(s) {
+        s = s[n..].trim();
+    }
+    s.to_string()
+}
+
+/// Konu bir yanıt/iletme önekiyle mi başlıyor
+pub fn has_subject_prefix(s: &str) -> bool {
+    subject_prefix_len(s.trim()).is_some()
 }
 
 pub fn reply_subject(subject: &str, prefix: &str) -> String {
@@ -259,6 +278,12 @@ mod tests {
         assert_eq!(normalize_subject("İLT: YNT: Bütçe"), "Bütçe");
         assert_eq!(normalize_subject("Re:"), "");
         assert_eq!(normalize_subject("İ"), "İ");
+        assert_eq!(normalize_subject("RE : YNT[2]: Fwd(3):Plan"), "Plan");
+        assert_eq!(normalize_subject("Cevap: AW: SV: İlt: Rapor"), "Rapor");
+        // Önek olmayan sözcükler ve iki nokta konuda kalır
+        assert_eq!(normalize_subject("Rezervasyon: onay"), "Rezervasyon: onay");
+        assert_eq!(normalize_subject("Re[x]: Not"), "Re[x]: Not");
+        assert!(has_subject_prefix(" ynt: a") && !has_subject_prefix("a ynt: b"));
         assert_eq!(reply_subject("Re: Merhaba", "YNT"), "YNT: Merhaba");
     }
 }

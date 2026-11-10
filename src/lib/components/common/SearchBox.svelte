@@ -1,5 +1,6 @@
 <script lang="ts">
-  // Üst çubuktaki arama kutusu: yazdıkça öneriler (kişiler, toplantılar, ekler), sağdaki
+  // Üst çubuktaki arama kutusu: yazdıkça öneriler (kişiler, toplantılar, ekler; arama alanları
+  // "kim" → "kimden:", alanın değerleri "durum:ok" → "okunmamış", "kimden:ay" → kişiler), sağdaki
   // seçenekler düğmesiyle gelişmiş arama (kimden, kime, konu, tarih, ek, durum, kapsam).
   // Başka yerden başlatılan aramalar da (ör. İlişkili Bul) kutuda görünür, × ile temizlenir.
   import { untrack, type Snippet } from "svelte";
@@ -10,6 +11,7 @@
   import { i18n, t } from "$lib/i18n.svelte";
   import { fmtDateTime } from "$lib/format";
   import type { CalEvent } from "$lib/types";
+  import { current, hints, parts, quote, replaceCurrent, type Hint } from "$lib/search-syntax";
   import Avatar from "$lib/components/common/Avatar.svelte";
   import Search from "@lucide/svelte/icons/search";
   import X from "@lucide/svelte/icons/x";
@@ -17,6 +19,7 @@
   import CalendarIcon from "@lucide/svelte/icons/calendar";
   import Paperclip from "@lucide/svelte/icons/paperclip";
   import Inbox from "@lucide/svelte/icons/inbox";
+  import Filter from "@lucide/svelte/icons/filter";
 
   let { input = $bindable(), extra }: { input?: HTMLInputElement; extra?: Snippet } = $props();
 
@@ -65,7 +68,7 @@
   }
 
   // ---------------------------------------------------------------- öneriler
-  type Sug = { kind: "search" | "person" | "event" | "file" | "attach" | "all"; label: string; sub?: string; email?: string; ev?: CalEvent; id?: number; count?: number };
+  type Sug = { kind: "search" | "op" | "value" | "person" | "event" | "file" | "attach" | "all"; label: string; sub?: string; email?: string; ev?: CalEvent; id?: number; count?: number; hint?: Hint };
   let sugOpen = $state(false);
   let people = $state<{ name: string; email: string; count: number }[]>([]);
   let files = $state<{ id: number; name: string; subject: string; sender: string; date: number }[]>([]);
@@ -74,11 +77,18 @@
   let seq = 0;
   let sugTimer: ReturnType<typeof setTimeout> | undefined;
   const q = $derived(text.trim());
-  // Sorgu sözdizimi (kimden: vb.) yazılırken öneri gösterilmez
-  const plainQuery = $derived(q.length >= 2 && !/\w:/.test(q));
+  // Yazılmakta olan parça: arama alanı ("kimden:ay") ya da düz sözcük
+  const cur = $derived(isMail ? current(text) : undefined);
+  const plainQuery = $derived(q.length >= 2 && parts(q).every((p) => !p.op));
+  // Kişi alanının değeri yazılıyor: kişiler o değere göre önerilir ve alana yazılır
+  const personKey = $derived(cur?.op?.kind === "person" && cur.value.length >= 1 ? cur : undefined);
+  const sugQuery = $derived(personKey ? personKey.value : plainQuery ? q : "");
   const sugs = $derived.by((): Sug[] => {
-    if (!isMail || !plainQuery) return [];
-    const out: Sug[] = [{ kind: "search", label: q }];
+    if (!isMail || !q) return [];
+    const hs: Sug[] = hints(text, i18n.current, app.categories.map((c) => c.name)).map((h) => ({ kind: h.op ? "op" : "value", label: h.label, sub: h.op ? t(`search.op_${h.op.id}`) : undefined, hint: h }));
+    if (personKey) return people.map((p) => ({ kind: "person", label: p.name || p.email, sub: p.email, email: p.email, count: p.count }));
+    if (!plainQuery) return hs;
+    const out: Sug[] = [{ kind: "search", label: q }, ...hs];
     for (const p of people) out.push({ kind: "person", label: p.name || p.email, sub: p.email, email: p.email, count: p.count });
     for (const f of files) out.push({ kind: "file", label: f.name, sub: [f.subject || t("mail.no_subject"), f.sender].filter(Boolean).join(" · "), id: f.id });
     for (const e of events) out.push({ kind: "event", label: e.title || t("mail.no_subject"), sub: fmtDateTime(e.start), ev: e });
@@ -89,23 +99,30 @@
 
   async function suggest() {
     clearTimeout(sugTimer);
-    if (!isMail || !plainQuery) {
+    sugOpen = isMail && !!q;
+    // Düz aramada ilk satır "ara" satırıdır; alan yazılırken Enter yazılanı arar (öneri ↑↓ ya da Sekme ile)
+    active = plainQuery ? 0 : -1;
+    const my = ++seq;
+    const query = sugQuery;
+    const only = !!personKey;
+    if (!isMail || !query) {
       people = [];
       files = [];
       events = [];
       return;
     }
-    sugOpen = true;
-    active = 0;
-    const my = ++seq;
-    const query = q;
+    if (only) {
+      files = [];
+      events = [];
+    }
     sugTimer = setTimeout(() => {
       // Kişiler (postalarda en sık geçenler önce, adres defteri) ve adı eşleşen ekler
       void api.searchSuggest(query).then((r) => {
         if (my !== seq) return;
-        people = r.people.slice(0, 5);
-        files = r.attachments.slice(0, 4);
+        people = r.people.slice(0, only ? 7 : 5);
+        files = only ? [] : r.attachments.slice(0, 4);
       }).catch(() => {});
+      if (only) return;
       void api.searchEvents(query).then((r) => {
         if (my === seq) events = r.slice(0, 3);
       }).catch(() => {});
@@ -114,8 +131,21 @@
 
   const tr = $derived(i18n.current === "tr");
   function pick(s: Sug) {
-    // Kişi: o kişiden gelen ya da ona giden tüm iletiler (Outlook "Katılımcılar")
-    if (s.kind === "person") commit(`${tr ? "kişi" : "participants"}:${s.email}`);
+    if (s.hint) {
+      // Arama alanı: kutuya yazılır, değer beklenir; değer: parça tamamlanır ve aranır
+      const next = replaceCurrent(text, s.hint.insert);
+      if (s.hint.done) commit(next);
+      else {
+        clearTimeout(timer);
+        text = next;
+        input?.focus();
+        void suggest();
+      }
+    }
+    // Alan yazılmışsa ("kimden:ay") kişi o alana; yoksa o kişiden gelen ya da ona giden tüm
+    // iletiler (Outlook "Katılımcılar")
+    else if (s.kind === "person" && personKey) commit(replaceCurrent(text, `${personKey.neg ? "-" : ""}${personKey.keyText}:${quote(s.email || s.label)} `));
+    else if (s.kind === "person") commit(`${tr ? "kişi" : "participants"}:${s.email}`);
     else if (s.kind === "file" && s.id != null) {
       sugOpen = false;
       app.openMessage(s.id);
@@ -138,8 +168,17 @@
     }
     if (sugOpen && sugs.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
-      active = (active + (e.key === "ArrowDown" ? 1 : sugs.length - 1)) % sugs.length;
+      active = e.key === "ArrowDown" ? (active + 1) % sugs.length : active <= 0 ? sugs.length - 1 : active - 1;
       return;
+    }
+    // Sekme: seçili (yoksa ilk) alan/değer önerisini tamamlar
+    if (e.key === "Tab" && !e.shiftKey && sugOpen) {
+      const s = personKey ? (sugs[active] ?? sugs[0]) : sugs[active]?.hint ? sugs[active] : sugs.find((x) => x.hint);
+      if (s) {
+        e.preventDefault();
+        pick(s);
+        return;
+      }
     }
     if (e.key === "Enter") {
       e.preventDefault();
@@ -158,25 +197,24 @@
   /** Kutudaki sorguyu alanlara ayırır (arama sözdizimi: kimden:, konu:"…", ek:var, durum:…, sonra:, önce:) */
   function parse(query: string): Adv {
     const a: Adv = { ...EMPTY };
-    const toks = query.match(/(?:[^\s"]+:"[^"]*"|"[^"]*"|\S+)/g) ?? [];
     const words: string[] = [];
-    for (const tok of toks) {
-      const m = tok.match(/^([^:@]+):(.+)$/);
-      const key = m?.[1].toLocaleLowerCase("tr") ?? "";
-      const val = (m?.[2] ?? "").replace(/^"|"$/g, "");
+    // Formda karşılığı olmayan parçalar (VEYA, parantez, -sözcük, tarih:bu hafta …) olduğu gibi kalır
+    for (const p of parts(query)) {
+      const key = p.neg ? "" : (p.op?.id ?? "");
+      const val = p.value;
       const lv = val.toLocaleLowerCase("tr");
-      if (["from", "kimden", "gönderen"].includes(key)) a.from = val;
-      else if (["to", "kime", "alıcı"].includes(key)) a.to = val;
-      else if (["subject", "konu"].includes(key)) a.subject = val;
-      else if (["body", "gövde", "metin"].includes(key)) a.body = val;
-      else if (["category", "categories", "kategori"].includes(key)) a.category = val;
-      else if (["has", "hasattachment", "hasattachments", "ekvar", "ek", "attachment", "attachments"].includes(key)) a.att = !["no", "false", "hayır", "yok"].includes(lv);
-      else if (["is", "durum"].includes(key) && ["unread", "okunmamış", "okunmadı"].includes(lv)) a.unread = true;
-      else if (["is", "durum"].includes(key) && ["flagged", "bayraklı", "işaretli"].includes(lv)) a.flagged = true;
-      else if (["is", "durum"].includes(key) && ["important", "önemli"].includes(lv)) a.important = true;
-      else if (["after", "since", "sonra"].includes(key)) a.after = toIso(val);
-      else if (["before", "önce"].includes(key)) a.before = toIso(val);
-      else words.push(tok);
+      if (key === "from") a.from = val;
+      else if (key === "to") a.to = val;
+      else if (key === "subject") a.subject = val;
+      else if (key === "body") a.body = val;
+      else if (key === "category") a.category = val;
+      else if (key === "has") a.att = !["no", "false", "hayır", "yok"].includes(lv);
+      else if (key === "is" && ["unread", "okunmamış", "okunmadı"].includes(lv)) a.unread = true;
+      else if (key === "is" && ["flagged", "bayraklı", "işaretli"].includes(lv)) a.flagged = true;
+      else if (key === "is" && ["important", "önemli"].includes(lv)) a.important = true;
+      else if (key === "after" && /^\d/.test(val)) a.after = toIso(val);
+      else if (key === "before" && /^\d/.test(val)) a.before = toIso(val);
+      else words.push(p.raw);
     }
     a.words = words.join(" ");
     return a;
@@ -279,6 +317,7 @@
               <label class="flex items-center gap-2"><input type="checkbox" class="accent-primary" bind:checked={adv.flagged} />{t("search.flagged_only")}</label>
               <label class="flex items-center gap-2"><input type="checkbox" class="accent-primary" bind:checked={adv.important} />{t("search.important_only")}</label>
             </div>
+            <p class="text-muted-foreground col-span-2 mt-1 text-[12px] leading-snug" data-testid="search-hint">{t("search.hint")}</p>
             <div class="col-span-2 mt-2 flex justify-end gap-2">
               <button type="button" class="hover:bg-accent h-8 rounded-md px-3" onclick={resetAdv}>{t("search.reset")}</button>
               <button type="submit" class="bg-primary text-primary-foreground hover:bg-primary/90 h-8 rounded-md px-4 font-medium">{t("search.do_search")}</button>
@@ -291,10 +330,10 @@
 
   {#if sugOpen && sugs.length}
     <!-- Öneriler: kutunun altında; seçmek için tıkla ya da ↑↓ ve Enter -->
-    <div class="bg-popover text-popover-foreground absolute top-[calc(100%+4px)] right-0 left-0 z-50 overflow-hidden rounded-md border py-1 text-[13px] shadow-lg" role="listbox">
+    <div class="bg-popover text-popover-foreground absolute top-[calc(100%+4px)] right-0 left-0 z-50 overflow-hidden rounded-md border py-1 text-[13px] shadow-lg" role="listbox" data-testid="search-suggestions">
       {#each sugs as s, i (s.kind + i)}
-        {#if (s.kind === "person" || s.kind === "event" || s.kind === "file") && sugs[i - 1]?.kind !== s.kind}
-          <div class="text-muted-foreground px-3 pt-2 pb-1 text-[11px] font-semibold uppercase">{t(s.kind === "person" ? "search.sec_people" : s.kind === "file" ? "search.sec_files" : "search.sec_meetings")}</div>
+        {#if (s.kind === "person" || s.kind === "event" || s.kind === "file" || s.kind === "op") && sugs[i - 1]?.kind !== s.kind}
+          <div class="text-muted-foreground px-3 pt-2 pb-1 text-[11px] font-semibold uppercase">{t(s.kind === "person" ? "search.sec_people" : s.kind === "file" ? "search.sec_files" : s.kind === "op" ? "search.sec_fields" : "search.sec_meetings")}</div>
         {/if}
         {#if s.kind === "attach"}<div class="bg-border my-1 h-px"></div>{/if}
         <div
@@ -315,6 +354,9 @@
           {:else if s.kind === "event"}
             <span class="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-md"><CalendarIcon class="size-4" /></span>
             <span class="min-w-0 flex-1"><span class="block truncate">{s.label}</span><span class="text-muted-foreground block truncate text-[12px]">{s.sub}</span></span>
+          {:else if s.kind === "op" || s.kind === "value"}
+            <Filter class="text-muted-foreground size-4 shrink-0" /><span class="shrink-0 font-medium">{s.label}</span>
+            {#if s.sub}<span class="text-muted-foreground truncate text-[12px]">{s.sub}</span>{/if}
           {:else if s.kind === "attach"}
             <Paperclip class="text-muted-foreground size-4 shrink-0" /><span class="truncate">{t("search.in_attachments", s.label)}</span>
           {:else if s.kind === "all"}

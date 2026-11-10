@@ -267,6 +267,16 @@ class MailState {
     return m.thread_count ?? 1;
   }
 
+  /** Konuşma satırında, kendisi dışında (satırın altında gizli) okunmamış ileti sayısı */
+  private hiddenUnread(m: MessageRow | undefined): number {
+    return m && this.conversations ? Math.max(0, (m.thread_unread ?? 0) - (m.is_read ? 0 : 1)) : 0;
+  }
+
+  /** Liste satırı okunmamış mı görünür: konuşma satırı, içinde okunmamış ileti kaldıkça okunmamıştır */
+  unread(m: MessageRow): boolean {
+    return !m.is_read || this.hiddenUnread(m) > 0;
+  }
+
   /** Konuşmayı listede aç/kapat (iletileri baş satırın altında) */
   async toggleExpand(head: number) {
     if (this.expanded[head]) {
@@ -290,7 +300,8 @@ class MailState {
   }
 
   // ------------------------------------------------------------- seçim
-  async select(id: number, e?: MouseEvent | KeyboardEvent) {
+  /** child: listede açılmış konuşmanın alt satırı (yalnızca o ileti okundu olur) */
+  async select(id: number, e?: MouseEvent | KeyboardEvent, child = false) {
     if (this.inlineReply && this.inlineReply.sourceId !== id) await this.closeInline();
     const list = this.sorted.map((m) => m.id);
     if (e && (e.ctrlKey || e.metaKey)) {
@@ -305,14 +316,14 @@ class MailState {
       this.selected = [id];
       this.anchor = id;
     }
-    if (this.selected.length === 1) await this.show(this.selected[0]);
+    if (this.selected.length === 1) await this.show(this.selected[0], !child);
   }
 
   selectAll() {
     this.selected = this.sorted.map((m) => m.id);
   }
 
-  async show(id: number) {
+  async show(id: number, whole = true) {
     if (this.readTimer) clearTimeout(this.readTimer);
     try {
       const v = await api.getMessage(id);
@@ -321,21 +332,22 @@ class MailState {
       // Konuşma sorgusu yalnızca konuşmada birden çok ileti varsa (tüm tabloyu tarar)
       const row = this.messages.find((m) => m.id === id);
       this.thread = this.conversations && (row?.thread_count ?? 2) > 1 ? await api.conversation(id) : [];
-      this.autoRead(v, () => this.selected.length === 1 && this.selected[0] === id);
+      this.autoRead(v, () => this.selected.length === 1 && this.selected[0] === id, whole && this.hiddenUnread(row) > 0);
     } catch (e) {
       app.error(e);
     }
   }
 
   /** Okuma bölmesinde gösterilen ileti, ayardaki süre sonunda (hâlâ gösteriliyorsa) okundu olur */
-  private autoRead(v: MessageView, still: () => boolean) {
+  private autoRead(v: MessageView, still: () => boolean, whole = false) {
     if (this.readTimer) clearTimeout(this.readTimer);
     this.readTimer = null;
-    if (v.is_read || v.external || app.setting("reading_pane", "right") === "off") return;
+    // whole: konuşma satırı açıldı; kendisi okunmuş olsa da konuşmadaki okunmamışlar okundu olur
+    if ((v.is_read && !whole) || v.external || app.setting("reading_pane", "right") === "off") return;
     const delay = Number(app.setting("mark_read_delay", "0"));
     if (delay < 0) return;
     this.readTimer = setTimeout(() => {
-      if (still() && this.current?.id === v.id) void this.setRead([v.id], true);
+      if (still() && this.current?.id === v.id) void this.setRead([v.id], true, whole);
     }, delay * 1000);
   }
 
@@ -382,9 +394,21 @@ class MailState {
     return this.selected.length ? [...this.selected] : this.current && !this.current.external ? [this.current.id] : [];
   }
 
-  async setRead(ids: number[], value: boolean) {
-    // Arayüz hemen güncellenir (Outlook gibi anında); sunucu isteği arkadan gider
+  /** whole: konuşma satırı okundu yapılırken konuşmanın bu klasördeki bütün okunmamışları kapsanır */
+  async setRead(ids: number[], value: boolean, whole = true) {
     const set = new Set(ids);
+    if (value && whole) {
+      for (const h of this.messages.filter((m) => set.has(m.id) && this.hiddenUnread(m) > 0)) {
+        const rows = this.expanded[h.id] ?? (this.thread.some((x) => x.id === h.id) ? this.thread : await api.conversation(h.id).catch(() => [] as MessageRow[]));
+        for (const r of rows) if (!r.is_read && (this.folderId == null || r.folder_id === h.folder_id)) set.add(r.id);
+      }
+      ids = [...set];
+    }
+    // Arayüz hemen güncellenir (Outlook gibi anında); sunucu isteği arkadan gider
+    // Konuşma satırlarındaki okunmamış sayısı: durumu değişen (bilinen) iletiler kadar
+    const changed = new Map<number, MessageRow>();
+    for (const r of [...this.messages, ...this.thread, ...Object.values(this.expanded).flat()]) if (set.has(r.id) && r.is_read !== value) changed.set(r.id, r);
+    const delta = (h: MessageRow) => [...changed.values()].filter((r) => r.thread_id === h.thread_id && (this.folderId == null || r.folder_id === h.folder_id)).length;
     const before = this.messages.filter((m) => set.has(m.id)).map((m) => [m.id, m.is_read] as const);
     // Elle "okunmadı" yapılan açık ileti, okundu zamanlayıcısıyla yeniden okundu olmasın
     if (!value && this.readTimer && this.current && set.has(this.current.id)) {
@@ -392,6 +416,12 @@ class MailState {
       this.readTimer = null;
     }
     const mark = (rows: MessageRow[]) => (rows.some((m) => set.has(m.id) && m.is_read !== value) ? rows.map((m) => (set.has(m.id) && m.is_read !== value ? { ...m, is_read: value } : m)) : rows);
+    if (this.conversations && changed.size) {
+      this.messages = this.messages.map((h) => {
+        const n = h.thread_id ? delta(h) : 0;
+        return n ? { ...h, thread_unread: Math.max(0, (h.thread_unread ?? 0) + (value ? -n : n)) } : h;
+      });
+    }
     this.messages = mark(this.messages);
     this.thread = mark(this.thread);
     if (Object.keys(this.expanded).length) this.expanded = Object.fromEntries(Object.entries(this.expanded).map(([k, rows]) => [k, mark(rows)]));
@@ -409,7 +439,7 @@ class MailState {
     const ids = this.ids();
     if (!ids.length) return;
     const first = this.messages.find((m) => m.id === ids[0]);
-    await this.setRead(ids, !(first?.is_read ?? false));
+    await this.setRead(ids, first ? this.unread(first) : true);
   }
 
   async flag(value: boolean, due: number | null = null) {

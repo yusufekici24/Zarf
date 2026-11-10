@@ -3099,7 +3099,7 @@ pub async fn search_server(state: State<'_, AppState>, folder_id: Option<i64>, q
     }
     // Outlook gibi: birden çok düz sözcük önce ifade olarak ("ahmet emre aydın"), sonuç
     // yoksa tüm sözcükler (VE) aranır
-    let phrase_aqs = crate::db::phrase_variant(&query).map(|p| crate::db::search_to_aqs(&p)).filter(|p| !p.trim().is_empty());
+    let phrase_aqs = crate::db::phrase_variant(&query).map(|p| crate::db::expr_to_aqs(&p)).filter(|p| !p.trim().is_empty());
     let db = state.db.clone();
     let folders: Vec<Folder> = match folder_id {
         Some(id) => db.folder(id).into_iter().collect(),

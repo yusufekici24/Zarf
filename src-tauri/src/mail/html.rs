@@ -73,13 +73,14 @@ pub fn sanitize(html: &str) -> String {
     static BODY: OnceLock<Regex> = OnceLock::new();
     let cleaner = CLEANER.get_or_init(|| {
         let mut b = ammonia::Builder::default();
-        b.add_tags(["font", "center", "big", "nobr", "style"])
+        // tfoot varsayılan listede yok: atılırsa toplam satırı tablonun başına kayar
+        b.add_tags(["font", "center", "big", "nobr", "style", "tfoot"])
             .rm_clean_content_tags(["style"])
             // Başlık etiketi gider ama metni iletinin başında görünmesin
             .add_clean_content_tags(["title"])
             .add_generic_attributes([
                 "style", "class", "id", "dir", "align", "valign", "width", "height", "bgcolor", "color", "border",
-                "cellpadding", "cellspacing", "face", "size", "colspan", "rowspan", "nowrap", "background",
+                "cellpadding", "cellspacing", "face", "size", "colspan", "rowspan", "nowrap", "background", "bordercolor", "rules", "frame",
             ])
             .add_tag_attributes("a", ["name", "target"])
             .add_tag_attributes("img", ["border", "hspace", "vspace"])
@@ -177,5 +178,34 @@ mod tests {
         assert!(!s.contains("Bülten"), "başlık metni gövdede görünmemeli");
         // Ön yüzdeki düğme düzeltmesi (bağlantının içindeki tablo) ham kalıbı görmeye devam eder
         assert!(regex::Regex::new(r"(?s)<a\b[^>]*>(?:(?:[^<]|<[^/]|</[^a])*?)<table").unwrap().is_match(&s), "{s}");
+    }
+
+    /// Tablo yapısı korunur: alt bilgi bölümü, sütun tanımları, eski kenarlık öznitelikleri
+    #[test]
+    fn sanitize_keeps_table_structure() {
+        let src = r##"<table border="1" bordercolor="#888888" rules="all" frame="box" cellspacing="0" width="100%"><caption>Rapor</caption>
+<colgroup><col width="60"><col span="2" style="width:83pt"></colgroup>
+<thead><tr bgcolor="#dddddd"><th>No</th><th colspan="2">İş</th></tr></thead>
+<tfoot><tr><td colspan="2" align="right">Toplam</td><td>3</td></tr></tfoot>
+<tbody><tr height="20"><td rowspan="2" valign="top" nowrap>1</td><td>a</td><td>b</td></tr></tbody></table>"##;
+        let s = sanitize(src);
+        for keep in [
+            r##"bordercolor="#888888""##,
+            r#"rules="all""#,
+            r#"frame="box""#,
+            "<caption>",
+            r#"<col width="60">"#,
+            r#"<col span="2" style="width:83pt">"#,
+            "<thead>",
+            r#"<th colspan="2">"#,
+            "<tfoot><tr>",
+            "</tfoot>",
+            r#"<tr height="20">"#,
+            r#"rowspan="2""#,
+        ] {
+            assert!(s.contains(keep), "{keep} kaybolmuş:\n{s}");
+        }
+        // Alt bilgi gövdeden sonra değil, yazıldığı yerde kalır (tarayıcı en alta çizer)
+        assert!(s.find("<tfoot>").unwrap() < s.find("<tbody>").unwrap(), "{s}");
     }
 }
