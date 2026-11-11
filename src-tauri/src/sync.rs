@@ -82,6 +82,24 @@ impl Worker {
         self.bg.push(Some(key), false, String::new(), Box::new(job));
     }
 
+    /// İşi `wait` sonra arka plan kuyruğuna ekler: sunucu meşgulken (istek sınırı) tarama
+    /// bırakılmaz, sunucunun istediği süre dolunca kaldığı yerden sürer. Aynı anahtar beklerken
+    /// yenisi eklenmez.
+    pub(crate) fn defer_after(&self, wait: std::time::Duration, key: String, job: impl FnOnce(&mut Worker) -> MailResult<()> + Send + 'static) {
+        static WAITING: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+        if !WAITING.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashSet::new).insert(key.clone()) {
+            return;
+        }
+        let bg = self.bg.clone();
+        let _ = std::thread::Builder::new().name("lynora-defer".into()).spawn(move || {
+            std::thread::sleep(wait);
+            if let Some(w) = WAITING.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+                w.remove(&key);
+            }
+            bg.push(Some(key), false, String::new(), Box::new(job));
+        });
+    }
+
     /// Kullanıcının beklediği bir işi (ör. Gelen Kutusu) ön kuyruğa ekler.
     pub(crate) fn defer_fg(&self, key: String, job: impl FnOnce(&mut Worker) -> MailResult<()> + Send + 'static) {
         self.fg.push(Some(key), false, String::new(), Box::new(job));
@@ -131,6 +149,18 @@ fn spawn_worker(name: &str, mut worker: Worker, queue: Arc<Queue>, foreground: b
                     }
                     worker.conns.clear();
                     worker.ews.clear();
+                }
+                Ok(Err(e)) if e.is_busy() => {
+                    // Exchange istek sınırı: bağlantılar sağlamdır, süre dolunca kendiliğinden
+                    // sürer. Her işte yinelenmesin diye kullanıcıya seyrek bildirilir.
+                    static NOTICE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+                    let mut last = NOTICE.lock().unwrap_or_else(|e| e.into_inner());
+                    if foreground && last.is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(900)) {
+                        *last = Some(std::time::Instant::now());
+                        (worker.emit)("mail://error", json!(e.message()));
+                    } else {
+                        eprintln!("lynora: {}", e.message());
+                    }
                 }
                 Ok(Err(e)) => {
                     // Arka plan hataları (ör. bağlantı koptu) kullanıcıyı rahatsız etmez;

@@ -56,7 +56,8 @@ pub fn pooled<T>(acc: &Account, f: impl FnOnce(&mut Ews) -> MailResult<T>) -> Ma
         None => (Ews::for_account(acc)?, std::time::Instant::now()),
     };
     let r = f(&mut ews);
-    if r.is_ok() {
+    // Sunucu meşgulken bağlantı sağlamdır: atılırsa her denemede yeniden kimlik doğrulanır
+    if r.is_ok() || r.as_ref().is_err_and(|e| e.is_busy()) {
         let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
         let list = pool.entry(acc.id).or_default();
         if list.len() < 6 {
@@ -64,6 +65,50 @@ pub fn pooled<T>(acc: &Account, f: impl FnOnce(&mut Ews) -> MailResult<T>) -> Ma
         }
     }
     r
+}
+
+// ---------------------------------------------------------------------- sunucu meşgul
+// Exchange istek sınırı (throttling): bütçe tükenince sunucu ErrorServerBusy ile birlikte ne kadar
+// beklenmesi gerektiğini (BackOffMilliseconds) bildirir. O süre dolmadan gönderilen her istek
+// yine geri çevrilir ve sınırlamayı uzatır; bu yüzden süre sunucu başına tutulur ve dolana kadar
+// o sunucuya istek gönderilmez.
+static BUSY: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>> =
+    std::sync::LazyLock::new(Default::default);
+/// Bu kadar kısa bekleme istek içinde beklenir ve istek yinelenir; uzunu çağırana bildirilir
+const BUSY_INLINE: std::time::Duration = std::time::Duration::from_secs(8);
+/// Sunucu süre bildirmediyse
+const BUSY_DEFAULT: std::time::Duration = std::time::Duration::from_secs(30);
+const BUSY_MAX: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Sunucu meşgulse kalan bekleme süresi.
+pub fn busy_left(url: &str) -> Option<std::time::Duration> {
+    let until = *BUSY.lock().unwrap_or_else(|e| e.into_inner()).get(url)?;
+    Some(until.saturating_duration_since(std::time::Instant::now())).filter(|d| !d.is_zero())
+}
+
+/// Sunucu bu oturumda en az bir kez istek sınırına takıldı: arka plan taraması yavaşlatılır.
+pub fn was_busy(url: &str) -> bool {
+    BUSY.lock().unwrap_or_else(|e| e.into_inner()).contains_key(url)
+}
+
+fn set_busy(url: &str, wait: std::time::Duration) {
+    BUSY.lock().unwrap_or_else(|e| e.into_inner()).insert(url.to_string(), std::time::Instant::now() + wait.min(BUSY_MAX));
+}
+
+fn busy_error(left: std::time::Duration) -> MailError {
+    MailError::busy(crate::t!("error.ews_busy", left.as_secs().max(1)))
+}
+
+/// Yanıt "sunucu meşgul" hatasıysa (SOAP hatası ya da yanıt iletisi) beklenmesi istenen süre.
+fn busy_backoff(e: &Element) -> Option<std::time::Duration> {
+    let code = |n: &str| e.find(n).is_some_and(|c| c.text.trim().ends_with("ErrorServerBusy"));
+    if !code("ResponseCode") && !code("faultcode") {
+        return None;
+    }
+    let mut values = Vec::new();
+    e.find_all("Value", &mut values);
+    let ms = values.iter().find(|v| v.attr("Name") == Some("BackOffMilliseconds")).and_then(|v| v.text.trim().parse::<u64>().ok());
+    Some(ms.map(std::time::Duration::from_millis).unwrap_or(BUSY_DEFAULT))
 }
 
 /// Dizin satırı (Ad Seç penceresi)
@@ -319,8 +364,26 @@ impl Ews {
         Ews { url: url.to_string(), http, uses_password, mailbox: None }
     }
 
-    /// SOAP isteği gönderir; yanıt gövdesini (Body) döndürür.
+    /// SOAP isteği gönderir; yanıt gövdesini (Body) döndürür. Sunucu meşgulse (istek sınırı)
+    /// kısa süre bekleyip bir kez yineler; uzun sürede `MailError::busy` döner ve süre dolana kadar
+    /// sunucuya yeni istek gönderilmez.
     pub fn call(&mut self, body: &str) -> MailResult<Element> {
+        for attempt in 0..2 {
+            if let Some(left) = busy_left(&self.url) {
+                if left > BUSY_INLINE {
+                    return Err(busy_error(left));
+                }
+                std::thread::sleep(left);
+            }
+            match self.call_once(body) {
+                Err(e) if e.is_busy() && attempt == 0 => continue,
+                r => return r,
+            }
+        }
+        Err(busy_error(busy_left(&self.url).unwrap_or(BUSY_DEFAULT)))
+    }
+
+    fn call_once(&mut self, body: &str) -> MailResult<Element> {
         let req = format!("{SOAP_HEAD}{body}{SOAP_TAIL}");
         let r = self.http.request("POST", &self.url, "text/xml; charset=utf-8", req.as_bytes())?;
         if r.status == 401 {
@@ -330,6 +393,10 @@ impl Ews {
         }
         let doc = xml::parse(&r.body).map_err(MailError)?;
         if let Some(f) = doc.find("Fault") {
+            if let Some(wait) = busy_backoff(f) {
+                set_busy(&self.url, wait);
+                return Err(busy_error(wait));
+            }
             let msg = f.find("faultstring").map(|x| x.text.clone()).unwrap_or_else(|| "SOAP fault".into());
             return Err(MailError(format!("Exchange: {msg}")));
         }
@@ -345,6 +412,10 @@ impl Ews {
                 // Silinmiş öğe vb. hatalar toplu işlemlerde göz ardı edilebilir
                 if code == "ErrorItemNotFound" && msgs.len() > 1 {
                     continue;
+                }
+                if let Some(wait) = busy_backoff(m) {
+                    set_busy(&self.url, wait);
+                    return Err(busy_error(wait));
                 }
                 return Err(MailError(format!("Exchange: {} ({code})", m.text_of("MessageText"))));
             }
@@ -1709,6 +1780,37 @@ mod tests {
         assert_eq!(got, vec![7]);
         // Ağ hatası olduğu gibi döner
         assert!(fetch_split::<u8>(start, end, CAL_CHUNK_SECS, &mut |_, _| Err(MailError::net("yok"))).unwrap_err().is_net());
+    }
+
+    /// İstek sınırı: sunucunun istediği bekleme süresi SOAP hatasından okunur; başka hata karışmaz
+    #[test]
+    fn server_busy_backoff() {
+        let fault = |code: &str, detail: &str| {
+            let xml = format!(
+                r#"<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault><faultcode xmlns:a="http://schemas.microsoft.com/exchange/services/2006/types">a:{code}</faultcode><faultstring xml:lang="en-US">The server cannot service this request right now. Try again later.</faultstring><detail><e:ResponseCode xmlns:e="http://schemas.microsoft.com/exchange/services/2006/errors">{code}</e:ResponseCode>{detail}</detail></s:Fault></s:Body></s:Envelope>"#
+            );
+            let doc = xml::parse(xml.as_bytes()).unwrap();
+            busy_backoff(doc.find("Fault").unwrap())
+        };
+        let ms = r#"<t:MessageXml xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"><t:Value Name="BackOffMilliseconds">297749</t:Value></t:MessageXml>"#;
+        assert_eq!(fault("ErrorServerBusy", ms), Some(std::time::Duration::from_millis(297749)));
+        assert_eq!(fault("ErrorServerBusy", ""), Some(BUSY_DEFAULT), "süre bildirilmediyse varsayılan");
+        assert_eq!(fault("ErrorInternalServerError", ms), None);
+        // Yanıt iletisi içinde gelen biçim
+        let doc = xml::parse(br#"<m:SyncFolderItemsResponseMessage ResponseClass="Error"><m:MessageText>busy</m:MessageText><m:ResponseCode>ErrorServerBusy</m:ResponseCode><m:MessageXml><t:Value Name="BackOffMilliseconds">1500</t:Value></m:MessageXml></m:SyncFolderItemsResponseMessage>"#).unwrap();
+        assert_eq!(busy_backoff(&doc), Some(std::time::Duration::from_millis(1500)));
+
+        // Süre dolana kadar o sunucuya istek gönderilmez; başka sunucu etkilenmez
+        let url = "https://busy-test.invalid/EWS/Exchange.asmx";
+        assert!(busy_left(url).is_none() && !was_busy(url));
+        set_busy(url, std::time::Duration::from_secs(120));
+        assert!(busy_left(url).is_some_and(|d| d > std::time::Duration::from_secs(100)));
+        let mut ews = Ews::with_auth(url, Auth::Basic { user: "u".into(), password: "p".into() }, true);
+        let e = ews.call("<m:GetFolder/>").unwrap_err();
+        assert!(e.is_busy() && !e.is_net() && !e.message().contains('\u{1}'), "{}", e.message());
+        assert!(busy_left("https://other.invalid/EWS/Exchange.asmx").is_none());
+        set_busy(url, std::time::Duration::ZERO);
+        assert!(busy_left(url).is_none() && was_busy(url));
     }
 
     /// Konuşma kimliği ve yanıt başlıkları genişletilmiş özelliklerden okunur

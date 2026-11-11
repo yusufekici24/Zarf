@@ -659,6 +659,7 @@
   "error.auth_paused": "{0} hesabının parolası reddedildi; hesap kilitlenmesin diye eşitleme duraklatıldı. Hesap ayarlarından yeni parolayı girin.",
   "error.auth_failed_paused": "{0}: oturum açılamadı ({1}). Eşitleme duraklatıldı; parola tekrar denenmeyecek.",
   "error.ews_auth": "Exchange oturumu açılamadı (kimlik bilgileri reddedildi)",
+  "error.ews_busy": "Exchange sunucusu şu an yoğun (istek sınırı). Eşitleme yaklaşık {0} sn sonra kendiliğinden sürecek.",
   "error.gssapi_missing": "Kerberos kitaplığı (libgssapi-krb5-2) bulunamadı",
   "error.kerberos": "Kerberos hatası: {0} (kinit ile bilet alındığından emin olun)",
   "error.no_ews_url": "Exchange (EWS) adresi belirtilmemiş",

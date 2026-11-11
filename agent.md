@@ -33,7 +33,7 @@ dosya açıp bu tabloya satır ekleyin. Bir oturumun sonunda `docs/DURUM.md` gü
 ```sh
 npm run tauri dev                       # geliştirme
 npm run check                           # svelte-check (0 hata; 15 eski uyarı var)
-cd src-tauri && cargo test --lib        # Rust birim testleri (107)
+cd src-tauri && cargo test --lib        # Rust birim testleri (108)
 npm run test:ui                         # Playwright arayüz testleri (sahte arka uç, sistem Chrome'u)
 npx tauri build --bundles deb           # → src-tauri/target/release/bundle/deb/Lynora_X.Y.Z_amd64.deb
 ```
@@ -95,7 +95,7 @@ Svelte bileşeni → store (mail/app) → api.ts invoke → commands.rs (#[tauri
 | `backup.rs` | Yedek dosyası (AES-256-GCM) |
 | `secret.rs` | Parolalar anahtarlıkta (keyring); `password_plain()` |
 | `splash.rs`, `desktop.rs`, `visibility.rs`, `links.rs`, `filedialog.rs`, `i18n.rs` | Açılış ekranı, masaüstü bütünleşmesi, görünürlük, bağlantı açma, dosya diyaloğu, çeviri |
-| `mail/ews.rs` | EWS istemcisi. `call()` SOAP gönderir, ileti bazlı hataları döndürür. `pooled()` bağlantı havuzu. Takvim: `calendar_summary_of` (parçalı, `fetch_split`), `calendar_details` |
+| `mail/ews.rs` | EWS istemcisi. `call()` SOAP gönderir, ileti bazlı hataları döndürür; sunucu meşgulse (`ErrorServerBusy`) istenen süre dolmadan istek atmaz (`busy_left`). `pooled()` bağlantı havuzu. Takvim: `calendar_summary_of` (parçalı, `fetch_split`), `calendar_details` |
 | `mail/imap_client.rs` | `imap` crate sarmalayıcısı (select, search, fetch, store_flag, IDLE) |
 | `mail/http.rs`, `tls.rs`, `net.rs` | HTTP/1.1 (rustls), TCP/TLS, bağlantı durumu ve "yakında ulaşılamadı" listesi |
 | `mail/discover.rs`, `gssapi.rs`, `ntlm.rs`, `ldap.rs`, `dns.rs` | Autodiscover, Kerberos, NTLMv2, AD'den adres, SRV |
@@ -223,6 +223,10 @@ hata · `mail://bg` arka plan etkinliği · `mail://older` eski iletiler geldi �
   kalın görünüyordu (okunmuş/okunmamış ayırt edilemiyordu). Varsayılan gömülü Noto Sans Variable.
 - EWS: dahili göndericide `EmailAddress` X.500 olabilir (`@` yok; liste başlığında yalnızca ad saklanır), ileti açılınca
   MIME'dan SMTP adresi yazılır. `CalendarView` sayfalanamaz: 1000 öğe sınırı (yukarıda).
+- EWS istek sınırı (`ErrorServerBusy`): yanıt SOAP Fault olarak gelir, bekleme süresi `BackOffMilliseconds` içindedir.
+  Süre dolmadan atılan her istek geri çevrilir ve sınırı uzatır; bu yüzden kapı `Ews::call` içindedir (sunucu adresi
+  başına). Yeni EWS çağrısı `call` dışından gönderilmez. Meşgul hatası (`MailError::is_busy`) bağlantıyı düşürmez,
+  `ews_enumerate` kendini `defer_after` ile yeniden sıraya koyar.
 - Konuşmalar konuya göre **birleştirilmez**: bağ Exchange konuşma kimliği ve `References`/`In-Reply-To` ile kurulur
   (`docs/konusmalar.md`). Arama anahtarı eklerken `search_key()` ve `search-syntax.ts` birlikte değişir (`docs/arama.md`).
 - ammonia `tfoot`'u varsayılan olarak atar; gövdede `overflow-wrap:anywhere` tabloları bozar (`docs/ileti-govdesi.md`).

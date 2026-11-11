@@ -30,6 +30,8 @@ pub struct MailError(pub String);
 const AUTH_MARK: &str = "\u{1}auth\u{1}";
 /// Ağ hatası (sunucuya ulaşılamıyor) işareti: çevrimdışı durumunu belirler.
 const NET_MARK: &str = "\u{1}net\u{1}";
+/// Sunucu meşgul (Exchange istek sınırı) işareti: hata değil, bekleyip yeniden denenecek durum.
+const BUSY_MARK: &str = "\u{1}busy\u{1}";
 
 impl MailError {
     /// Sunucu kullanıcı adı/parolayı reddetti. Bu hata alındığında hesap,
@@ -51,8 +53,17 @@ impl MailError {
         self.0.starts_with(NET_MARK)
     }
 
+    /// Sunucu isteği şimdilik geri çevirdi (Exchange ErrorServerBusy); süre dolunca yeniden denenir
+    pub fn busy(msg: impl Into<String>) -> Self {
+        MailError(format!("{BUSY_MARK}{}", msg.into()))
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.0.starts_with(BUSY_MARK)
+    }
+
     pub fn message(&self) -> &str {
-        self.0.trim_start_matches(AUTH_MARK).trim_start_matches(NET_MARK)
+        self.0.trim_start_matches(AUTH_MARK).trim_start_matches(NET_MARK).trim_start_matches(BUSY_MARK)
     }
 }
 

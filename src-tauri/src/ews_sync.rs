@@ -418,7 +418,18 @@ impl Worker {
         }
         let Some(rid) = folder.remote_name.clone() else { return Ok(()) };
         let st = folder.sync_state.clone();
-        let ch = self.with_ews(account_id, move |e| e.sync_items(&rid, &st))?;
+        let url = self.db.account(account_id).map(|a| a.ews_url).unwrap_or_default();
+        let started = std::time::Instant::now();
+        let ch = match self.with_ews(account_id, move |e| e.sync_items(&rid, &st)) {
+            // Sunucu meşgul (istek sınırı): tarama bırakılmaz, istenen süre dolunca kaldığı sayfadan sürer
+            Err(e) if e.is_busy() => {
+                let wait = crate::mail::ews::busy_left(&url).unwrap_or_default() + std::time::Duration::from_secs(2);
+                self.defer_after(wait, format!("enum:{folder_id}"), move |w| w.ews_enumerate(account_id, folder_id));
+                return Ok(());
+            }
+            r => r?,
+        };
+        let took = started.elapsed();
         if let Some(seen) = self.enum_seen.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&folder_id) {
             seen.extend(ch.creates.iter().map(|h| h.id.clone()));
             seen.extend(ch.updates.iter().map(|u| u.0.clone()));
@@ -449,7 +460,15 @@ impl Worker {
             self.emit_changed(Some(folder_id));
         }
         if !ch.done {
-            self.defer(format!("enum:{folder_id}"), move |w| w.ews_enumerate(account_id, folder_id));
+            // Sınıra bir kez takılan sunucuda tarama yavaşlatılır: Exchange, sunucu süresinin
+            // ancak dörtte birinin kullanılmasına izin verir (aşılınca yeniden geri çevirir)
+            let key = format!("enum:{folder_id}");
+            if crate::mail::ews::was_busy(&url) {
+                let pause = (took * 3).min(std::time::Duration::from_secs(10));
+                self.defer_after(pause, key, move |w| w.ews_enumerate(account_id, folder_id));
+            } else {
+                self.defer(key, move |w| w.ews_enumerate(account_id, folder_id));
+            }
         }
         Ok(())
     }

@@ -127,7 +127,7 @@ istenir.
 | Ubuntu 24.04 ve sonrası, Debian 13 ve türevleri (glibc 2.39+) | `Lynora_*_amd64.deb` |
 
 ```sh
-sudo apt install ./Lynora_1.7.5_amd64.deb      # bağımlılıklar otomatik kurulur
+sudo apt install ./Lynora_1.7.6_amd64.deb      # bağımlılıklar otomatik kurulur
 ```
 
 Paketler GitHub **Releases** sayfasında yayımlanır. Debian 12, Ubuntu 22.04 ve Pardus 23 gibi eski dağıtımlar için

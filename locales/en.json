@@ -659,6 +659,7 @@
   "error.auth_paused": "The password for {0} was rejected; sync is paused to avoid locking the account. Enter the new password in account settings.",
   "error.auth_failed_paused": "{0}: sign-in failed ({1}). Sync paused; the password will not be retried.",
   "error.ews_auth": "Exchange sign-in failed (credentials rejected)",
+  "error.ews_busy": "The Exchange server is busy right now (request limit). Sync will resume by itself in about {0} s.",
   "error.gssapi_missing": "Kerberos library (libgssapi-krb5-2) not found",
   "error.kerberos": "Kerberos error: {0} (make sure you have a ticket from kinit)",
   "error.no_ews_url": "Exchange (EWS) URL is not set",
