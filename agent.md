@@ -1,16 +1,16 @@
-# Lynora — kod haritası
+# Zarf — kod haritası
 
 Bu dosya, kodu her seferinde baştan taramadan doğru yere gitmek için yazıldı. Bir şeyi değiştirince
 burayı da güncelleyin (yeni modül, tablo, ayar anahtarı, olay ya da tuzak).
 
-Lynora, Debian tabanlı Linux için Outlook benzeri e-posta, takvim, kişiler, görevler ve notlar uygulamasıdır.
+Zarf, Debian tabanlı Linux için Outlook benzeri e-posta, takvim, kişiler, görevler ve notlar uygulamasıdır.
 Kurumsal Exchange (EWS) birinci önceliktir, IMAP/SMTP de desteklenir. Arayüz metinleri ve kod açıklamaları Türkçedir.
-Ürün adı Lynora; eski adları MailNix ve Linux Posta (veri ve anahtarlık taşıma kodu bunlara göre yazılmıştır).
+Ürün adı Zarf (2.0.0); eski adları Lynora, MailNix ve Linux Posta. lynora veri/çalıştırılabilir dosya kimlikleri ve Lynora anahtarlık hizmeti yükseltme uyumluluğu için korunur.
 
 - Arka uç: Rust + Tauri 2 (`src-tauri/`). SQLite (rusqlite, gömülü), rustls, kendi HTTP/EWS/SMTP istemcileri.
 - Ön yüz: Svelte 5 (runes) + SvelteKit statik + Tailwind 4 + shadcn-svelte (`src/`).
 - Paket: `.deb` (glibc 2.39+, yerel derleme) ya da Docker'da Ubuntu 22.04 tabanı (`packaging/build-packages.sh`).
-- Depo: github.com/yusufekici24/linux-mailappv2 (özel). Sürümler Releases'te `Lynora_X.Y.Z_amd64.deb`.
+- Depo: github.com/yusufekici24/linux-mailappv2 (özel). Sürümler Releases'te `Zarf_X.Y.Z_amd64.deb`.
 
 ## Konu belgeleri (önce buraya bakın)
 
@@ -19,10 +19,12 @@ dosyadadır; ilgili işe başlamadan yalnızca o dosyayı okumak yeter.
 
 | Konu | Dosya |
 |---|---|
+| Zarf 2.0: grup zamanlayıcısı, kişi yönetimi değerlendirmesi, performans ve marka | `docs/zarf-2.0.md` |
 | Şu anki durum: son sürüm, doğrulanmamış noktalar, sıradaki işler | `docs/DURUM.md` |
 | Arama: sözdizimi, ifade ağacı, SQL/AQS, arama kutusu önerileri | `docs/arama.md` |
 | Konuşmalar: `tid`, `thread_keys`, bağlama kuralları, konuşmada okundu | `docs/konusmalar.md` |
 | İleti gövdesi: HTML temizleme, tablo ve resim düzeni | `docs/ileti-govdesi.md` |
+| Yazma penceresi ve düzenleyici: biçim araçları, renk düğmesi, stiller, tablo sekmesi, durum çubuğu | `docs/yazma-penceresi.md` |
 | Linux Posta → Lynora geçişi, bilinen sınırlar | `docs/GECIS.md` |
 
 Yeni bir konu büyüdüğünde (takvim, kurallar, yazma penceresi …) buraya uzun bölüm eklemek yerine `docs/` altına
@@ -35,7 +37,7 @@ npm run tauri dev                       # geliştirme
 npm run check                           # svelte-check (0 hata; 15 eski uyarı var)
 cd src-tauri && cargo test --lib        # Rust birim testleri (108)
 npm run test:ui                         # Playwright arayüz testleri (sahte arka uç, sistem Chrome'u)
-npx tauri build --bundles deb           # → src-tauri/target/release/bundle/deb/Lynora_X.Y.Z_amd64.deb
+npx tauri build --bundles deb           # → src-tauri/target/release/bundle/deb/Zarf_X.Y.Z_amd64.deb
 ```
 
 Kabuk betiklerinde `LC_ALL=C` kullanın: tr_TR yerelinde `[a-z]` aralığı `i`'yi kapsamıyor.
@@ -176,6 +178,7 @@ katılımcılar) yalnızca ChangeKey'i değişen/yeni toplantılar için `calend
 | `group_by_date`, `show_avatars` | `1` | MessageList |
 | `load_remote`, `trusted_senders` (JSON dizi), `plain_text_only` | `0`; `[]`; `0` | ReadingPane, trust.ts |
 | `font_new`, `font_reply`, `font_plain` (JSON) | Calibri 11 / Consolas 10 | fonts.ts |
+| `compose_mini_toolbar`, `compose_zoom` | `1`; `100` | RichEditor, ComposeWindow (`docs/yazma-penceresi.md`) |
 | `theme`, `language`, `start_module`, `sync_interval`, `sync_on_select`, `work_offline` | | app |
 
 ## Olaylar (Rust → ön yüz)
@@ -203,8 +206,8 @@ hata · `mail://bg` arka plan etkinliği · `mail://older` eski iletiler geldi �
    `src-tauri/Cargo.lock` (`name = "lynora"` girdisi), `src-tauri/tauri.conf.json`, README'deki kurulum satırı.
 2. `npm run check`, `cargo test --lib`, `npm run test:ui`, ardından `npx tauri build --bundles deb`.
 3. Commit (yazar `yusufekici24 <yusuf.142536@gmail.com>`; **commit ve PR'lara AI/Claude imzası eklenmez**), açıklamalı
-   etiket `vX.Y.Z` ("Lynora X.Y.Z"), `git push origin main` ve `git push origin vX.Y.Z`; CI'yi bekleyin.
-4. `gh release create vX.Y.Z <deb> --verify-tag --title "Lynora X.Y.Z" --notes-file notlar.md --latest`; paketi
+   etiket `vX.Y.Z` ("Zarf X.Y.Z"), `git push origin main` ve `git push origin vX.Y.Z`; CI'yi bekleyin.
+4. `gh release create vX.Y.Z <deb> --verify-tag --title "Zarf X.Y.Z" --notes-file notlar.md --latest`; paketi
    `gh release download` ile indirip sha256'yı yereldekiyle karşılaştırın.
 
 ## Tuzaklar
@@ -231,6 +234,8 @@ hata · `mail://bg` arka plan etkinliği · `mail://older` eski iletiler geldi �
   (`docs/konusmalar.md`). Arama anahtarı eklerken `search_key()` ve `search-syntax.ts` birlikte değişir (`docs/arama.md`).
 - ammonia `tfoot`'u varsayılan olarak atar; gövdede `overflow-wrap:anywhere` tabloları bozar (`docs/ileti-govdesi.md`).
 - `tests/ui` dosyalarında `process` ve yazımsız `import("/src/…")` kullanmayın: `npm run check` hata verir (bkz. trust.spec).
+- Yerel `<input type="color">` (ve `<select>`) `change` olayını yalnızca değer **değişince** gönderir: "aynı rengi
+  yeniden uygula" gibi işler ona bağlanmaz (`docs/yazma-penceresi.md`, `ColorButton.svelte`).
 - Svelte, öğe kenarındaki boşluğu kırpar: `<span>{x} · </span>` sondaki boşluğu kaybeder; `{" · "}` kullanın.
 - `system_fonts` komutu zaten var (fc-list); Kırtasiye, ileti yazma ve Seçenekler kullanır.
 - `svelte-check` CI'de `--threshold error`; yeni uyarı eklememeye çalışın (sayı 15).

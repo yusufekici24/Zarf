@@ -243,7 +243,7 @@
 
   /**
    * İlk açılışta: varsayılan e-posta uygulaması olsun mu (e-posta bağlantıları ve .msg/.eml
-   * dosyaları Lynora ile açılır). Hayır denirse Ayarlar'da nereden yapılacağı söylenir.
+   * dosyaları Zarf ile açılır). Hayır denirse Ayarlar'da nereden yapılacağı söylenir.
    * Bir kez sorulur; hesap kurulumu açıksa o kapanınca sorulur.
    */
   async function askDefaultApp() {
@@ -282,14 +282,18 @@
     if (!IS_MAIN) return;
     const unsub: (() => void)[] = [];
     (async () => {
+      performance.mark("zarf:startup");
       await i18n.load();
+      performance.mark("zarf:load-all");
       await app.loadAll();
+      performance.measure("zarf:load-all", "zarf:load-all");
       // Açılışta pencere ekrana ve ölçeğe göre boyutlanır (pencere henüz gizli)
       await applyScale(app.setting("ui_scale", "auto"));
       await fitWindow();
       setMode((app.setting("theme", "system") as "light" | "dark" | "system") || "system");
       app.module = (app.setting("start_module", "mail") as ModuleName) || "mail";
       ready = true;
+      performance.measure("zarf:startup", "zarf:startup");
       // İlk çizim bitince pencere gösterilir: beyaz ekran ve yerleşim kayması görünmez
       // (requestAnimationFrame gizli WebKit penceresinde hiç çalışmaz; DOM güncellenince gösterilir)
       void tick().then(() => setTimeout(() => void api.revealWindow().catch(() => {}), 0));
@@ -468,8 +472,11 @@
 {:else if !IS_MAIN}
   {#await import("$lib/components/SecondaryWindow.svelte") then m}<m.default />{/await}
 {:else if !ready}
-  <div class="flex h-screen items-center justify-center">
-    <img src="/icon.svg" alt="" class="size-20 animate-pulse" />
+  <div class="zarf-startup flex h-screen flex-col items-center justify-center gap-4" role="status" aria-live="polite">
+    <img src="/icon.svg" alt="" class="zarf-startup-logo size-20" />
+    <div class="text-2xl font-semibold tracking-tight">Zarf <span class="text-muted-foreground text-sm font-normal">2.0</span></div>
+    <div class="zarf-startup-track"><span></span></div>
+    <span class="text-muted-foreground text-xs">{t("common.loading")}</span>
   </div>
 {:else}
   <div class="bg-chrome flex h-screen flex-col border {maximized ? 'border-transparent' : windowFocus.focused ? 'border-primary' : 'border-black/25 dark:border-white/20'}">

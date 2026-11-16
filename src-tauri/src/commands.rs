@@ -1432,6 +1432,14 @@ pub fn contact_by_email(state: State<AppState>, email: String) -> Option<Contact
 #[tauri::command(async)]
 pub fn save_contact(state: State<AppState>, contact: Contact) -> R<i64> {
     let mut c = contact;
+    if c.id != 0 {
+        let old = state.db.contact(c.id).ok_or_else(|| t!("error.not_found"))?;
+        if old.account_id.is_some_and(|id| state.db.account(id).map_or(true, |a| a.carddav_url.trim().is_empty())) {
+            return Err(t!("contacts.readonly"));
+        }
+        c.account_id = old.account_id;
+        c.remote_id = old.remote_id;
+    }
     // Yeni kişi, adres defteri eşitlenen ilk hesaba yazılır (görev ve notlarla aynı düzen)
     if c.id == 0 && c.account_id.is_none() {
         c.account_id = state.db.accounts().into_iter().find(|a| !a.carddav_url.trim().is_empty()).map(|a| a.id);
@@ -1446,6 +1454,7 @@ pub fn save_contact(state: State<AppState>, contact: Contact) -> R<i64> {
 #[tauri::command(async)]
 pub fn delete_contacts(state: State<AppState>, ids: Vec<i64>) {
     for id in ids {
+        if state.db.contact(id).and_then(|c| c.account_id).is_some_and(|id| state.db.account(id).map_or(true, |a| a.carddav_url.trim().is_empty())) { continue; }
         if let Some((account, href)) = state.db.contact(id).and_then(|c| Some((c.account_id?, c.remote_id?))) {
             if state.db.account(account).is_some_and(|a| !a.carddav_url.trim().is_empty()) {
                 state.db.add_tombstone(crate::dav_sync::CONTACT_TOMBS, account, &href);
@@ -2753,7 +2762,7 @@ pub fn set_autostart(enabled: bool) -> R<()> {
         std::fs::create_dir_all(&dir).map_err(err)?;
         let exe = std::env::var("APPIMAGE").ok().or_else(|| std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string())).unwrap_or_else(|| "lynora".into());
         let body = format!(
-            "[Desktop Entry]\nType=Application\nName=Lynora\nExec=\"{exe}\" --minimized\nIcon=lynora\nX-GNOME-Autostart-enabled=true\nX-GNOME-Autostart-Delay=5\nNoDisplay=false\n"
+            "[Desktop Entry]\nType=Application\nName=Zarf\nExec=\"{exe}\" --minimized\nIcon=lynora\nX-GNOME-Autostart-enabled=true\nX-GNOME-Autostart-Delay=5\nNoDisplay=false\n"
         );
         std::fs::write(&path, body).map_err(err)?;
     } else if path.exists() {
@@ -2796,7 +2805,7 @@ fn desktop_id() -> Option<String> {
     let sys = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
     dirs.extend(sys.split(':').filter(|s| !s.is_empty()).map(|s| std::path::PathBuf::from(s).join("applications")));
     if std::env::var_os("APPIMAGE").is_none() {
-        for name in ["Lynora.desktop", "lynora.desktop"] {
+        for name in ["Zarf.desktop", "zarf.desktop", "Lynora.desktop", "lynora.desktop"] {
             if dirs.iter().any(|d| d.join(name).exists()) {
                 return Some(name.into());
             }
@@ -2807,7 +2816,7 @@ fn desktop_id() -> Option<String> {
     let dir = dirs::data_dir()?.join("applications");
     std::fs::create_dir_all(&dir).ok()?;
     let body = format!(
-        "[Desktop Entry]\nType=Application\nName=Lynora\nExec=\"{exe}\" %U\nIcon=lynora\nTerminal=false\nCategories=Office;Email;\nMimeType={};\n",
+        "[Desktop Entry]\nType=Application\nName=Zarf\nExec=\"{exe}\" %U\nIcon=lynora\nTerminal=false\nCategories=Office;Email;\nMimeType={};\n",
         DEFAULT_MIMES.join(";")
     );
     std::fs::write(dir.join("lynora-user.desktop"), body).ok()?;
@@ -2945,10 +2954,14 @@ fn default_for(mime: &str) -> String {
     String::new()
 }
 
+fn is_our_desktop(id: &str) -> bool {
+    matches!(id.to_ascii_lowercase().as_str(), "zarf.desktop" | "lynora.desktop" | "lynora-user.desktop")
+}
+
 /// Lynora e-posta bağlantıları, .msg ve .eml için varsayılan mı
 fn default_app_status_all() -> bool {
     #[cfg(target_os = "linux")]
-    return default_for(DEFAULT_MIMES[0]).starts_with("lynora") && DEFAULT_MIMES[1..].iter().all(|m| explicit_default(m).is_some_and(|v| v.starts_with("lynora")));
+    return is_our_desktop(&default_for(DEFAULT_MIMES[0])) && DEFAULT_MIMES[1..].iter().all(|m| explicit_default(m).is_some_and(|v| is_our_desktop(&v)));
     #[allow(unreachable_code)]
     false
 }
@@ -2971,7 +2984,7 @@ pub fn set_default_app() -> R<()> {
         let mut defaults: Vec<(&str, String)> = DEFAULT_MIMES.iter().map(|m| (*m, format!("{id};"))).collect();
         // Tür önbelleği eski kalmış sistemlerde .msg genel "OLE belgesi" sanılır: o tür için
         // kullanıcı başka bir uygulama seçmemişse Lynora açar
-        if explicit_default(OLE_MIME).map_or(true, |v| v.is_empty() || v.starts_with("lynora") || v.starts_with("mailnix")) {
+        if explicit_default(OLE_MIME).map_or(true, |v| v.is_empty() || is_our_desktop(&v) || v.starts_with("mailnix")) {
             defaults.push((OLE_MIME, format!("{id};")));
         }
         let out = set_ini_keys(&set_ini_keys(&src, "Default Applications", &defaults), "Added Associations", &defaults);
@@ -3002,7 +3015,7 @@ pub fn set_default_app() -> R<()> {
     Ok(())
 }
 
-/// Uygulamanın eski adı (MailNix) ile yapılmış masaüstü ayarları yeni ada aktarılır:
+/// Uygulamanın eski adları (MailNix/Lynora) ile yapılmış masaüstü ayarları yeni ada aktarılır:
 /// oturumda başlatma kaydı ve varsayılan e-posta uygulaması seçimi. Bir kez çalışır.
 pub fn migrate_legacy_integration() {
     #[cfg(target_os = "linux")]
@@ -3018,7 +3031,7 @@ pub fn migrate_legacy_integration() {
         let list = mimeapps_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
         let was_default = list.lines().any(|l| {
             let l = l.to_lowercase();
-            DEFAULT_MIMES.iter().any(|m| l.starts_with(&format!("{m}="))) && (l.contains("=mailnix.desktop") || l.contains("=mailnix-user.desktop"))
+            DEFAULT_MIMES.iter().any(|m| l.starts_with(&format!("{m}="))) && (l.contains("=mailnix.desktop") || l.contains("=mailnix-user.desktop") || l.contains("=lynora.desktop"))
         });
         if was_default {
             let _ = set_default_app();
@@ -3029,7 +3042,7 @@ pub fn migrate_legacy_integration() {
         // E-posta uygulaması Lynora ise (ayarlardan ya da sistemin "Varsayılan uygulamalar"
         // bölümünden seçilmiş olsun) .msg/.eml dosyaları da Lynora ile açılır
         let chosen = crate::db::Db::open_default().ok().and_then(|db| db.setting("default_app_chosen")).as_deref() == Some("1");
-        let mail_app = default_for(DEFAULT_MIMES[0]).starts_with("lynora");
+        let mail_app = is_our_desktop(&default_for(DEFAULT_MIMES[0]));
         if (chosen || mail_app) && !was_default && !default_app_status_all() {
             let _ = set_default_app();
         }
@@ -3335,10 +3348,10 @@ pub async fn list_rooms(state: State<'_, AppState>, query: Option<String>) -> R<
 
 /// Zamanlama Yardımcısı: katılımcıların ve odaların meşguliyet bilgisi.
 #[tauri::command]
-pub async fn free_busy(state: State<'_, AppState>, emails: Vec<String>, start: f64, end: f64, interval: Option<u32>) -> R<Value> {
+pub async fn free_busy(state: State<'_, AppState>, emails: Vec<String>, start: f64, end: f64, interval: Option<u32>, account_id: Option<i64>) -> R<Value> {
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(acc) = db.accounts().into_iter().find(|a| a.is_exchange() && a.auth_state != "failed") else { return Ok(json!({})) };
+        let Some(acc) = db.accounts().into_iter().find(|a| a.is_exchange() && a.auth_state != "failed" && account_id.map_or(true, |id| a.id == id)) else { return Ok(json!({})) };
         let iv = interval.unwrap_or(30).clamp(5, 1440);
         // Exchange tek istekte en çok 100 posta kutusu kabul eder (ör. tüm odalar sorulurken)
         let mut map = serde_json::Map::new();
@@ -3370,10 +3383,10 @@ pub async fn mailbox_usage(state: State<'_, AppState>) -> R<Value> {
 /// Zamanlama Yardımcısı (ayrıntılı): kişi başına birleşik meşguliyet ve öğeler (konu/konum
 /// paylaşılıyorsa). Döner: { adres: { merged, events: [{start, end, show_as, title, location}] } }
 #[tauri::command]
-pub async fn free_busy_details(state: State<'_, AppState>, emails: Vec<String>, start: f64, end: f64, interval: Option<u32>) -> R<Value> {
+pub async fn free_busy_details(state: State<'_, AppState>, emails: Vec<String>, start: f64, end: f64, interval: Option<u32>, account_id: Option<i64>) -> R<Value> {
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(acc) = db.accounts().into_iter().find(|a| a.is_exchange() && a.auth_state != "failed") else { return Ok(json!({})) };
+        let Some(acc) = db.accounts().into_iter().find(|a| a.is_exchange() && a.auth_state != "failed" && account_id.map_or(true, |id| a.id == id)) else { return Ok(json!({})) };
         let iv = interval.unwrap_or(30).clamp(5, 1440);
         let mut map = serde_json::Map::new();
         for chunk in emails.chunks(100) {
@@ -3428,11 +3441,11 @@ pub async fn group_addresses(state: State<'_, AppState>, emails: Vec<String>) ->
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let groups = db.groups();
-        let list: Vec<String> = emails.iter().map(|e| e.trim().to_lowercase()).filter(|e| e.contains('@')).take(200).collect();
+        let list: Vec<String> = emails.iter().map(|e| e.trim().to_lowercase()).filter(|e| !e.is_empty()).take(200).collect();
         // Önbellekte olmayanlar dizinde tek seferde ve paralel çözülür (ad da önbelleğe girer)
         let unknown: Vec<String> = list
             .iter()
-            .filter(|e| !groups.iter().any(|g| g.name.to_lowercase() == **e) && !GROUP_CACHE.lock().unwrap_or_else(|x| x.into_inner()).contains_key(*e))
+            .filter(|e| e.contains('@') && !groups.iter().any(|g| g.name.to_lowercase() == **e) && !GROUP_CACHE.lock().unwrap_or_else(|x| x.into_inner()).contains_key(*e))
             .cloned()
             .collect();
         resolve_directory(&db, &unknown);

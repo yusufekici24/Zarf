@@ -3,26 +3,20 @@
   import { t } from "$lib/i18n.svelte";
   import { app } from "$lib/stores/app.svelte";
   import { api } from "$lib/api";
-  import Bold from "@lucide/svelte/icons/bold";
-  import Italic from "@lucide/svelte/icons/italic";
-  import Underline from "@lucide/svelte/icons/underline";
-  import Strikethrough from "@lucide/svelte/icons/strikethrough";
-  import List from "@lucide/svelte/icons/list";
-  import ListOrdered from "@lucide/svelte/icons/list-ordered";
-  import AlignLeft from "@lucide/svelte/icons/align-left";
-  import AlignCenter from "@lucide/svelte/icons/align-center";
-  import AlignRight from "@lucide/svelte/icons/align-right";
-  import Indent from "@lucide/svelte/icons/indent-increase";
-  import Outdent from "@lucide/svelte/icons/indent-decrease";
   import LinkIcon from "@lucide/svelte/icons/link";
   import ImageIcon from "@lucide/svelte/icons/image";
   import TableIcon from "@lucide/svelte/icons/table";
-  import Eraser from "@lucide/svelte/icons/eraser";
   import Undo from "@lucide/svelte/icons/undo-2";
   import Redo from "@lucide/svelte/icons/redo-2";
   import Minus from "@lucide/svelte/icons/minus";
-  import Highlighter from "@lucide/svelte/icons/highlighter";
-  import Baseline from "@lucide/svelte/icons/baseline";
+  import Unlink from "@lucide/svelte/icons/unlink";
+  import ExternalLink from "@lucide/svelte/icons/external-link";
+  import EditorTools from "$lib/components/editor/EditorTools.svelte";
+  import { blockStyleCss, caretState, changeCase as convertCase, normalizeUrl, portal, textStats, type CaretState, type CaseMode, type ColorKind, type EditorApi, type TableOp } from "$lib/editor";
+  import { applyTableStyle, tableOp as runTableOp } from "$lib/editor-table";
+  import { FONT_SIZES } from "$lib/fonts";
+  import { escapeHtml } from "$lib/format";
+  import { i18n } from "$lib/i18n.svelte";
 
   let {
     html = $bindable(""),
@@ -30,8 +24,10 @@
     toolbar = true,
     onchange,
     fontStyle = "",
-    caret = $bindable({ family: "", size: 0 }),
+    caret = $bindable(caretState()),
     onfiles,
+    zoom = 1,
+    onactivity,
   }: {
     html?: string;
     plain?: boolean;
@@ -39,10 +35,14 @@
     onchange?: () => void;
     /** Varsayılan yazı tipi (Kırtasiye ve Yazı Tipleri) */
     fontStyle?: string;
-    /** İmlecin bulunduğu yerdeki yazı tipi ve punto (şeritteki kutular bunu gösterir, Outlook gibi) */
-    caret?: { family: string; size: number };
+    /** İmlecin bulunduğu yerdeki biçim (şeritteki kutular ve düğmeler bunu gösterir, Outlook gibi) */
+    caret?: CaretState;
     /** Yapıştırılan resim olmayan dosyalar (yol listesi): ek olarak eklenir */
     onfiles?: (paths: string[]) => void;
+    /** Yazı alanının yakınlaştırması (durum çubuğundaki kaydırıcı); gönderilen iletiyi etkilemez */
+    zoom?: number;
+    /** İçerik ya da seçim değişti (durum çubuğu sözcük sayısını yeniler) */
+    onactivity?: () => void;
   } = $props();
 
   let editor: HTMLDivElement | undefined = $state();
@@ -58,6 +58,7 @@
     if (editor && h !== lastSet) {
       editor.innerHTML = h;
       lastSet = h;
+      onactivity?.();
     }
   });
 
@@ -74,6 +75,8 @@
   function sync() {
     if (!editor) return;
     pending = true;
+    fixFontSize();
+    onactivity?.();
     // Yazarken hiçbir şey kopyalanmaz (uzun alıntılı yanıtta takılma yapıyordu): içerik
     // odak çıkınca ya da istendiğinde (gönder/kaydet: getHtml) alınır
     if (!dirtyNotified) {
@@ -108,16 +111,26 @@
     if (editor && sel && sel.rangeCount && editor.contains(sel.anchorNode)) savedRange = sel.getRangeAt(0).cloneRange();
   }
   $effect(() => {
-    const h = () => saveRange();
+    const h = () => {
+      saveRange();
+      const sel = window.getSelection();
+      if (!editor || !sel?.rangeCount || !editor.contains(sel.anchorNode)) return;
+      // Seçim kalkınca seçim araç çubuğu da kalkar
+      if (sel.isCollapsed) bubble = null;
+      onactivity?.();
+    };
     document.addEventListener("selectionchange", h);
     return () => document.removeEventListener("selectionchange", h);
   });
   function restoreRange() {
     if (!editor) return;
+    // Odak düzenleyicideyse seçim yerindedir; değilse odak verilince tarayıcının koyduğu imlece
+    // güvenilmez, son kaydedilen seçim geri yüklenir
+    const had = document.activeElement === editor;
     editor.focus();
     const sel = window.getSelection();
     if (!sel) return;
-    if (sel.rangeCount && editor.contains(sel.anchorNode)) return;
+    if (had && sel.rangeCount && editor.contains(sel.anchorNode)) return;
     sel.removeAllRanges();
     if (savedRange && editor.contains(savedRange.startContainer)) sel.addRange(savedRange);
     else {
@@ -139,29 +152,253 @@
   export function setFontSize(pt: number) {
     if (!editor) return;
     restoreRange();
+    // (komutun gönderdiği "input" olayı fixFontSize'ı çağırır: punto ondan önce yazılmalı)
+    pendingSize = pt;
     document.execCommand("styleWithCSS", false, "false");
     document.execCommand("fontSize", false, "7");
-    editor.querySelectorAll('font[size="7"]').forEach((f) => {
-      const span = document.createElement("span");
-      span.style.fontSize = `${pt}pt`;
-      while (f.firstChild) span.appendChild(f.firstChild);
-      f.replaceWith(span);
-    });
     sync();
     readCaret();
   }
 
-  /** İmleçteki yazı tipi: ilk aile adı ve punto */
-  function readCaret() {
+  // Tarayıcının verdiği <font size="7"> yerinde punto stiline çevrilir (öğe değiştirilmez ki seçim
+  // bozulmasın). Seçim boşken komut yalnızca "yazılacak metnin" boyutunu ayarlar; öğe ilk tuşta
+  // oluşur, bu yüzden her girdide yeniden bakılır (yoksa yazılan metin dev boyutta kalıyordu).
+  let pendingSize = 0;
+  function fixFontSize() {
+    if (!pendingSize || !editor) return;
+    editor.querySelectorAll<HTMLElement>('font[size="7"]').forEach((f) => {
+      f.removeAttribute("size");
+      f.style.fontSize = `${pendingSize}pt`;
+    });
+  }
+
+  /** Yazı tipini bir kademe büyütür/küçültür (Ctrl+Shift+> / Ctrl+<) */
+  export function stepFontSize(dir: number) {
+    const cur = caret.size || 11;
+    const next = dir > 0 ? FONT_SIZES.find((s) => s > cur) : FONT_SIZES.findLast((s) => s < cur);
+    if (next) setFontSize(next);
+  }
+
+  /** Yazı rengi, vurgu rengi ya da (tabloda) hücre gölgesi. Boş renk: otomatik / renk yok */
+  export function setColor(kind: ColorKind, color: string) {
+    if (!editor) return;
+    if (kind === "shade") return tableOp("shade", color);
+    restoreRange();
+    document.execCommand("styleWithCSS", false, "true");
+    if (kind === "fore") document.execCommand("foreColor", false, color || getComputedStyle(editor).color);
+    else document.execCommand("hiliteColor", false, color || "transparent");
+    document.execCommand("styleWithCSS", false, "false");
+    sync();
+    readCaret();
+  }
+
+  /** Paragraf stili (Başlık 1, Alıntı, Kod …); aynı stil yeniden seçilirse normale döner */
+  export function setBlock(tag: string) {
+    const to = caret.block === tag ? "div" : tag;
+    // Alıntı bloğu biçim değiştirilerek kalkmaz: önce girinti azaltılır
+    if (caret.block === "blockquote") exec("outdent");
+    if (to !== "div" || caret.block !== "blockquote") exec("formatBlock", `<${to}>`);
+  }
+
+  const BLOCKS = "div,p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th";
+  /** Seçimin değdiği en içteki bloklar (paragraflar, liste öğeleri, hücreler) */
+  function selectedBlocks(): HTMLElement[] {
     const sel = window.getSelection();
-    if (!editor || !sel || !sel.rangeCount) return;
-    let n: Node | null = sel.getRangeAt(0).startContainer;
-    if (!editor.contains(n)) return;
+    if (!editor || !sel?.rangeCount) return [];
+    const r = sel.getRangeAt(0);
+    return Array.from(editor.querySelectorAll<HTMLElement>(BLOCKS)).filter((b) => r.intersectsNode(b) && !b.querySelector(BLOCKS));
+  }
+
+  /** Satır aralığı (1 = tek, 1.5, 2 …): seçimdeki paragraflara yazılır */
+  export function setLineHeight(value: string) {
+    restoreRange();
+    let blocks = selectedBlocks();
+    if (!blocks.length) {
+      // Metin doğrudan düzenleyicinin içindeyse önce bir paragrafa alınır
+      document.execCommand("formatBlock", false, "<div>");
+      blocks = selectedBlocks();
+    }
+    for (const b of blocks) b.style.lineHeight = value;
+    sync();
+  }
+
+  /** Seçili metnin harflerini çevirir (BÜYÜK, küçük, Her Sözcük, Tümce düzeni); biçim korunur */
+  export function changeCase(mode: CaseMode) {
+    restoreRange();
+    const sel = window.getSelection();
+    if (!editor || !sel?.rangeCount || sel.isCollapsed) return;
+    const r = sel.getRangeAt(0);
+    const parts: { node: Text; from: number; to: number }[] = [];
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
+      if (!r.intersectsNode(n)) continue;
+      const from = n === r.startContainer ? r.startOffset : 0;
+      const to = n === r.endContainer ? r.endOffset : n.length;
+      if (to > from) parts.push({ node: n, from, to });
+    }
+    if (!parts.length) return;
+    // Tümce ve sözcük başları seçimin bütününe göre bulunur (biçim bir sözcüğü bölmüş olabilir)
+    const text = parts.map((p) => p.node.data.slice(p.from, p.to)).join("");
+    const out = convertCase(text, mode, i18n.locale);
+    let at = 0;
+    for (const p of parts) {
+      const len = p.to - p.from;
+      // Uzunluğu değiştiren dönüşümde (ß → SS) parçalar ayrı ayrı çevrilir
+      p.node.replaceData(p.from, len, out.length === text.length ? out.slice(at, at + len) : convertCase(p.node.data.slice(p.from, p.to), mode, i18n.locale));
+      at += len;
+    }
+    const first = parts[0];
+    const last = parts[parts.length - 1];
+    const range = document.createRange();
+    range.setStart(first.node, first.from);
+    range.setEnd(last.node, Math.min(last.to, last.node.length));
+    sel.removeAllRanges();
+    sel.addRange(range);
+    sync();
+  }
+
+  // ---------------------------------------------------------------- biçim boyacısı
+  type Paint = { bold: boolean; italic: boolean; underline: boolean; strike: boolean; fore: string; back: string; family: string; size: number };
+  let paint: Paint | null = null;
+  function stopPainter() {
+    paint = null;
+    if (caret.painter) caret = { ...caret, painter: 0 };
+  }
+  /** Biçim Boyacısı: imleçteki biçimi alır, sonra fareyle seçilen metne uygular. `lock` (çift
+      tıklama): Esc'e ya da yeniden tıklanana kadar açık kalır */
+  export function painter(lock = false) {
+    if (caret.painter && !lock) return stopPainter();
+    restoreRange();
+    readCaret();
+    const el = caretElement();
+    if (!el || !editor) return;
+    let back = "";
+    for (let n: Element | null = el; n && n !== editor; n = n.parentElement) {
+      const bg = getComputedStyle(n).backgroundColor;
+      if (bg && bg !== "transparent" && bg !== "rgba(0, 0, 0, 0)") {
+        back = bg;
+        break;
+      }
+    }
+    paint = { bold: caret.bold, italic: caret.italic, underline: caret.underline, strike: caret.strike, fore: getComputedStyle(el).color, back, family: caret.family, size: caret.size };
+    caret = { ...caret, painter: lock ? 2 : 1 };
+  }
+  function applyPaint() {
+    const p = paint;
+    if (!p) return;
+    document.execCommand("removeFormat");
+    for (const [cmd, want] of [["bold", p.bold], ["italic", p.italic], ["underline", p.underline], ["strikeThrough", p.strike]] as [string, boolean][]) {
+      if (document.queryCommandState(cmd) !== want) document.execCommand(cmd);
+    }
+    document.execCommand("styleWithCSS", false, "true");
+    document.execCommand("foreColor", false, p.fore);
+    if (p.back) document.execCommand("hiliteColor", false, p.back);
+    document.execCommand("styleWithCSS", false, "false");
+    if (p.family) document.execCommand("fontName", false, p.family);
+    if (p.size) setFontSize(p.size);
+    sync();
+    if (caret.painter !== 2) stopPainter();
+    readCaret();
+  }
+
+  // ---------------------------------------------------------------- tablo
+  function cellAt(): HTMLTableCellElement | null {
+    const cell = caretElement()?.closest<HTMLTableCellElement>("td,th");
+    return cell && editor?.contains(cell) ? cell : null;
+  }
+  function caretIn(cell: HTMLElement) {
+    const r = document.createRange();
+    r.selectNodeContents(cell);
+    r.collapse(true);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(r);
+  }
+  /** İmlecin bulunduğu tabloda satır/sütun ekleme-silme, stil, gölgelendirme, genişlik */
+  export function tableOp(op: TableOp, arg = "") {
+    restoreRange();
+    const cell = cellAt();
+    const sel = window.getSelection();
+    if (!cell || !sel?.rangeCount) return;
+    if (op === "shade") {
+      // Seçim birden çok hücreye yayılmışsa hepsi boyanır
+      const r = sel.getRangeAt(0);
+      const cells = r.collapsed ? [cell] : Array.from(cell.closest("table")!.querySelectorAll<HTMLTableCellElement>("td,th")).filter((c) => r.intersectsNode(c));
+      for (const c of cells) c.style.backgroundColor = arg;
+    } else {
+      const table = cell.closest("table")!;
+      const after = document.createRange();
+      after.setStartAfter(table);
+      after.collapse(true);
+      const next = runTableOp(cell, op, arg);
+      if (next) caretIn(next);
+      else {
+        sel.removeAllRanges();
+        sel.addRange(after);
+      }
+    }
+    sync();
+    readCaret();
+  }
+
+  /** İmlecin (seçimin başının) içinde olduğu öğe */
+  function caretElement(): Element | null {
+    const sel = window.getSelection();
+    if (!editor || !sel || !sel.rangeCount) return null;
+    const r = sel.getRangeAt(0);
+    let n: Node | null = r.startContainer;
+    if (!editor.contains(n)) return null;
+    if (!r.collapsed && r.commonAncestorContainer.nodeType === 1) {
+      // Seçimin başı çoğu kez biçim öğesinin hemen dışında kalır: seçili ilk metnin biçimi gösterilir
+      const walker = document.createTreeWalker(r.commonAncestorContainer, NodeFilter.SHOW_TEXT);
+      for (let x = walker.nextNode() as Text | null; x; x = walker.nextNode() as Text | null) {
+        if (!r.intersectsNode(x)) continue;
+        if ((x === r.endContainer ? r.endOffset : x.length) > (x === r.startContainer ? r.startOffset : 0)) {
+          n = x;
+          break;
+        }
+      }
+    }
     if (n && n.nodeType !== 1) n = n.parentNode;
-    const cs = getComputedStyle(n as Element);
-    const family = (cs.fontFamily.split(",")[0] ?? "").trim().replace(/^["']|["']$/g, "");
-    const size = Math.round((parseFloat(cs.fontSize) * 0.75) * 2) / 2;
-    if (family !== caret.family || size !== caret.size) caret = { family, size };
+    return n as Element | null;
+  }
+
+  /** İmleçteki biçim: yazı tipi, punto, açık olan biçimler, paragraf stili, tablo/bağlantı içinde mi */
+  function readCaret() {
+    const el = caretElement();
+    if (!el || !editor) return;
+    const ed = editor;
+    const cs = getComputedStyle(el);
+    const on = (cmd: string) => {
+      try {
+        return document.queryCommandState(cmd);
+      } catch {
+        return false;
+      }
+    };
+    const inside = (selector: string) => {
+      const m = el.closest(selector);
+      return m && m !== ed && ed.contains(m) ? m : null;
+    };
+    const align = cs.textAlign.replace("-webkit-", "");
+    const next: CaretState = {
+      family: (cs.fontFamily.split(",")[0] ?? "").trim().replace(/^["']|["']$/g, ""),
+      size: Math.round(parseFloat(cs.fontSize) * 0.75 * 2) / 2,
+      bold: on("bold"),
+      italic: on("italic"),
+      underline: on("underline"),
+      strike: on("strikeThrough"),
+      sub: on("subscript"),
+      sup: on("superscript"),
+      ul: on("insertUnorderedList"),
+      ol: on("insertOrderedList"),
+      align: align === "center" || align === "justify" ? align : align === "right" || align === "end" ? "right" : "left",
+      block: inside("h1,h2,h3,pre,blockquote:not([style])")?.tagName.toLowerCase() ?? "div",
+      link: !!inside("a[href]"),
+      table: !!inside("td,th"),
+      painter: caret.painter,
+    };
+    if ((Object.keys(next) as (keyof CaretState)[]).some((k) => next[k] !== caret[k])) caret = next;
   }
   $effect(() => {
     const h = () => readCaret();
@@ -178,7 +415,7 @@
       const family = (cs.fontFamily.split(",")[0] ?? "").trim().replace(/^["']|["']$/g, "");
       const size = Math.round(parseFloat(cs.fontSize) * 0.75 * 2) / 2;
       const sel = window.getSelection();
-      if (!sel?.rangeCount || !ed.contains(sel.getRangeAt(0).startContainer)) caret = { family, size };
+      if (!sel?.rangeCount || !ed.contains(sel.getRangeAt(0).startContainer)) caret = { ...caret, family, size };
       else readCaret();
     });
   });
@@ -187,7 +424,7 @@
   export function insertTable(r: number, c: number) {
     const cell = '<td style="border:1px solid #bfbfbf;padding:3px 6px;min-width:48px;vertical-align:top"><br></td>';
     const row = `<tr>${cell.repeat(c)}</tr>`;
-    const html = `<table style="border-collapse:collapse;border:1px solid #bfbfbf">${row.repeat(r)}</table><div><br></div>`;
+    const html = `<table data-lyn-new style="border-collapse:collapse;border:1px solid #bfbfbf">${row.repeat(r)}</table><div><br></div>`;
     restoreRange();
     if (!document.execCommand("insertHTML", false, html)) {
       // Komut desteklenmiyorsa doğrudan imleç konumuna eklenir
@@ -199,13 +436,19 @@
         range.insertNode(frag);
       }
     }
+    // Tarayıcı, eklerken sayfanın stiliyle aynı saydığı değerleri (kenarlık çizgisi türü) satır
+    // içinden atar; alıcıda o stil olmadığı için kenarlıklar görünmezdi: stil yeniden yazılır
+    const fresh = editor?.querySelector<HTMLTableElement>("table[data-lyn-new]");
+    if (fresh) {
+      fresh.removeAttribute("data-lyn-new");
+      applyTableStyle(fresh, "grid");
+      const first = fresh.rows[0]?.cells[0];
+      if (first) caretIn(first);
+    }
     sync();
+    readCaret();
   }
 
-  export async function link() {
-    const url = await app.prompt(t("editor.insert_link"), t("editor.url"), "https://");
-    if (url) exec("createLink", url);
-  }
 
   function image(e: Event) {
     const file = (e.target as HTMLInputElement).files?.[0];
@@ -324,6 +567,170 @@
     exec("insertHTML", s);
   }
 
+  // ---------------------------------------------------------------- bağlantı kartı
+  // Ctrl+K ya da Bağlantı düğmesi: seçimin yanında metin ve adres alanlı küçük bir kart açılır;
+  // imleç bir bağlantının içindeyse o bağlantı düzenlenir (Aç / Kaldır).
+  type LinkCard = { x: number; y: number; text: string; url: string; el: HTMLAnchorElement | null; range: Range; initial: string };
+  let linkCard = $state<LinkCard | null>(null);
+  /** Yüzen kutunun yeri: seçimin altı, sığmazsa üstü; pencereden taşmaz */
+  function place(rect: DOMRect, width: number, height: number, above = false) {
+    const x = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+    const over = rect.top - height - 8;
+    const under = rect.bottom + 8;
+    const y = above ? (over >= 8 ? over : under) : under + height <= window.innerHeight - 8 ? under : Math.max(8, over);
+    return { x, y };
+  }
+  function rangeRect(r: Range): DOMRect {
+    const first = r.getClientRects()[0] ?? r.getBoundingClientRect();
+    // Boş satırdaki imlecin dikdörtgeni olmaz: içinde olduğu öğeninki alınır
+    if (first.width || first.height) return first;
+    const n = r.startContainer;
+    return (n.nodeType === 1 ? (n as Element) : n.parentElement!).getBoundingClientRect();
+  }
+  /** Kart <body>'ye taşındıktan sonra odak verilir (taşınan öğe odağı yitirir) */
+  function focusLater(node: HTMLInputElement) {
+    setTimeout(() => node.focus(), 0);
+  }
+  export function link() {
+    if (plain) return;
+    restoreRange();
+    const sel = window.getSelection();
+    if (!sel?.rangeCount) return;
+    const range = sel.getRangeAt(0).cloneRange();
+    const a = caretElement()?.closest<HTMLAnchorElement>("a[href]") ?? null;
+    const el = a && editor?.contains(a) ? a : null;
+    const text = (el ? (el.textContent ?? "") : sel.toString()).trim();
+    bubble = null;
+    linkCard = { ...place(rangeRect(range), 328, 132), text, url: el?.getAttribute("href") ?? "", el, range, initial: text };
+  }
+  function applyLink() {
+    const c = linkCard;
+    const url = normalizeUrl(c?.url ?? "");
+    if (!c || !url) return;
+    linkCard = null;
+    const text = c.text.trim() || c.url.trim();
+    if (c.el && editor?.contains(c.el)) {
+      c.el.setAttribute("href", url);
+      if (text !== c.initial) c.el.textContent = text;
+      editor.focus();
+      sync();
+      return;
+    }
+    select(c.range);
+    // Metin değişmediyse seçimin biçimi korunur; değiştiyse ya da seçim yoksa yeni bağlantı yazılır
+    if (!c.range.collapsed && text === c.initial) exec("createLink", url);
+    else exec("insertHTML", `<a href="${escapeHtml(url)}">${escapeHtml(text)}</a>`);
+  }
+  function removeLink() {
+    const el = linkCard?.el;
+    linkCard = null;
+    if (!el || !editor?.contains(el)) return;
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    select(r);
+    exec("unlink");
+  }
+
+  // ---------------------------------------------------------------- seçim araç çubuğu
+  // Fareyle metin seçilince seçimin üstünde çıkan küçük araç çubuğu (Word/Outlook mini araç
+  // çubuğu). Yazmaya başlayınca, seçim kalkınca, kaydırınca ya da dışarı tıklanınca kaybolur.
+  let bubble = $state<{ x: number; y: number } | null>(null);
+  let dragging = false;
+  function showBubble() {
+    const sel = window.getSelection();
+    if (plain || linkCard || app.setting("compose_mini_toolbar", "1") === "0" || !editor || !sel?.rangeCount || sel.isCollapsed || !editor.contains(sel.anchorNode)) {
+      bubble = null;
+      return;
+    }
+    bubble = place(rangeRect(sel.getRangeAt(0)), 372, 34, true);
+  }
+  $effect(() => {
+    // Yüzen kutuların kendisi ve onlardan açılan paletler "dışarısı" sayılmaz
+    const FLOATING = "[data-editor-float], [data-slot$='-content'], [data-select-popup]";
+    const down = (e: MouseEvent) => {
+      const tg = e.target as Element;
+      if (tg.closest?.(FLOATING)) return;
+      dragging = !!editor?.contains(tg);
+      bubble = null;
+      linkCard = null;
+    };
+    const up = () => {
+      if (!dragging) return;
+      dragging = false;
+      // Seçim fare bırakıldıktan sonra kesinleşir
+      setTimeout(() => {
+        const sel = window.getSelection();
+        if (!editor || !sel?.rangeCount || sel.isCollapsed || !editor.contains(sel.anchorNode)) return;
+        if (paint) applyPaint();
+        else showBubble();
+      }, 0);
+    };
+    document.addEventListener("mousedown", down, true);
+    document.addEventListener("mouseup", up);
+    return () => {
+      document.removeEventListener("mousedown", down, true);
+      document.removeEventListener("mouseup", up);
+    };
+  });
+
+  function onkeydown(e: KeyboardEvent) {
+    if (plain) return;
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (e.key === "Escape") {
+      // Açık olan yüzen kutu ya da biçim boyacısı kapanır (pencere kapanmaz)
+      if (!bubble && !caret.painter) return;
+      e.preventDefault();
+      bubble = null;
+      stopPainter();
+    } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      link();
+    } else if (ctrl && (e.key === ">" || e.key === "<")) {
+      e.preventDefault();
+      stepFontSize(e.key === ">" ? 1 : -1);
+    } else if (e.key === "Tab" && !ctrl && !e.altKey) {
+      const cell = cellAt();
+      if (cell) {
+        // Tabloda sonraki/önceki hücre; son hücrede yeni satır açılır
+        e.preventDefault();
+        const cells = Array.from(cell.closest("table")!.querySelectorAll<HTMLTableCellElement>("td,th"));
+        const next = cells[cells.indexOf(cell) + (e.shiftKey ? -1 : 1)];
+        if (next) caretIn(next);
+        else if (!e.shiftKey) {
+          const last = cell.closest("table")!.rows;
+          caretIn(last[last.length - 1].cells[cell.cellIndex]);
+          tableOp("rowBelow");
+          const row = cellAt()?.parentElement as HTMLTableRowElement | undefined;
+          if (row) caretIn(row.cells[0]);
+        }
+      } else if (caret.ul || caret.ol) {
+        e.preventDefault();
+        exec(e.shiftKey ? "outdent" : "indent");
+      } else if (!e.shiftKey) {
+        e.preventDefault();
+        exec("insertText", "    ");
+      }
+    } else if (!["Shift", "Control", "Alt", "Meta"].includes(e.key)) bubble = null;
+  }
+
+  /** Sözcük ve karakter sayısı (alıntılanan özgün ileti hariç) ile seçili sözcük sayısı */
+  export function stats(): { words: number; chars: number; selected: number } {
+    let words = 0;
+    let chars = 0;
+    for (const n of editor?.childNodes ?? []) {
+      if (n instanceof HTMLElement && n.matches(".lynora-quote, .mailnix-quote")) continue;
+      const s = textStats(n instanceof HTMLElement ? n.innerText : (n.textContent ?? ""));
+      words += s.words;
+      chars += s.chars;
+    }
+    const sel = window.getSelection();
+    const selected = editor && sel?.rangeCount && !sel.isCollapsed && editor.contains(sel.anchorNode) ? textStats(sel.toString()).words : 0;
+    return { words, chars, selected };
+  }
+
+  /** Araç çubuklarına verilen komut arayüzü */
+  const self: EditorApi = { exec, setFontSize, stepFontSize, setColor, setBlock, setLineHeight, changeCase, link, painter, tableOp };
+
   // ---------------------------------------------------------------- bul ve değiştir
   /** Düzenleyicideki metin ve her metin düğümünün bu metindeki başlangıcı (biçimlendirme
       bir sözcüğü bölse de bulunur) */
@@ -429,43 +836,22 @@
   }
 </script>
 
+<!-- Paragraf stilleri (Başlık 1, Alıntı, Kod …): gönderirken aynı kurallar satır içine yazılır -->
+<svelte:element this={"style"}>{blockStyleCss(".rich-editor")}</svelte:element>
+
 <div class="flex min-h-0 flex-1 flex-col">
   <input bind:this={fileInput} type="file" accept="image/*" class="hidden" onchange={image} />
   {#if !plain && toolbar}
-    <div class="flex flex-wrap items-center gap-0.5 border-b px-2 py-1">
-      <select class="h-7 rounded border bg-transparent px-1 text-xs" title={t("editor.font")} value={caret.family} onchange={(e) => exec("fontName", (e.target as HTMLSelectElement).value)}>
-        {#if caret.family && !fonts.includes(caret.family)}<option value={caret.family}>{caret.family}</option>{/if}
-        {#each fonts as f (f)}<option value={f}>{f}</option>{/each}
-      </select>
-      <select class="h-7 rounded border bg-transparent px-1 text-xs" title={t("editor.size")} value={String(caret.size)} onchange={(e) => setFontSize(Number((e.target as HTMLSelectElement).value))}>
-        {#if caret.size && !sizes.includes(caret.size)}<option value={String(caret.size)}>{caret.size}</option>{/if}
-        {#each sizes as v (v)}<option value={String(v)}>{v}</option>{/each}
-      </select>
-      <span class="bg-border mx-1 h-5 w-px"></span>
-      {#each ([[Bold, "bold", "editor.bold"], [Italic, "italic", "editor.italic"], [Underline, "underline", "editor.underline"], [Strikethrough, "strikeThrough", "editor.strike"]] as [typeof Bold, string, string][]) as [Icon, cmd, label] (cmd)}
-        <button type="button" class="hover:bg-accent rounded p-1.5" title={t(label)} onmousedown={(e) => { e.preventDefault(); exec(cmd); }}><Icon class="size-4" /></button>
-      {/each}
-      <label class="hover:bg-accent relative flex cursor-pointer items-center rounded p-1.5" title={t("editor.color")}>
-        <Baseline class="size-4" />
-        <input type="color" class="absolute inset-0 cursor-pointer opacity-0" value="#c00000" onchange={(e) => exec("foreColor", (e.target as HTMLInputElement).value)} />
-      </label>
-      <label class="hover:bg-accent relative flex cursor-pointer items-center rounded p-1.5" title={t("editor.highlight")}>
-        <Highlighter class="size-4" />
-        <input type="color" class="absolute inset-0 cursor-pointer opacity-0" value="#ffff00" onchange={(e) => exec("hiliteColor", (e.target as HTMLInputElement).value)} />
-      </label>
-      <span class="bg-border mx-1 h-5 w-px"></span>
-      {#each ([[List, "insertUnorderedList", "editor.bullets"], [ListOrdered, "insertOrderedList", "editor.numbering"], [Outdent, "outdent", "editor.outdent"], [Indent, "indent", "editor.indent"], [AlignLeft, "justifyLeft", "editor.left"], [AlignCenter, "justifyCenter", "editor.center"], [AlignRight, "justifyRight", "editor.right"]] as [typeof Bold, string, string][]) as [Icon, cmd, label] (cmd)}
-        <button type="button" class="hover:bg-accent rounded p-1.5" title={t(label)} onmousedown={(e) => { e.preventDefault(); exec(cmd); }}><Icon class="size-4" /></button>
-      {/each}
-      <span class="bg-border mx-1 h-5 w-px"></span>
-      <button type="button" class="hover:bg-accent rounded p-1.5" title={t("editor.insert_link")} onmousedown={(e) => { e.preventDefault(); link(); }}><LinkIcon class="size-4" /></button>
-      <button type="button" class="hover:bg-accent rounded p-1.5" title={t("editor.insert_image")} onclick={() => fileInput?.click()}><ImageIcon class="size-4" /></button>
-      <button type="button" class="hover:bg-accent rounded p-1.5" title={t("editor.insert_table")} onmousedown={(e) => { e.preventDefault(); table(); }}><TableIcon class="size-4" /></button>
-      <button type="button" class="hover:bg-accent rounded p-1.5" title={t("editor.hr")} onmousedown={(e) => { e.preventDefault(); exec("insertHorizontalRule"); }}><Minus class="size-4" /></button>
-      <button type="button" class="hover:bg-accent rounded p-1.5" title={t("editor.clear_format")} onmousedown={(e) => { e.preventDefault(); exec("removeFormat"); }}><Eraser class="size-4" /></button>
-      <span class="bg-border mx-1 h-5 w-px"></span>
-      <button type="button" class="hover:bg-accent rounded p-1.5" title={t("editor.undo")} onmousedown={(e) => { e.preventDefault(); exec("undo"); }}><Undo class="size-4" /></button>
-      <button type="button" class="hover:bg-accent rounded p-1.5" title={t("editor.redo")} onmousedown={(e) => { e.preventDefault(); exec("redo"); }}><Redo class="size-4" /></button>
+    <div class="flex flex-wrap items-center gap-0.5 border-b px-2 py-1" role="toolbar">
+      <EditorTools layout="bar" editor={self} {caret} />
+      <span class="bg-border mx-0.5 h-4 w-px"></span>
+      <button type="button" class="ed-btn" data-active={caret.link} title={t("editor.insert_link")} onmousedown={(e) => { e.preventDefault(); link(); }}><LinkIcon class="size-4" /></button>
+      <button type="button" class="ed-btn" title={t("editor.insert_image")} onclick={() => fileInput?.click()}><ImageIcon class="size-4" /></button>
+      <button type="button" class="ed-btn" title={t("editor.insert_table")} onmousedown={(e) => { e.preventDefault(); table(); }}><TableIcon class="size-4" /></button>
+      <button type="button" class="ed-btn" title={t("editor.hr")} onmousedown={(e) => { e.preventDefault(); exec("insertHorizontalRule"); }}><Minus class="size-4" /></button>
+      <span class="bg-border mx-0.5 h-4 w-px"></span>
+      <button type="button" class="ed-btn" title={t("editor.undo")} onmousedown={(e) => { e.preventDefault(); exec("undo"); }}><Undo class="size-4" /></button>
+      <button type="button" class="ed-btn" title={t("editor.redo")} onmousedown={(e) => { e.preventDefault(); exec("redo"); }}><Redo class="size-4" /></button>
     </div>
   {/if}
   <div
@@ -475,13 +861,49 @@
     tabindex="0"
     aria-multiline="true"
     spellcheck={app.setting("spell_check", "1") === "1" ? "true" : "false"}
-    class="rich-editor min-h-0 flex-1 overflow-auto px-4 py-3 outline-none {plain ? 'font-mono whitespace-pre-wrap' : ''}"
-    style={fontStyle}
+    class="rich-editor min-h-0 flex-1 overflow-auto px-4 py-3 outline-none {plain ? 'font-mono whitespace-pre-wrap' : ''} {caret.painter ? 'painting' : ''}"
+    style="{fontStyle}{zoom !== 1 ? `;zoom:${zoom}` : ''}"
     oninput={sync}
     onblur={flush}
+    onscroll={() => (bubble = null)}
+    {onkeydown}
     {onpaste}
   ></div>
 </div>
+
+{#if bubble}
+  <div use:portal data-editor-float="bubble" role="toolbar" aria-label={t("editor.mini_toolbar")} class="bg-popover text-popover-foreground fixed z-[80] flex items-center gap-0.5 rounded-md border p-1 shadow-lg" style="left:{bubble.x}px;top:{bubble.y}px">
+    <EditorTools layout="mini" editor={self} {caret} />
+  </div>
+{/if}
+
+{#if linkCard}
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <form
+    use:portal
+    data-editor-float="link"
+    class="bg-popover text-popover-foreground fixed z-[80] flex w-[328px] flex-col gap-1.5 rounded-md border p-2.5 text-[12px] shadow-lg"
+    style="left:{linkCard.x}px;top:{linkCard.y}px"
+    onsubmit={(e) => { e.preventDefault(); applyLink(); }}
+    onkeydown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); linkCard = null; editor?.focus(); } }}
+  >
+    <label class="flex items-center gap-2"><span class="w-10 shrink-0">{t("editor.link_text")}</span>
+      <input class="focus:border-primary h-7 min-w-0 flex-1 rounded border bg-transparent px-1.5 outline-none" bind:value={linkCard.text} />
+    </label>
+    <label class="flex items-center gap-2"><span class="w-10 shrink-0">{t("editor.link_url")}</span>
+      <input class="focus:border-primary h-7 min-w-0 flex-1 rounded border bg-transparent px-1.5 outline-none" placeholder="https://" spellcheck="false" use:focusLater bind:value={linkCard.url} />
+    </label>
+    <div class="mt-0.5 flex items-center gap-1">
+      {#if linkCard.el}
+        <button type="button" class="hover:bg-accent flex h-6 items-center gap-1 rounded px-1.5" onclick={() => linkCard?.url && void api.openUrl(normalizeUrl(linkCard.url))}><ExternalLink class="size-3.5" />{t("common.open")}</button>
+        <button type="button" class="hover:bg-accent flex h-6 items-center gap-1 rounded px-1.5" onclick={removeLink}><Unlink class="size-3.5" />{t("editor.unlink")}</button>
+      {/if}
+      <span class="flex-1"></span>
+      <button type="button" class="hover:bg-accent h-6 rounded border px-2.5" onclick={() => { linkCard = null; editor?.focus(); }}>{t("common.cancel")}</button>
+      <button type="submit" class="bg-primary text-primary-foreground h-6 rounded px-2.5 disabled:opacity-40" disabled={!linkCard.url.trim()}>{t("common.ok")}</button>
+    </div>
+  </form>
+{/if}
 
 <style>
   :global(.rich-editor) {
@@ -493,10 +915,15 @@
     -webkit-font-smoothing: antialiased;
     contain: content;
   }
+  /* Biçim Boyacısı açıkken imleç */
+  :global(.rich-editor.painting) {
+    cursor: copy;
+  }
   :global(.rich-editor p) {
     margin: 0;
   }
-  :global(.rich-editor blockquote) {
+  /* Alıntılanan özgün iletideki alıntı blokları (kullanıcının "Alıntı" stili editor.ts'ten gelir) */
+  :global(.rich-editor :is(.lynora-quote, .mailnix-quote) blockquote:not([style])) {
     border-left: 3px solid #c7c7c7;
     margin: 0 0 0 4px;
     padding-left: 10px;

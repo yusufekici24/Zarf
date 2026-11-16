@@ -1,25 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <defs>
-    <linearGradient id="l" gradientUnits="userSpaceOnUse" x1="0" y1="34" x2="0" y2="218">
-      <stop offset="0" stop-color="#5089ff"/>
-      <stop offset="1" stop-color="#2949d2"/>
-    </linearGradient>
-    <linearGradient id="c" gradientUnits="userSpaceOnUse" x1="64" y1="0" x2="192" y2="0">
-      <stop offset="0" stop-color="#3a7dff"/>
-      <stop offset="1" stop-color="#66d6f5"/>
-    </linearGradient>
-    <filter id="s" filterUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
-      <feGaussianBlur stdDeviation="6"/>
-    </filter>
-    <clipPath id="k">
-      <path d="M36 62a28 28 0 0 1 56 0V218H36Z"/>
-    </clipPath>
-  </defs>
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="56">
-    <path d="M64 62V190" stroke="url(#l)"/>
-    <g clip-path="url(#k)">
-      <path d="M64 184H192" stroke="#0a1b66" stroke-opacity=".4" filter="url(#s)"/>
-    </g>
-    <path d="M64 190H192" stroke="url(#c)"/>
-  </g>
+  <defs><linearGradient id="z" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#b91c1c"/><stop offset="1" stop-color="#52525b"/></linearGradient></defs>
+  <rect x="16" y="16" width="224" height="224" rx="56" fill="url(#z)"/>
+  <rect x="48" y="72" width="160" height="112" rx="16" fill="#fff"/>
+  <path d="m52 82 76 57 76-57M52 174l49-41m103 41-49-41" fill="none" stroke="#b91c1c" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M100 151h55l-55 48h55" fill="none" stroke="#d4d4d8" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" transform="translate(0 -4) scale(1 .8)"/>
 </svg>

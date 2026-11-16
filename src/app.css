@@ -185,7 +185,7 @@ html.dark[data-accent="graphite"] { --primary: oklch(0.75 0.02 250); }
   }
 }
 
-/* Lynora'ya özgü yardımcı sınıflar */
+/* Zarf’a özgü yardımcı sınıflar */
 @layer components {
   .nav-rail-btn {
     @apply text-foreground/80 hover:bg-black/5 dark:hover:bg-white/10 relative flex size-10 items-center justify-center rounded-md;
@@ -214,6 +214,13 @@ html.dark[data-accent="graphite"] { --primary: oklch(0.75 0.02 250); }
   }
   .ribbon-btn-sm {
     @apply hover:bg-accent flex h-[22px] shrink-0 items-center gap-1 rounded px-1 text-[12px] whitespace-nowrap disabled:pointer-events-none disabled:opacity-40;
+  }
+  /* Düzenleyici biçim düğmesi (şerit, araç çubuğu, seçim araç çubuğu); imleçteki biçim açıksa vurgulu */
+  .ed-btn {
+    @apply hover:bg-accent flex h-6 min-w-6 shrink-0 items-center justify-center gap-0.5 rounded px-1 text-[12px] disabled:pointer-events-none disabled:opacity-40;
+  }
+  .ed-btn[data-active="true"] {
+    @apply bg-(--primary-soft) hover:bg-(--primary-soft);
   }
   /* Şerit sığmayınca Outlook gibi kademeli sıkışır: önce küçük düğmelerin adları gizlenir,
      büyük düğmelerin adları daralır; sonra sağdaki gruplar simgeli tek düğmeye katlanır */
@@ -389,3 +396,14 @@ textarea,
 [data-confirm-dialog][data-closed]:not([data-closed="false"]) {
   display: none !important;
 }
+
+/* Startup animates transforms only and honors reduced-motion preferences. */
+.zarf-startup-logo { animation: zarf-arrive 450ms ease-out both; }
+.zarf-startup-track { width: 160px; height: 3px; border-radius: 4px; overflow: hidden; background: var(--border); }
+.zarf-startup-track span { display: block; width: 50%; height: 100%; background: #b91c1c; animation: zarf-loading 1.6s ease-in-out infinite alternate; }
+@keyframes zarf-arrive { from { opacity: 0; transform: translateY(8px) scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes zarf-loading { from { transform: translateX(-90%); } to { transform: translateX(190%); } }
+@media (prefers-reduced-motion: reduce) { .zarf-startup-logo, .zarf-startup-track span { animation: none; } }
+
+.zarf-startup { background: #f4f4f5; color: #3f3f46; }
+.dark .zarf-startup { background: #27272a; color: #f4f4f5; }

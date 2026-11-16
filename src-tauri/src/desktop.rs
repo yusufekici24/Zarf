@@ -93,7 +93,7 @@ pub fn open_attachment_file(path: &str) -> Result<(), String> {
 
 pub fn notify(title: &str, body: &str, sound: bool) {
     let mut n = notify_rust::Notification::new();
-    n.appname("Lynora").summary(title).body(body).icon("lynora");
+    n.appname("Zarf").summary(title).body(body).icon("lynora");
     if sound {
         n.sound_name("message-new-email");
     }
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     #[ignore]
     fn notify_live() {
-        notify("Lynora deneme", "Yeni ileti: Bütçe & Planlama", true);
+        notify("Zarf deneme", "Yeni ileti: Bütçe & Planlama", true);
     }
 
     #[cfg(unix)]

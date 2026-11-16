@@ -52,15 +52,22 @@
     return { id: 0, first_name: "", last_name: "", display_name: "", email: "", email2: "", phone_mobile: "", phone_work: "", phone_home: "", company: "", job_title: "", department: "", address: "", website: "", birthday: "", notes: "", categories: "", is_favorite: false };
   }
 
+  let loadRequest = 0;
   async function load() {
-    contacts = await api.listContacts(app.search);
-    groups = await api.listGroups();
+    const request = ++loadRequest;
+    try {
+      const [nextContacts, nextGroups] = await Promise.all([api.listContacts(app.search), api.listGroups()]);
+      if (request !== loadRequest) return;
+      contacts = nextContacts;
+      groups = nextGroups;
+    } catch (error) { if (request === loadRequest) app.error(error); }
   }
 
   $effect(() => {
     void app.revision.contacts;
     void app.search;
-    void load();
+    const timer = setTimeout(() => void load(), 180);
+    return () => { clearTimeout(timer); ++loadRequest; };
   });
 
   $effect(() => {
@@ -94,22 +101,37 @@
   const selGroup = $derived(groups.find((g) => g.id === selectedGroup) ?? null);
 
   // Baş harfe göre gruplama
+  let contactPage = $state(0);
+  const pageSize = 100;
+  const contactPages = $derived(Math.max(1, Math.ceil(contacts.length / pageSize)));
+  $effect(() => { void contacts; contactPage = 0; });
   const letters = $derived.by(() => {
     const map = new Map<string, Contact[]>();
-    for (const c of contacts) {
+    for (const c of contacts.slice(contactPage * pageSize, (contactPage + 1) * pageSize)) {
       const key = c.is_favorite ? "★" : (c.display_name[0] ?? "#").toLocaleUpperCase();
-      map.set(key, [...(map.get(key) ?? []), c]);
+      const bucket = map.get(key);
+      if (bucket) bucket.push(c);
+      else map.set(key, [c]);
     }
     return [...map.entries()];
   });
 
+  const canEdit = (c: Contact) => !c.account_id || !!app.accounts.find(a => a.id === c.account_id)?.carddav_url;
+  const source = (c: Contact) => c.account_id ? app.accounts.find(a => a.id === c.account_id)?.email || t("contacts.from_exchange") : t("contacts.local");
+  function copyContact(c: Contact) { openEdit({ ...c, id: 0, account_id: null, remote_id: null }); }
   function openEdit(c: Contact) {
+    if (!canEdit(c)) { toast.info(t("contacts.readonly")); return; }
     edit = { ...c };
     editOpen = true;
   }
 
   async function saveContact() {
     try {
+      if (!edit.display_name.trim() && !edit.first_name.trim() && !edit.email.trim()) { toast.error(t("contacts.required")); return; }
+      if (!edit.id && edit.email.trim()) {
+        const existing = await api.contactByEmail(edit.email.trim());
+        if (existing && !(await app.confirm(t("contacts.duplicate", edit.email)))) return;
+      }
       const id = await api.saveContact(edit);
       editOpen = false;
       selectedId = id;
@@ -121,7 +143,7 @@
   }
 
   async function removeSelected() {
-    const ids = checked.size ? [...checked] : selectedId ? [selectedId] : [];
+    const ids = (checked.size ? [...checked] : selectedId ? [selectedId] : []).filter(id => contacts.some(c => c.id === id && canEdit(c)));
     if (selGroup && !ids.length) {
       if (await app.confirm(t("contacts.delete_group", selGroup.name), undefined, { ok: t("common.delete"), destructive: true })) {
         await api.deleteGroup(selGroup.id);
@@ -140,6 +162,7 @@
   }
 
   async function toggleFav(c: Contact) {
+    if (!canEdit(c)) return;
     await api.saveContact({ ...c, is_favorite: !c.is_favorite });
     await load();
   }
@@ -219,11 +242,16 @@
             </button>
           {/each}
         {/if}
+        <div class="flex items-center justify-between gap-2 p-2">
+          <Button size="sm" variant="outline" disabled={contactPage === 0} onclick={() => contactPage--}>‹</Button>
+          <span class="text-xs">{contactPage + 1} / {contactPages} · {contacts.length}</span>
+          <Button size="sm" variant="outline" disabled={contactPage + 1 >= contactPages} onclick={() => contactPage++}>›</Button>
+        </div>
         {#each letters as [letter, list] (letter)}
           <div class="bg-muted/50 sticky top-0 px-3 py-1 text-xs font-semibold">{letter}</div>
           {#each list as c (c.id)}
             <div class="flex items-center gap-2 border-b px-3 py-2 text-sm {selectedId === c.id ? 'bg-primary/12' : 'hover:bg-accent'}">
-              <input type="checkbox" checked={checked.has(c.id)} onchange={(e) => { const s = new Set(checked); (e.target as HTMLInputElement).checked ? s.add(c.id) : s.delete(c.id); checked = s; }} />
+              <input type="checkbox" disabled={!canEdit(c)} checked={checked.has(c.id)} onchange={(e) => { const s = new Set(checked); (e.target as HTMLInputElement).checked ? s.add(c.id) : s.delete(c.id); checked = s; }} />
               <button class="flex min-w-0 flex-1 items-center gap-2 text-left" onclick={() => { selectedId = c.id; selectedGroup = null; }} ondblclick={() => openEdit(c)}>
                 <Avatar name={c.display_name} email={c.email} class="size-8 text-xs" />
                 <div class="min-w-0">
@@ -247,19 +275,20 @@
           <div class="flex items-center gap-4">
             <Avatar name={c.display_name} email={c.email} class="size-20 text-2xl" />
             <div class="selectable flex-1">
-              <h2 class="text-2xl font-semibold">{c.display_name}</h2>
+              <h2 class="text-2xl font-semibold">{c.display_name}</h2><p class="text-muted-foreground text-xs">{source(c)}</p>
               {#if c.job_title || c.company}<div class="text-muted-foreground">{[c.job_title, c.department, c.company].filter(Boolean).join(" · ")}</div>{/if}
             </div>
           </div>
           <div class="mt-4 flex flex-wrap gap-2">
             {#if c.email}<Button size="sm" onclick={() => mailTo(c)}><Mail class="size-4" />{t("contacts.send_mail")}</Button>{/if}
             <Button size="sm" variant="outline" onclick={() => meeting(c)}><CalendarPlus class="size-4" />{t("contacts.schedule")}</Button>
-            {#if c.account_id}
+            {#if !canEdit(c)}
+              <Button size="sm" variant="outline" onclick={() => copyContact(c)}>{t("contacts.copy")}</Button>
               <span class="text-muted-foreground flex items-center gap-1 text-xs"><Building2 class="size-3.5" />{t("contacts.from_exchange")}</span>
             {:else}
               <Button size="sm" variant="outline" onclick={() => openEdit(c)}><Pencil class="size-4" />{t("common.edit")}</Button>
             {/if}
-            <Button size="sm" variant="outline" onclick={() => toggleFav(c)}><Star class="size-4 {c.is_favorite ? 'fill-amber-400 text-amber-400' : ''}" />{c.is_favorite ? t("contacts.unfavorite") : t("contacts.favorite")}</Button>
+            <Button size="sm" variant="outline" disabled={!canEdit(c)} onclick={() => toggleFav(c)}><Star class="size-4 {c.is_favorite ? 'fill-amber-400 text-amber-400' : ''}" />{c.is_favorite ? t("contacts.unfavorite") : t("contacts.favorite")}</Button>
           </div>
           <div class="selectable mt-6 grid max-w-2xl gap-3 text-sm">
             {#each ([[Mail, c.email], [Mail, c.email2], [Phone, c.phone_mobile && `${c.phone_mobile} (${t("contacts.mobile")})`], [Phone, c.phone_work && `${c.phone_work} (${t("contacts.work_phone")})`], [Phone, c.phone_home && `${c.phone_home} (${t("contacts.home_phone")})`], [Building, c.company], [MapPin, c.address], [Globe, c.website], [Cake, c.birthday]] as [typeof Mail, string][]) as [Icon, val], i (i)}

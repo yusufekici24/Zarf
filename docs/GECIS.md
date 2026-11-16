@@ -1,6 +1,6 @@
-# Linux Posta → Lynora geçiş notu
+# Linux Posta → Zarf geçiş notu
 
-Taban ürün Lynora'dır (Tauri + Svelte, bir dönem adı MailNix'ti). Linux Posta'daki (`yusufekici24/mailapp-linux`)
+Taban ürün Zarf'dır (Tauri + Svelte, bir dönem adı MailNix'ti). Linux Posta'daki (`yusufekici24/mailapp-linux`)
 iyi özellikler buraya taşınıyor. Paket yalnızca `.deb`; RPM ve AppImage kaldırıldı.
 
 ## Taşınanlar
@@ -28,7 +28,7 @@ arka uçla gözden geçirildi. Exchange, Nextcloud ve çalışan Tauri uygulamas
 
 ## Kalan işler
 
-Lynora'nın kendi eksikleri:
+Zarf'nın kendi eksikleri:
 
 - Kişiler, Görevler ve Notlar şeritleri eski stilde, Giriş ve Yardım sekmeleri var
 - Yinelenen etkinlikler beş kalıpla sınırlı

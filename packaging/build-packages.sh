@@ -1,5 +1,5 @@
 #!/bin/bash
-# Lynora .deb paketini en eski desteklenen tabanda derler.
+# Zarf .deb paketini en eski desteklenen tabanda derler.
 #
 # Paket Ubuntu 22.04 (glibc 2.35) içinde derlenir; böylece
 # Pardus 23/25, Debian 12/13, Ubuntu 22.04/24.04 ve sonrasında çalışır.
@@ -62,7 +62,7 @@ npm ci --no-audit --no-fund
 npx tauri build --bundles deb --verbose > /cache/tauri-build.log 2>&1 || { grep -iv "^\s*\(compiling\|running\)" /cache/tauri-build.log | tail -40; exit 1; }
 B=/cache/target/release/bundle
 VER=$(node -p "require('/src/src-tauri/tauri.conf.json').version")
-DEB=$B/deb/Lynora_${VER}_amd64.deb
+DEB=$B/deb/Zarf_${VER}_amd64.deb
 
 # .deb'ye bildirim alanı kitaplıkları gömülür (sistemden ek paket istenmez):
 # /usr/lib/lynora altına konur, uygulama onları önce orada arar (build.rs: rpath)
@@ -86,5 +86,5 @@ rm -rf "$R"
 
 rm -rf /src/dist/*
 cp "$DEB" /src/dist/
-dpkg-deb -f /src/dist/Lynora_${VER}_amd64.deb Depends
+dpkg-deb -f /src/dist/Zarf_${VER}_amd64.deb Depends
 ls -la /src/dist

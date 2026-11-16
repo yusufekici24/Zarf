@@ -1,4 +1,4 @@
-//! Lynora — Debian tabanlı dağıtımlar için Outlook benzeri kişisel bilgi yöneticisi.
+//! Zarf — Debian tabanlı dağıtımlar için Outlook benzeri kişisel bilgi yöneticisi.
 
 pub mod backup;
 pub mod commands;
@@ -120,7 +120,7 @@ fn tray(app: &tauri::AppHandle) {
         let open = MenuItem::with_id(app, "open", t!("tray.open"), true, None::<&str>)?;
         let quit = MenuItem::with_id(app, "quit", t!("tray.exit"), true, None::<&str>)?;
         let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
-        let mut b = TrayIconBuilder::with_id("lynora").tooltip("Lynora").menu(&menu).show_menu_on_left_click(false);
+        let mut b = TrayIconBuilder::with_id("lynora").tooltip("Zarf").menu(&menu).show_menu_on_left_click(false);
         if let Some(icon) = app.default_window_icon() {
             b = b.icon(icon.clone());
         }
@@ -627,7 +627,7 @@ pub fn run() {
             commands::display_names,
         ])
         .run(tauri::generate_context!())
-        .expect("Lynora başlatılamadı");
+        .expect("Zarf başlatılamadı");
 }
 
 fn r_key(r: &commands::Reminder) -> String {

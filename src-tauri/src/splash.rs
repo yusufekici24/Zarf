@@ -15,8 +15,8 @@ mod imp {
     const W: i32 = 520;
     const CSS: &str = "
         window.lynora-splash { background: #ffffff; border: 1px solid #c8cdd4; }
-        .lynora-splash progressbar trough { min-height: 3px; background: #e6eef8; border: none; border-radius: 0; }
-        .lynora-splash progressbar progress { min-height: 3px; background: #2b8af0; border: none; border-radius: 0; }
+        .lynora-splash progressbar trough { min-height: 3px; background: #e4e4e7; border: none; border-radius: 0; }
+        .lynora-splash progressbar progress { min-height: 3px; background: #b91c1c; border: none; border-radius: 0; }
         .lynora-splash label { color: #5f6670; font-size: 12px; }
     ";
 
@@ -35,7 +35,7 @@ mod imp {
 
     fn build(text: &str) {
         let win = gtk::Window::new(gtk::WindowType::Toplevel);
-        win.set_title("Lynora");
+        win.set_title("Zarf");
         win.set_icon_name(Some("lynora"));
         win.set_decorated(false);
         win.set_resizable(false);
@@ -48,21 +48,28 @@ mod imp {
             gtk::StyleContext::add_provider_for_screen(&screen, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
         }
         let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        // Logo ve ad (2x görsel: yüksek çözünürlüklü ekranlarda da keskin)
         let loader = gtk::gdk_pixbuf::PixbufLoader::new();
-        let _ = loader.write(include_bytes!("../assets/splash@2x.png"));
+        let scale = win.scale_factor().max(1);
+        loader.set_size(88 * scale, 88 * scale);
+        let _ = loader.write(include_bytes!("../../static/icon.svg"));
         let _ = loader.close();
         if let Some(pb) = loader.pixbuf() {
-            let scale = win.scale_factor().max(1);
-            let pb = if scale >= 2 { Some(pb) } else { pb.scale_simple(W, pb.height() * W / pb.width(), gtk::gdk_pixbuf::InterpType::Bilinear) };
-            if let Some(pb) = pb {
-                use gtk::gdk::prelude::GdkPixbufExt;
-                let surface = pb.create_surface(scale, None::<&gtk::gdk::Window>);
-                vbox.pack_start(&gtk::Image::from_surface(surface.as_ref()), false, false, 0);
-            }
+            use gtk::gdk::prelude::GdkPixbufExt;
+            let surface = pb.create_surface(scale, None::<&gtk::gdk::Window>);
+            let logo = gtk::Image::from_surface(surface.as_ref());
+            logo.set_margin_top(36);
+            logo.set_margin_bottom(16);
+            vbox.pack_start(&logo, false, false, 0);
         }
+        let brand = gtk::Label::new(None);
+        brand.set_markup("<span size='24000' weight='bold' foreground='#b91c1c'>Zarf</span>");
+        vbox.pack_start(&brand, false, false, 0);
+        let version = gtk::Label::new(Some(env!("CARGO_PKG_VERSION")));
+        version.set_margin_top(4);
+        version.set_margin_bottom(24);
+        vbox.pack_start(&version, false, false, 0);
         let bar = gtk::ProgressBar::new();
-        bar.set_pulse_step(0.08);
+        bar.set_pulse_step(0.025);
         bar.set_margin_start(40);
         bar.set_margin_end(40);
         vbox.pack_start(&bar, false, false, 0);
@@ -74,9 +81,11 @@ mod imp {
         win.set_default_size(W, -1);
         win.show_all();
         OPEN.store(true, Ordering::SeqCst);
-        gtk::glib::timeout_add_local(std::time::Duration::from_millis(60), move || {
+        let animated = gtk::Settings::default().map(|s| s.is_gtk_enable_animations()).unwrap_or(true);
+        if !animated { bar.set_fraction(0.5); }
+        gtk::glib::timeout_add_local(std::time::Duration::from_millis(40), move || {
             if OPEN.load(Ordering::SeqCst) {
-                bar.pulse();
+                if animated { bar.pulse(); }
                 gtk::glib::ControlFlow::Continue
             } else {
                 gtk::glib::ControlFlow::Break

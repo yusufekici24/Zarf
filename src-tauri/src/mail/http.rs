@@ -113,7 +113,7 @@ impl Client {
             auth,
             conn: None,
             timeout: Duration::from_secs(60),
-            user_agent: format!("Lynora/{}", env!("CARGO_PKG_VERSION")),
+            user_agent: format!("Zarf/{}", env!("CARGO_PKG_VERSION")),
             resolved: None,
             conn_gen: 0,
             authed_gen: None,

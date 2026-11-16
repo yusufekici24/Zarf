@@ -3,6 +3,32 @@
 Bir oturumun sonunda güncellenir: son sürümde ne var, neye güvenilmez, sırada ne var. Yeni oturumda önce bu
 dosya, sonra yalnızca ilgili konu belgesi okunur (`agent.md` → "Konu belgeleri").
 
+## Zarf 2.0.0 yayın hazırlığı (2026-11-17)
+
+Kırmızı-gri logo/açılış, yerel ve CardDAV kişi düzenleme, Exchange salt okunur/kopya
+akışı, yinelenen adres uyarısı, kişi ve zamanlayıcı sayfalaması, seçili takvim hesabıyla
+müsaitlik sorgulama, isteğe bağlı EWS süre ölçümü ve açılış Performance API ölçümleri.
+Önceki yazma penceresi geliştirmeleri bu sürüme dahildir.
+Doğrulama: Rust 108 başarılı / 5 ignore, Svelte 0 hata / 15 mevcut uyarı.
+Gerçek Exchange ve GTK kabulü, üretim verisi üzerinde sorgu planı ve p95 ölçümü
+henüz yapılmadı. Kayıt başına kalıcı CardDAV eşitleme hatası gösterimi henüz yok.
+
+## Çalışma ağacı: Zarf 2.0.0 (2026-11-17)
+
+- Ürün adı Zarf; vektör logo ve paket simgeleri yenilendi. GTK ve web açılış hareketi
+  düzenlendi, hareket azaltma tercihi desteklendi. Eski veri ve anahtarlık kimlikleri korundu.
+- Zamanlayıcı grup üyelerini (iç içe gruplar dahil) açar, tekilleştirir, kaynak grubu gösterir.
+  `merged` bilgisi ayrıntısız da çizilir; bilinmeyen durum otomatik seçimde boş sayılmaz.
+- Kişi listesinde O(n²) kopyalama kaldırıldı, arama beklemesi ve eski yanıt koruması eklendi.
+- Kişi ekleme/düzenleme değerlendirmesi ve ölçümlü performans raporu: `docs/zarf-2.0.md`.
+- Doğrulama: Rust 108 geçti / 5 ignore; UI 42 geçti (2 worker); svelte-check 0 hata / 15
+  mevcut uyarı. İlk 8 worker UI koşusunda 5 açılış zaman aşımı oldu, 2 worker ile tamamı geçti.
+- Paket üretildi: `src-tauri/target/release/bundle/deb/Zarf_2.0.0_amd64.deb`.
+  Paket kimliği zarf 2.0.0; Lynora ve MailNix için Conflicts/Replaces/Provides doğrulandı.
+  APT simülasyonu kurulu lynora 1.7.6 yerine zarf 2.0.0 kurulumunu çözdü; gerçek kurulum yapılmadı.
+- Gerçek Exchange, GTK ekranında görsel kabul ve kurulu sistemde yükseltme henüz denenmedi.
+- Önceden çalışma ağacında bulunan yazma penceresi değişiklikleri korundu ve testlere dahildir.
+
 ## Son sürüm: 1.7.6 (2026-11-11)
 
 Exchange istek sınırı düzeltmesi (aşağıda). 1.7.5'in (2026-11-10) içeriği:
@@ -15,6 +41,25 @@ Exchange istek sınırı düzeltmesi (aşağıda). 1.7.5'in (2026-11-10) içeri�
 | Arama | VEYA / DEĞİL / parantez, yeni alanlar, göreli tarihler; arama kutusunda alan, değer ve kişi önerisi | `docs/arama.md` |
 
 Test durumu: `cargo test --lib` 108 geçti (5 ignore), `npm run check` 0 hata / 15 uyarı, `npm run test:ui` 30 geçti.
+
+## Sürümlenmemiş: yazma penceresi (2026-11-17, çalışma ağacında, commit yok)
+
+Hata: yazma alanında vurgu rengi ilk satıra uygulanıyor, ikinci satır seçilip aynı renk seçilince uygulanmıyordu.
+Neden: düğme yerel `<input type="color">`'ın `change` olayına bağlıydı; o olay yalnızca değer değişince gelir.
+Düzeltmeyle birlikte yazma penceresi genişletildi (ayrıntı: `docs/yazma-penceresi.md`):
+
+| Ne | Nerede |
+|---|---|
+| Bölünmüş renk düğmesi + palet (tema/standart/son kullanılan/özel renk) | `components/editor/ColorButton.svelte`, `editor-colors.svelte.ts` |
+| Ortak biçim araçları, açık biçimin vurgulanması, alt/üst simge, iki yana yasla, büyüt/küçült, satır aralığı, harf dönüşümü | `components/editor/EditorTools.svelte`, `RichEditor.svelte` |
+| Seçim araç çubuğu, biçim boyacısı, bağlantı kartı (Ctrl+K), Sekme davranışı | `RichEditor.svelte` |
+| Paragraf stilleri galerisi (gönderirken satır içi stil) | `editor.ts`, `ComposeWindow.outgoingHtml` |
+| Bağlamsal "Tablo" sekmesi: stiller, satır/sütun, gölgelendirme, genişlik | `editor-table.ts`, `ComposeWindow.svelte` |
+| Ek kartları, durum çubuğu (sözcük sayısı, taslak durumu, yakınlaştırma), Tarih ve Saat | `ComposeWindow.svelte` |
+| Yan düzeltmeler: imleç boşken seçilen punto dev yazıyordu; tablo ızgarası menüsü seçince kapanmıyordu; eklenen tablonun kenarlık türü satır içinden düşüyordu | `RichEditor.svelte`, `ComposeWindow.svelte` |
+
+Test: `npm run check` 0 hata / 15 uyarı, `npm run test:ui` 40 geçti (10'u `compose.spec.ts`). Metinler
+`locales/*.json` (1649 anahtar). Sürüm numarası değişmedi (1.7.6); paket derlenmedi.
 
 ## 1.7.6: Exchange istek sınırı (`ErrorServerBusy`)
 
@@ -45,6 +90,8 @@ Kurallar: 8 sn'ye kadar bekleme istek içinde beklenir, daha uzunu hata olarak d
 - EWS konuşma özellikleri (`0x3013`, `0x0071`, `0x1042`, `0x1039`) yalnızca XML örneğiyle sınandı; gerçek
   Exchange'de ilk eşitlemeden sonra konuşmaların doğru birleştiğine bakılmalı.
 - Yazma penceresinde alıntılanan tabloların görünümü (`RichEditor.svelte` CSS'i) gözle denenmedi.
+- Yeni yazma penceresi araçları yalnızca Chrome'da (Playwright) sınandı; uygulamanın kendi motorunda (WebKitGTK)
+  gözle denenmeli: renk düğmesi ve palet, seçim araç çubuğu, biçim boyacısı, stiller, tablo sekmesi, yakınlaştırma.
 - `ErrorServerBusy` işleyişi gerçek sunucuda görülmedi; etkilenen kullanıcının yeni paketle denemesi gerekir.
 - Paket yerelde derlendi; kurulu sistemde yükseltme (1.5.0 → 1.7.5) elle denenmedi.
 

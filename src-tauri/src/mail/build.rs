@@ -95,7 +95,7 @@ pub fn build_raw(
         .subject(m.subject.clone())
         .date(chrono::Utc::now().timestamp())
         .message_id(new_message_id(account))
-        .header("X-Mailer", Raw::new("Lynora"));
+        .header("X-Mailer", Raw::new("Zarf"));
     if let Some(a) = to_address(&m.to) {
         b = b.to(a);
     }

@@ -58,5 +58,5 @@ jobs:
         run: npx tauri build --bundles deb
       - uses: actions/upload-artifact@v4
         with:
-          name: lynora-linux-x64
+          name: zarf-linux-x64
           path: src-tauri/target/release/bundle/deb/*.deb

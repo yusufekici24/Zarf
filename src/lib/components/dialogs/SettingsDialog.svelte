@@ -503,6 +503,7 @@
         {@render intro(t("settings.mail_intro"))}
         {@render section(t("settings.sec_compose"))}
         {@render pick("compose_format", t("settings.compose_format"), "html", [["html", "HTML"], ["plain", t("compose.plain_text")]], true)}
+        {@render check("compose_mini_toolbar", t("settings.mini_toolbar"), true)}
         <div class="flex items-center gap-3 py-1 pl-4 text-[13px]">
           <span class="w-64 shrink-0">{t("settings.signatures_btn")}</span>
           <button class="hover:bg-accent h-7 rounded border px-3" onclick={() => (app.settingsDialog = { open: true, tab: "signatures" })}>{t("settings.tab_signatures")}…</button>
@@ -690,7 +691,7 @@
         <div class="flex items-center gap-4">
           <img src="/icon.svg" alt="" class="size-16" />
           <div>
-            <h3 class="text-2xl font-semibold">Lynora</h3>
+            <h3 class="text-2xl font-semibold">Zarf</h3>
             <div class="text-muted-foreground">{t("about.tagline")}</div>
             <div class="text-muted-foreground text-xs">{t("about.version", info?.version ?? "")}</div>
           </div>

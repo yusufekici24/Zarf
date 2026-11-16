@@ -15,10 +15,13 @@
   import TableGrid from "$lib/components/common/TableGrid.svelte";
   import DateField from "$lib/components/common/DateField.svelte";
   import TimeField from "$lib/components/common/TimeField.svelte";
+  import EditorTools from "$lib/components/editor/EditorTools.svelte";
+  import ColorButton from "$lib/components/editor/ColorButton.svelte";
+  import { BLOCK_STYLES, TABLE_STYLES, caretState, inlineBlockStyles } from "$lib/editor";
   import { fontCss, fontStack, parseFont } from "$lib/fonts";
   import { app, type ComposeRequest } from "$lib/stores/app.svelte";
   import { api, errorText } from "$lib/api";
-  import { t } from "$lib/i18n.svelte";
+  import { i18n, t } from "$lib/i18n.svelte";
   import { escapeHtml, fmtDateTime, fmtSize, splitAddresses, textToHtml, toInputTime } from "$lib/format";
   import Ribbon from "$lib/components/ribbon/Ribbon.svelte";
   import WindowTitleBar from "$lib/components/common/WindowTitleBar.svelte";
@@ -31,22 +34,6 @@
   import Copy from "@lucide/svelte/icons/copy";
   import Code from "@lucide/svelte/icons/code";
   import Type from "@lucide/svelte/icons/type";
-  import List from "@lucide/svelte/icons/list";
-  import ListOrdered from "@lucide/svelte/icons/list-ordered";
-  import Indent from "@lucide/svelte/icons/indent-increase";
-  import Outdent from "@lucide/svelte/icons/indent-decrease";
-  import Eraser from "@lucide/svelte/icons/eraser";
-  import Bold from "@lucide/svelte/icons/bold";
-  import Italic from "@lucide/svelte/icons/italic";
-  import Underline from "@lucide/svelte/icons/underline";
-  import Strikethrough from "@lucide/svelte/icons/strikethrough";
-  import Highlighter from "@lucide/svelte/icons/highlighter";
-  import Baseline from "@lucide/svelte/icons/baseline";
-  import AlignLeft from "@lucide/svelte/icons/align-left";
-  import AlignCenter from "@lucide/svelte/icons/align-center";
-  import AlignRight from "@lucide/svelte/icons/align-right";
-  import Undo from "@lucide/svelte/icons/undo-2";
-  import Redo from "@lucide/svelte/icons/redo-2";
   import UserCheck from "@lucide/svelte/icons/user-check";
   import TableIcon from "@lucide/svelte/icons/table";
   import ImageIcon from "@lucide/svelte/icons/image";
@@ -79,6 +66,22 @@
   import X from "@lucide/svelte/icons/x";
   import Settings2 from "@lucide/svelte/icons/settings-2";
   import Mail from "@lucide/svelte/icons/mail";
+  import Paintbrush from "@lucide/svelte/icons/paintbrush";
+  import PaintBucket from "@lucide/svelte/icons/paint-bucket";
+  import CalendarClock from "@lucide/svelte/icons/calendar-clock";
+  import ArrowUp from "@lucide/svelte/icons/arrow-up";
+  import ArrowLeft from "@lucide/svelte/icons/arrow-left";
+  import ArrowRight from "@lucide/svelte/icons/arrow-right";
+  import Rows3 from "@lucide/svelte/icons/rows-3";
+  import Columns3 from "@lucide/svelte/icons/columns-3";
+  import MoveHorizontal from "@lucide/svelte/icons/move-horizontal";
+  import Shrink from "@lucide/svelte/icons/shrink";
+  import Plus from "@lucide/svelte/icons/plus";
+  import FileIcon from "@lucide/svelte/icons/file";
+  import FileImage from "@lucide/svelte/icons/file-image";
+  import FileArchive from "@lucide/svelte/icons/file-archive";
+  import FileSpreadsheet from "@lucide/svelte/icons/file-spreadsheet";
+  import Presentation from "@lucide/svelte/icons/presentation";
   import { open as openDialog } from "$lib/dialog";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -233,6 +236,7 @@
     ready = true;
     // İlk doldurma "değişiklik" sayılmaz (boş pencereyi kapatırken soru sorulmaz)
     setTimeout(() => (dirty = false), 0);
+    activity();
     setTimeout(() => (to ? editor?.focus() : document.getElementById(`to-${req.key}`)?.focus()), 50);
   });
 
@@ -409,6 +413,9 @@
       const size = f.getAttribute("size");
       const color = f.getAttribute("color");
       if (!size && !color) {
+        // (punto verilmişse satır içi stili de taşınır)
+        const own = f.getAttribute("style");
+        if (own) span.setAttribute("style", `${own};font-family:${fontStack(face)}`);
         span.append(...f.childNodes);
         f.replaceWith(span);
       } else {
@@ -416,6 +423,15 @@
         f.setAttribute("style", `${f.getAttribute("style") ?? ""};font-family:${fontStack(face)}`);
       }
     });
+    // Punto verilen metin düzenleyicide <font style> olarak durur; alıcıya span gider
+    tmp.querySelectorAll("font[style]:not([face]):not([size]):not([color])").forEach((f) => {
+      const span = document.createElement("span");
+      span.setAttribute("style", f.getAttribute("style") ?? "");
+      span.append(...f.childNodes);
+      f.replaceWith(span);
+    });
+    // Paragraf stilleri (Başlık 1, Alıntı, Kod …) alıcıda da aynı görünsün
+    inlineBlockStyles(tmp);
     return tmp.innerHTML;
   }
 
@@ -628,28 +644,69 @@
     delayOpen = true;
   }
 
-  type Cmd = [typeof Bold, string, string];
-  const LIST_CMDS: Cmd[] = [[List, "insertUnorderedList", "editor.bullets"], [ListOrdered, "insertOrderedList", "editor.numbering"], [Outdent, "outdent", "editor.outdent"], [Indent, "indent", "editor.indent"]];
-  const STYLE_CMDS: Cmd[] = [[Bold, "bold", "editor.bold"], [Italic, "italic", "editor.italic"], [Underline, "underline", "editor.underline"], [Strikethrough, "strikeThrough", "editor.strike"]];
-  const ALIGN_CMDS: Cmd[] = [[AlignLeft, "justifyLeft", "editor.left"], [AlignCenter, "justifyCenter", "editor.center"], [AlignRight, "justifyRight", "editor.right"]];
-  // Her yerde (Windows Outlook dahil) görünen yazı tipleri önce, sonra bu bilgisayardakiler
-  const FONTS = ["Calibri", "Aptos", "Arial", "Times New Roman", "Georgia", "Verdana", "Tahoma", "Trebuchet MS", "Courier New", "Segoe UI"];
-  let systemFonts = $state<string[]>([]);
-  onMount(() => {
-    api.systemFonts().then((f) => (systemFonts = f.filter((x) => !FONTS.includes(x)))).catch(() => {});
-  });
   // Ayarlar > Posta > Kırtasiye ve Yazı Tipleri: yeni ileti / yanıt-iletme / düz metin
   const isReply = ["reply", "reply_all", "forward"].includes(req.mode);
   const fontSpec = $derived(plain ? parseFont(app.setting("font_plain", ""), "font_plain") : parseFont(app.setting(isReply ? "font_reply" : "font_new", ""), isReply ? "font_reply" : "font_new"));
-  const SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72];
-  /** İmleçteki yazı tipi/punto (şeritteki kutular gösterir) */
-  let caret = $state({ family: "", size: 0 });
+  /** İmleçteki biçim (şeritteki kutular ve düğmeler gösterir) */
+  let caret = $state(caretState());
+  /** Şeridin açık sekmesi; imleç tablodayken bağlamsal "Tablo" sekmesi de görünür */
+  let ribbonTab = $state("message");
+  $effect(() => {
+    if (ribbonTab === "table" && (!caret.table || plain)) ribbonTab = "message";
+  });
+  const hold = (e: Event) => e.preventDefault();
+  let tableOpen = $state(false);
+  /** Stil galerisindeki düğmelerin önizlemesi */
+  const STYLE_PREVIEW: Record<string, string> = {
+    div: "font-size:12px",
+    h1: "font-size:15px;color:#2f5496",
+    h2: "font-size:13px;color:#2f5496",
+    h3: "font-size:12px;font-weight:bold;color:#1f3763",
+    blockquote: "font-size:12px;color:#666;border-left:3px solid #c7c7c7;padding-left:6px",
+    pre: "font-family:monospace;font-size:11px;background:#f3f3f3;color:#333;padding:0 4px;border-radius:2px",
+  };
+
+  // ---------------------------------------------------------------- durum çubuğu
+  let counts = $state({ words: 0, chars: 0, selected: 0 });
+  let statTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Sözcük sayısı yazarken her tuşta değil, kısa bir duraklamadan sonra yenilenir */
+  function activity() {
+    clearTimeout(statTimer);
+    statTimer = setTimeout(() => (counts = editor?.stats() ?? counts), 250);
+  }
+  let zoom = $state(Math.min(200, Math.max(50, Number(app.setting("compose_zoom", "100")) || 100)));
+  let zoomTimer: ReturnType<typeof setTimeout> | undefined;
+  function setZoom(v: number) {
+    zoom = Math.min(200, Math.max(50, Math.round(v / 10) * 10));
+    clearTimeout(zoomTimer);
+    zoomTimer = setTimeout(() => void app.setSetting("compose_zoom", String(zoom)), 600);
+  }
+
+  // ---------------------------------------------------------------- ek kartları
+  const FILE_KINDS: [RegExp, typeof FileIcon, string][] = [
+    [/\.(png|jpe?g|gif|bmp|webp|svg|tiff?|heic)$/i, FileImage, "#8764b8"],
+    [/\.pdf$/i, FileText, "#d13438"],
+    [/\.(docx?|odt|rtf)$/i, FileText, "#2b579a"],
+    [/\.(xlsx?|ods|csv)$/i, FileSpreadsheet, "#217346"],
+    [/\.(pptx?|odp)$/i, Presentation, "#c43e1c"],
+    [/\.(zip|rar|7z|tar|gz|bz2|xz)$/i, FileArchive, "#986f0b"],
+    [/\.(msg|eml)$/i, Mail, "#0f6cbd"],
+  ];
+  const fileKind = (name: string) => FILE_KINDS.find(([re]) => re.test(name)) ?? ([/./, FileIcon, "#69797e"] as (typeof FILE_KINDS)[number]);
+  const totalSize = $derived(attachments.reduce((n, a) => n + (a.size ?? 0), 0));
 
   const fromLabel = $derived.by(() => {
     if (identity) return identity.email;
     const a = app.accounts.find((x) => x.id === accountId);
     return a ? a.email : t("compose.no_account_option");
   });
+
+  /** Düz metne geçiş: biçimlendirme atılır */
+  function toPlain() {
+    if (plain) return;
+    html = escapeHtml(htmlToText(currentHtml())).replace(/\n/g, "<br>");
+    plain = true;
+  }
 
   async function paste() {
     editor?.focus();
@@ -708,7 +765,7 @@
     } else if ((e.ctrlKey || e.metaKey) && ["f", "h"].includes(e.key.toLowerCase())) {
       e.preventDefault();
       findOpen = true;
-    } else if (e.key === "Escape" && !e.defaultPrevented && !delayOpen && !bookOpen && !sourceOpen && !app.confirmReq && !app.promptReq && !document.querySelector("[data-state=open][role=menu]")) {
+    } else if (e.key === "Escape" && !e.defaultPrevented && !delayOpen && !bookOpen && !sourceOpen && !app.confirmReq && !app.promptReq && !document.querySelector("[data-state=open][role=menu], [data-slot=popover-content], [data-editor-float]")) {
       e.preventDefault();
       void close();
     }
@@ -783,7 +840,7 @@
     <!-- Şerit (Outlook ileti penceresi: Dosya | İleti | Ekle | Seçenekler | Metni Biçimlendir | Gözden Geçir) -->
     {#if !inline}
     <div class="bg-chrome">
-    <Ribbon tabs={[{ key: "message", label: t("ribbon.message") }, { key: "insert", label: t("ribbon.insert") }, { key: "options", label: t("ribbon.options") }, { key: "format", label: t("ribbon.format_text") }, { key: "review", label: t("ribbon.review") }]}>
+    <Ribbon bind:active={ribbonTab} tabs={[{ key: "message", label: t("ribbon.message") }, { key: "insert", label: t("ribbon.insert") }, { key: "options", label: t("ribbon.options") }, { key: "format", label: t("ribbon.format_text") }, { key: "review", label: t("ribbon.review") }, ...(caret.table && !plain ? [{ key: "table", label: t("ribbon.table") }] : [])]}>
       {#snippet file()}
         <DropdownMenu.Root>
           <DropdownMenu.Trigger>{#snippet child({ props })}<button {...props} class="rounded-t px-2.5 pt-1 pb-1.5 hover:bg-black/5 dark:hover:bg-white/10">{t("menu.file")}</button>{/snippet}</DropdownMenu.Trigger>
@@ -797,87 +854,108 @@
         </DropdownMenu.Root>
       {/snippet}
       {#snippet content(tab)}
-        {#if tab === "message" || tab === "format"}
-          {#if tab === "message"}
-            <RibbonGroup label={t("ribbon.g_clipboard")}>
-              <RibbonButton icon={ClipboardPaste} label={t("ribbon.paste")} onclick={paste} />
-              <RibbonStack>
-                <RibbonButton small icon={Scissors} label={t("ribbon.cut")} onmousedown={(e: MouseEvent) => { e.preventDefault(); editor?.exec("cut"); }} />
-                <RibbonButton small icon={Copy} label={t("ribbon.copy")} onmousedown={(e: MouseEvent) => { e.preventDefault(); editor?.exec("copy"); }} />
-              </RibbonStack>
-            </RibbonGroup>
-          {:else}
-            <RibbonGroup label={t("ribbon.g_format")}>
-              <RibbonButton icon={Code} label={t("ribbon.html")} active={!plain} onclick={() => (plain = false)} />
-              <RibbonButton icon={Type} label={t("ribbon.plain")} active={plain} onclick={() => { if (!plain) { html = escapeHtml(htmlToText(currentHtml())).replace(/\n/g, "<br>"); plain = true; } }} />
-            </RibbonGroup>
-          {/if}
+        {#if tab === "message"}
+          <RibbonGroup label={t("ribbon.g_clipboard")}>
+            <RibbonButton icon={ClipboardPaste} label={t("ribbon.paste")} onclick={paste} />
+            <RibbonStack>
+              <RibbonButton small icon={Scissors} label={t("ribbon.cut")} onmousedown={(e: MouseEvent) => { e.preventDefault(); editor?.exec("cut"); }} />
+              <RibbonButton small icon={Copy} label={t("ribbon.copy")} onmousedown={(e: MouseEvent) => { e.preventDefault(); editor?.exec("copy"); }} />
+              <!-- Tek tıklama bir kez, çift tıklama Esc'e kadar uygular (Outlook Biçim Boyacısı) -->
+              <RibbonButton small icon={Paintbrush} label={t("editor.painter")} title={t("editor.painter_hint")} disabled={plain} active={caret.painter > 0} onmousedown={hold} onclick={() => editor?.painter()} ondblclick={() => editor?.painter(true)} />
+            </RibbonStack>
+          </RibbonGroup>
           <RibbonGroup label={t("ribbon.g_basic_text")}>
-            <div class="flex flex-col gap-1 py-0.5" class:opacity-40={plain} class:pointer-events-none={plain}>
-              <div class="flex items-center gap-1">
-                <select class="h-6 w-40 rounded border bg-transparent px-1 text-xs" title={t("editor.font")} value={caret.family} onchange={(e) => editor?.exec("fontName", (e.target as HTMLSelectElement).value)}>
-                  {#if caret.family && !FONTS.includes(caret.family) && !systemFonts.includes(caret.family)}<option value={caret.family}>{caret.family}</option>{/if}
-                  <optgroup label={t("compose.fonts_common")}>
-                    {#each FONTS as f (f)}<option value={f} style="font-family:{fontStack(f)}">{f}</option>{/each}
-                  </optgroup>
-                  {#if systemFonts.length}
-                    <optgroup label={t("compose.fonts_system")}>
-                      {#each systemFonts as f (f)}<option value={f} style="font-family:{fontStack(f)}">{f}</option>{/each}
-                    </optgroup>
-                  {/if}
-                </select>
-                <select class="h-6 w-14 rounded border bg-transparent px-1 text-xs" title={t("editor.size")} value={String(caret.size)} onchange={(e) => editor?.setFontSize(Number((e.target as HTMLSelectElement).value))}>
-                  {#if caret.size && !SIZES.includes(caret.size)}<option value={String(caret.size)}>{caret.size}</option>{/if}
-                  {#each SIZES as v (v)}<option value={String(v)}>{v}</option>{/each}
-                </select>
-                {#each LIST_CMDS as [Icon, cmd, label] (cmd)}
-                  <button type="button" class="hover:bg-accent rounded p-1" title={t(label)} onmousedown={(e) => { e.preventDefault(); editor?.exec(cmd); }}><Icon class="size-4" /></button>
-                {/each}
-                <button type="button" class="hover:bg-accent rounded p-1" title={t("editor.clear_format")} onmousedown={(e) => { e.preventDefault(); editor?.exec("removeFormat"); }}><Eraser class="size-4" /></button>
-              </div>
-              <div class="flex items-center gap-1">
-                {#each STYLE_CMDS as [Icon, cmd, label] (cmd)}
-                  <button type="button" class="hover:bg-accent rounded p-1" title={t(label)} onmousedown={(e) => { e.preventDefault(); editor?.exec(cmd); }}><Icon class="size-4" /></button>
-                {/each}
-                <label class="hover:bg-accent relative flex cursor-pointer items-center rounded p-1" title={t("editor.highlight")}>
-                  <Highlighter class="size-4 text-yellow-500" /><input type="color" class="absolute inset-0 cursor-pointer opacity-0" value="#ffff00" onchange={(e) => editor?.exec("hiliteColor", (e.target as HTMLInputElement).value)} />
-                </label>
-                <label class="hover:bg-accent relative flex cursor-pointer items-center rounded p-1" title={t("editor.color")}>
-                  <Baseline class="size-4 text-red-600" /><input type="color" class="absolute inset-0 cursor-pointer opacity-0" value="#c00000" onchange={(e) => editor?.exec("foreColor", (e.target as HTMLInputElement).value)} />
-                </label>
-                <span class="bg-border mx-0.5 h-4 w-px"></span>
-                {#each ALIGN_CMDS as [Icon, cmd, label] (cmd)}
-                  <button type="button" class="hover:bg-accent rounded p-1" title={t(label)} onmousedown={(e) => { e.preventDefault(); editor?.exec(cmd); }}><Icon class="size-4" /></button>
-                {/each}
-                <button type="button" class="hover:bg-accent rounded p-1" title={t("editor.undo")} onmousedown={(e) => { e.preventDefault(); editor?.exec("undo"); }}><Undo class="size-4" /></button>
-                <button type="button" class="hover:bg-accent rounded p-1" title={t("editor.redo")} onmousedown={(e) => { e.preventDefault(); editor?.exec("redo"); }}><Redo class="size-4" /></button>
-              </div>
+            <div class:opacity-40={plain} class:pointer-events-none={plain}><EditorTools layout="basic" {editor} {caret} /></div>
+          </RibbonGroup>
+          <RibbonGroup label={t("ribbon.g_names")}>
+            <RibbonButton icon={BookUser} label={t("compose.address_book")} onclick={openBook} />
+            <RibbonButton icon={UserCheck} label={t("ribbon.check_names")} onclick={checkNames} />
+          </RibbonGroup>
+          <RibbonGroup label={t("ribbon.g_include")}>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger>{#snippet child({ props })}<RibbonButton {...props} icon={Paperclip} label={t("ribbon.attach_file")} menu />{/snippet}</DropdownMenu.Trigger>
+              <DropdownMenu.Content>
+                <DropdownMenu.Item onclick={attach}>{t("compose.attach")}…</DropdownMenu.Item>
+                <DropdownMenu.Item onclick={openItemPicker}>{t("compose.attach_item")}…</DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Root>
+            {@render signatureMenu()}
+            {@render templateMenu()}
+          </RibbonGroup>
+          <RibbonGroup label={t("ribbon.g_tags")} last>
+            <RibbonStack>
+              <RibbonButton small icon={Clock} label={t("compose.delay")} active={!!sendAt} onclick={openDelay} />
+              <RibbonButton small icon={AlertCircle} iconClass="text-red-600" label={t("ribbon.high_importance")} active={importance === 2} onclick={() => (importance = importance === 2 ? 1 : 2)} />
+              <RibbonButton small icon={ArrowDown} iconClass="text-blue-600" label={t("ribbon.low_importance")} active={importance === 0} onclick={() => (importance = importance === 0 ? 1 : 0)} />
+            </RibbonStack>
+          </RibbonGroup>
+        {:else if tab === "format"}
+          <RibbonGroup label={t("ribbon.g_format")}>
+            <RibbonButton icon={Code} label={t("ribbon.html")} active={!plain} onclick={() => (plain = false)} />
+            <RibbonButton icon={Type} label={t("ribbon.plain")} active={plain} onclick={toPlain} />
+          </RibbonGroup>
+          <RibbonGroup label={t("ribbon.g_font")}>
+            <div class:opacity-40={plain} class:pointer-events-none={plain}><EditorTools layout="font" {editor} {caret} /></div>
+          </RibbonGroup>
+          <RibbonGroup label={t("ribbon.g_paragraph")}>
+            <div class:opacity-40={plain} class:pointer-events-none={plain}><EditorTools layout="paragraph" {editor} {caret} /></div>
+          </RibbonGroup>
+          <RibbonGroup label={t("ribbon.g_styles")}>
+            <div class="grid grid-cols-3 gap-1 py-0.5" class:opacity-40={plain} class:pointer-events-none={plain}>
+              {#each BLOCK_STYLES as s (s.tag)}
+                <button type="button" class="hover:border-primary flex h-[27px] w-[86px] items-center overflow-hidden rounded-[3px] border px-1.5 text-left whitespace-nowrap {caret.block === s.tag ? 'border-primary bg-(--primary-faint)' : ''}" data-style={s.tag} aria-pressed={caret.block === s.tag} title={t(s.label)} onmousedown={hold} onclick={() => editor?.setBlock(s.tag)}>
+                  <span style={STYLE_PREVIEW[s.tag]}>{t(s.label)}</span>
+                </button>
+              {/each}
             </div>
           </RibbonGroup>
-          {#if tab === "message"}
-            <RibbonGroup label={t("ribbon.g_names")}>
-              <RibbonButton icon={BookUser} label={t("compose.address_book")} onclick={openBook} />
-              <RibbonButton icon={UserCheck} label={t("ribbon.check_names")} onclick={checkNames} />
-            </RibbonGroup>
-            <RibbonGroup label={t("ribbon.g_include")}>
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger>{#snippet child({ props })}<RibbonButton {...props} icon={Paperclip} label={t("ribbon.attach_file")} menu />{/snippet}</DropdownMenu.Trigger>
-                <DropdownMenu.Content>
-                  <DropdownMenu.Item onclick={attach}>{t("compose.attach")}…</DropdownMenu.Item>
-                  <DropdownMenu.Item onclick={openItemPicker}>{t("compose.attach_item")}…</DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu.Root>
-              {@render signatureMenu()}
-              {@render templateMenu()}
-            </RibbonGroup>
-            <RibbonGroup label={t("ribbon.g_tags")} last>
-              <RibbonStack>
-                <RibbonButton small icon={Clock} label={t("compose.delay")} active={!!sendAt} onclick={openDelay} />
-                <RibbonButton small icon={AlertCircle} iconClass="text-red-600" label={t("ribbon.high_importance")} active={importance === 2} onclick={() => (importance = importance === 2 ? 1 : 2)} />
-                <RibbonButton small icon={ArrowDown} iconClass="text-blue-600" label={t("ribbon.low_importance")} active={importance === 0} onclick={() => (importance = importance === 0 ? 1 : 0)} />
-              </RibbonStack>
-            </RibbonGroup>
-          {/if}
+          <RibbonGroup label={t("ribbon.g_editing")} last>
+            <RibbonStack>
+              <RibbonButton small icon={Search} label={t("editor.find_replace")} onclick={() => (findOpen = true)} />
+              <RibbonButton small icon={TextSelect} label={t("ribbon.select_all")} onclick={() => { editor?.focus(); editor?.exec("selectAll"); }} />
+            </RibbonStack>
+          </RibbonGroup>
+        {:else if tab === "table"}
+          <!-- Bağlamsal sekme: yalnızca imleç bir tablonun içindeyken görünür -->
+          <RibbonGroup label={t("ribbon.g_table_styles")}>
+            <div class="grid grid-cols-3 gap-1 py-0.5">
+              {#each TABLE_STYLES as s (s.key)}
+                <button type="button" class="hover:border-primary rounded-[3px] border bg-white p-[3px]" data-table-style={s.key} title={t(s.label)} aria-label={t(s.label)} onmousedown={hold} onclick={() => editor?.tableOp("style", s.key)}>
+                  <span class="grid h-[19px] w-[44px] grid-cols-3 grid-rows-3" style={s.lines === "all" ? `gap:1px;background:${s.line};border:1px solid ${s.line}` : ""}>
+                    {#each [0, 0, 0, 1, 1, 1, 2, 2, 2] as r, i (i)}
+                      <span style="background:{r === 0 && s.head?.bg ? s.head.bg : s.band && r === 1 ? s.band : '#fff'}{s.lines === 'rows' ? `;border-bottom:${r === 0 ? 2 : 1}px solid ${s.line}` : s.lines === 'none' ? ';outline:1px dashed #cfcfcf;outline-offset:-1px' : ''}"></span>
+                    {/each}
+                  </span>
+                </button>
+              {/each}
+            </div>
+          </RibbonGroup>
+          <RibbonGroup label={t("ribbon.g_rows_cols")}>
+            <RibbonStack>
+              <RibbonButton small icon={ArrowUp} label={t("table.row_above")} onmousedown={hold} onclick={() => editor?.tableOp("rowAbove")} />
+              <RibbonButton small icon={ArrowDown} label={t("table.row_below")} onmousedown={hold} onclick={() => editor?.tableOp("rowBelow")} />
+            </RibbonStack>
+            <RibbonStack>
+              <RibbonButton small icon={ArrowLeft} label={t("table.col_left")} onmousedown={hold} onclick={() => editor?.tableOp("colLeft")} />
+              <RibbonButton small icon={ArrowRight} label={t("table.col_right")} onmousedown={hold} onclick={() => editor?.tableOp("colRight")} />
+            </RibbonStack>
+            <RibbonStack>
+              <RibbonButton small icon={Rows3} label={t("table.del_row")} onmousedown={hold} onclick={() => editor?.tableOp("delRow")} />
+              <RibbonButton small icon={Columns3} label={t("table.del_col")} onmousedown={hold} onclick={() => editor?.tableOp("delCol")} />
+              <RibbonButton small icon={Trash2} iconClass="text-red-600" label={t("table.del_table")} onmousedown={hold} onclick={() => editor?.tableOp("delTable")} />
+            </RibbonStack>
+          </RibbonGroup>
+          <RibbonGroup label={t("ribbon.g_cell")}>
+            <div class="flex flex-col gap-1 py-0.5">
+              <ColorButton icon={PaintBucket} label={t("table.shading")} kind="shade" onpick={(c) => editor?.setColor("shade", c)} />
+            </div>
+          </RibbonGroup>
+          <RibbonGroup label={t("ribbon.g_table_size")} last>
+            <RibbonStack>
+              <RibbonButton small icon={MoveHorizontal} label={t("table.fit_window")} onmousedown={hold} onclick={() => editor?.tableOp("fit")} />
+              <RibbonButton small icon={Shrink} label={t("table.fit_content")} onmousedown={hold} onclick={() => editor?.tableOp("auto")} />
+            </RibbonStack>
+          </RibbonGroup>
         {:else if tab === "insert"}
           <RibbonGroup label={t("ribbon.g_include")}>
             <RibbonButton icon={Paperclip} label={t("ribbon.attach_file")} onclick={attach} />
@@ -886,10 +964,11 @@
             {@render templateMenu()}
           </RibbonGroup>
           <RibbonGroup label={t("ribbon.g_tables")}>
-            <DropdownMenu.Root>
+            <DropdownMenu.Root bind:open={tableOpen}>
               <DropdownMenu.Trigger disabled={plain}>{#snippet child({ props })}<RibbonButton {...props} icon={TableIcon} label={t("editor.table")} menu disabled={plain} />{/snippet}</DropdownMenu.Trigger>
-              <DropdownMenu.Content class="w-auto p-0">
-                <TableGrid onpick={(r, c) => editor?.insertTable(r, c)} oncustom={() => editor?.table()} />
+              <DropdownMenu.Content class="w-auto p-0" onCloseAutoFocus={hold}>
+                <!-- Izgara menü öğesi olmadığı için seçince menü kendiliğinden kapanmaz -->
+                <TableGrid onpick={(r, c) => { tableOpen = false; editor?.insertTable(r, c); }} oncustom={() => { tableOpen = false; void editor?.table(); }} />
               </DropdownMenu.Content>
             </DropdownMenu.Root>
           </RibbonGroup>
@@ -901,6 +980,7 @@
           </RibbonGroup>
           <RibbonGroup label={t("ribbon.g_symbols")} last>
             <RibbonButton icon={Minus} label={t("editor.hr")} disabled={plain} onclick={() => editor?.exec("insertHorizontalRule")} />
+            <RibbonButton icon={CalendarClock} label={t("editor.date_time")} onclick={() => editor?.exec("insertText", new Date().toLocaleString(i18n.locale, { dateStyle: "long", timeStyle: "short" }))} />
             <DropdownMenu.Root>
               <DropdownMenu.Trigger>{#snippet child({ props })}<RibbonButton {...props} icon={Smile} label={t("editor.emoji")} menu />{/snippet}</DropdownMenu.Trigger>
               <DropdownMenu.Content class="w-auto p-1">
@@ -916,7 +996,7 @@
           </RibbonGroup>
           <RibbonGroup label={t("ribbon.g_format")}>
             <RibbonButton icon={Code} label={t("ribbon.html")} active={!plain} onclick={() => (plain = false)} />
-            <RibbonButton icon={Type} label={t("ribbon.plain")} active={plain} onclick={() => { if (!plain) { html = escapeHtml(htmlToText(currentHtml())).replace(/\n/g, "<br>"); plain = true; } }} />
+            <RibbonButton icon={Type} label={t("ribbon.plain")} active={plain} onclick={toPlain} />
           </RibbonGroup>
           <RibbonGroup label={t("ribbon.g_tracking")}>
             <RibbonButton small icon={MailCheck} label={t("compose.read_receipt")} active={readReceipt} onclick={() => (readReceipt = !readReceipt)} />
@@ -1020,19 +1100,46 @@
     </div>
 
     {#if attachments.length}
-      <div class="flex flex-wrap gap-1.5 border-b px-4 py-1.5">
+      <!-- Ek kartları: türe göre simge, boyut; çift tıklayınca açılır. Sağda toplam (25 MB üstü uyarı rengi) -->
+      <div class="flex flex-wrap items-center gap-1.5 border-b px-4 py-1.5" data-testid="attachments">
         {#each attachments as a, i (i + a.name)}
-          <span class="flex items-center gap-1.5 rounded border px-2 py-1 text-xs">
-            <Paperclip class="size-3.5" />{a.name}{#if a.size}<span class="text-muted-foreground">({fmtSize(a.size)})</span>{/if}
-            <button class="hover:text-destructive" onclick={() => (attachments = attachments.filter((_, j) => j !== i))}><X class="size-3.5" /></button>
+          {@const [, Kind, color] = fileKind(a.name)}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <span class="bg-(--primary-faint) flex h-9 max-w-64 items-center gap-2 rounded-[4px] border pr-1 pl-1.5 text-xs" title={a.name} ondblclick={() => a.path && void api.openAttachment(a.path).catch((e) => app.error(e))}>
+            <span class="flex size-6 shrink-0 items-center justify-center rounded-[3px] text-white" style="background:{color}"><Kind class="size-3.5" /></span>
+            <span class="flex min-w-0 flex-col leading-[14px]">
+              <span class="truncate">{a.name}</span>
+              {#if a.size}<span class="text-muted-foreground text-[10px]">{fmtSize(a.size)}</span>{/if}
+            </span>
+            <button class="hover:bg-accent hover:text-destructive rounded p-0.5" title={t("common.remove")} aria-label={t("common.remove")} onclick={() => (attachments = attachments.filter((_, j) => j !== i))}><X class="size-3.5" /></button>
           </span>
         {/each}
+        <span class="ml-auto text-[11px] {totalSize > 25 * 1024 * 1024 ? 'text-destructive font-medium' : 'text-muted-foreground'}">{t("compose.attachments_total", attachments.length, fmtSize(totalSize))}</span>
       </div>
     {/if}
 
     {#if findOpen}<FindReplaceBar {editor} onclose={() => (findOpen = false)} />{/if}
-    <RichEditor bind:this={editor} bind:html bind:caret {plain} toolbar={inline} fontStyle={fontCss(fontSpec)} onchange={() => (dirty = true)} onfiles={(p) => void addPaths(p)} />
-    {#if lastSaved}<div class="text-muted-foreground border-t px-3 py-0.5 text-[11px]">{t("compose.saved_at", new Date(lastSaved * 1000).toLocaleTimeString().slice(0, 5))}</div>{/if}
+    <RichEditor bind:this={editor} bind:html bind:caret {plain} toolbar={inline} zoom={inline ? 1 : zoom / 100} fontStyle={fontCss(fontSpec)} onchange={() => (dirty = true)} onactivity={activity} onfiles={(p) => void addPaths(p)} />
+    {#if !inline}
+      <!-- Durum çubuğu (Word/Outlook gibi): sözcük sayısı, taslak durumu, biçim, yakınlaştırma -->
+      <div class="bg-chrome text-muted-foreground flex h-6 shrink-0 items-center gap-3 border-t px-3 text-[11px] select-none" data-testid="compose-status">
+        <span>{counts.selected ? t("compose.words_selected", counts.selected, counts.words) : t("compose.words", counts.words)}</span>
+        <span>{t("compose.chars", counts.chars)}</span>
+        {#if lastSaved || dirty}
+          <span class="bg-border h-3 w-px"></span>
+          <span>{dirty || !lastSaved ? t("compose.unsaved") : t("compose.saved_at", new Date(lastSaved * 1000).toLocaleTimeString().slice(0, 5))}</span>
+        {/if}
+        <span class="flex-1"></span>
+        <span>{plain ? t("ribbon.plain") : "HTML"}</span>
+        <span class="bg-border h-3 w-px"></span>
+        <div class="flex items-center gap-1">
+          <button class="rounded p-0.5 hover:bg-black/10 dark:hover:bg-white/10" title={t("compose.zoom_out")} aria-label={t("compose.zoom_out")} onclick={() => setZoom(zoom - 10)}><Minus class="size-3" /></button>
+          <input type="range" class="accent-primary h-1 w-24" min="50" max="200" step="10" value={zoom} aria-label={t("ribbon.zoom")} oninput={(e) => setZoom(Number((e.target as HTMLInputElement).value))} />
+          <button class="rounded p-0.5 hover:bg-black/10 dark:hover:bg-white/10" title={t("compose.zoom_in")} aria-label={t("compose.zoom_in")} onclick={() => setZoom(zoom + 10)}><Plus class="size-3" /></button>
+          <button class="w-10 rounded text-right tabular-nums hover:bg-black/10 dark:hover:bg-white/10" title={t("compose.zoom_reset")} onclick={() => setZoom(100)}>%{zoom}</button>
+        </div>
+      </div>
+    {/if}
     </div>
 </div>
 

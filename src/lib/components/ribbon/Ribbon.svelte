@@ -173,6 +173,7 @@
       {@render file?.()}
       {#each tabs as tab (tab.key)}
         <button
+          data-ribbon-tab={tab.key}
           class="relative shrink-0 rounded-t px-2.5 pb-1.5 pt-1 whitespace-nowrap hover:bg-black/5 dark:hover:bg-white/10 {active === tab.key && showPanel ? 'text-primary font-semibold' : ''}"
           onclick={() => pick(tab.key)}
         >

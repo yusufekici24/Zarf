@@ -10,6 +10,7 @@
   import DateField from "$lib/components/common/DateField.svelte";
   import TimeField from "$lib/components/common/TimeField.svelte";
   import AddressInput, { roomCache } from "$lib/components/common/AddressInput.svelte";
+  import { resolveSchedulingPeople, combinedAvailability, type SchedulingPerson } from "$lib/scheduling";
   import { api } from "$lib/api";
   import { app } from "$lib/stores/app.svelte";
   import { i18n, t } from "$lib/i18n.svelte";
@@ -100,14 +101,14 @@
   $effect(() => {
     const r = meetingRange;
     if (!roomOpen || !r || !roomList.length || r[1] <= r[0]) return;
-    const key = `${r[0]}-${r[1]}-${roomList.length}`;
+    const key = `${schedulingAccount}-${r[0]}-${r[1]}-${roomList.length}`;
     if (key === roomFbKey) return;
     roomFbKey = key;
     const emails = roomList.map((x) => x.email);
     const dur = Math.max(5, Math.min(1440, Math.round((r[1] - r[0]) / 60)));
     untrack(() => (roomFb = {}));
     void api
-      .freeBusy(emails, r[0], r[1], dur)
+      .freeBusy(emails, r[0], r[1], dur, schedulingAccount)
       .then((m) => {
         if (key !== roomFbKey) return;
         const out: Record<string, "free" | "busy" | "unknown"> = {};
@@ -184,34 +185,56 @@
   const WORK_START = $derived(workOnly ? 8 : 0);
   const WORK_END = $derived(workOnly ? 19 : 24);
   const SLOT = 30;
-  const people = $derived([
+  const invitees = $derived([
     ...splitAddresses(attendees).map((a) => ({ ...splitNameAddr(a), role: "req" })),
     ...splitAddresses(optional).map((a) => ({ ...splitNameAddr(a), role: "opt" })),
     ...splitAddresses(rooms).map((a) => ({ ...splitNameAddr(a), role: "room" })),
   ].filter((a) => a.addr));
+  const schedulingAccount = $derived(calendars.find(c => c.id === e.calendar_id)?.account_id ?? null);
+  let people = $state<SchedulingPerson[]>([]);
+  let peoplePage = $state(0);
+  const peoplePages = $derived(Math.max(1, Math.ceil(people.length / 50)));
+  $effect(() => { void people; peoplePage = 0; });
   let fbKey = "";
+  let fbRequest = 0;
+  let resolvedKey = "";
+  let resolvedPeople: Awaited<ReturnType<typeof resolveSchedulingPeople>> | undefined;
   async function loadFreeBusy(force = false) {
-    if (!people.length || startDate == null) return;
     const day = startDate;
-    const emails = people.map((p) => p.addr);
-    const key = `${day}|${emails.join(",")}`;
+    const original = invitees.map(p => ({ ...p }));
+    const membersKey = JSON.stringify(original);
+    const key = `${schedulingAccount}|${day}|${membersKey}`;
     if (key === fbKey && !force) return;
+    const request = ++fbRequest;
     fbKey = key;
-    fbLoading = true;
+    fb = {};
+    fbEvents = {};
+    people = original;
     fbError = "";
+    if (!original.length || day == null) { fbLoading = false; return; }
+    fbLoading = true;
     try {
-      // Tüm gün istenir: çalışma saatleri / tüm gün arasında geçişte yeniden sorulmaz
-      const r = await api.freeBusyDetails(emails, day, day + 86400, SLOT);
-      if (key !== fbKey) return;
-      fb = Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v.merged]));
-      fbEvents = Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v.events]));
+      let resolved = resolvedPeople;
+      if (force || membersKey !== resolvedKey || !resolved) {
+        resolved = await resolveSchedulingPeople(original, api);
+        if (request !== fbRequest) return;
+        resolvedKey = membersKey;
+        resolvedPeople = resolved.warnings.length ? undefined : resolved;
+      }
+      people = resolved.people;
+      if (resolved.warnings.length) fbError = t("calendar.group_unavailable", resolved.warnings.join(", "));
+      const emails = people.filter(p => !p.unresolved).map(p => p.addr);
+      // Request the whole day once; changing visible working hours needs no network call.
+      const r = emails.length ? await api.freeBusyDetails(emails, day, day + 86400, SLOT, schedulingAccount) : {};
+      if (request !== fbRequest) return;
+      fb = Object.fromEntries(Object.entries(r).map(([k, v]) => [k.toLowerCase(), v.merged]));
+      fbEvents = Object.fromEntries(Object.entries(r).map(([k, v]) => [k.toLowerCase(), v.events]));
     } catch (err) {
-      if (key !== fbKey) return;
+      if (request !== fbRequest) return;
       fbError = String(err);
-      fb = {};
-      fbEvents = {};
+      fbKey = ""; // A failed query can be retried without changing the invitation.
     } finally {
-      if (key === fbKey) fbLoading = false;
+      if (request === fbRequest) fbLoading = false;
     }
   }
   // Toplantı çalışma saatleri dışındaysa tüm gün gösterilir
@@ -224,9 +247,11 @@
   });
   $effect(() => {
     if (schedOpen || tab === "sched") {
-      void people.length;
+      void schedulingAccount;
+      void invitees;
       void startDate;
-      void loadFreeBusy();
+      const timer = setTimeout(() => void loadFreeBusy(), 200);
+      return () => { clearTimeout(timer); ++fbRequest; fbKey = ""; };
     }
   });
   const slotCount = $derived(((WORK_END - WORK_START) * 60) / SLOT);
@@ -234,17 +259,12 @@
   /** Kişinin o dilimdeki durumu (birleşik dizi tüm günü 30 dk dilimlerle verir) */
   function stateAt(addr: string, i: number): number {
     const s = fb[addr];
-    if (!s) return fbLoading ? 0 : 4;
+    if (!s) return 4;
     return Number(s[(WORK_START * 60) / SLOT + i] ?? 4);
   }
   /** "Tüm Katılımcılar" satırı: dilimdeki en yoğun durum (bilgi yok sayılmaz) */
   function allAt(i: number): number {
-    let m = 0;
-    for (const p of people) {
-      const v = stateAt(p.addr, i);
-      if (v !== 4 && v > m) m = v;
-    }
-    return m;
+    return combinedAvailability(people.map(p => stateAt(p.addr, i)));
   }
   /** Zamanlama Yardımcısı: gün değiştir (toplantı süresi korunur) */
   function shiftDay(days: number) {
@@ -453,7 +473,7 @@
     </Dialog.Header>
     <div class="grid gap-3">
       {@render editForm()}
-      {#if people.length}
+      {#if invitees.length}
         <div class="min-w-0 rounded-md border">
           <button class="hover:bg-accent flex w-full items-center justify-between px-3 py-1.5 text-left text-sm font-medium" onclick={() => (schedOpen = !schedOpen)}>
             {t("calendar.scheduling")}<span class="text-muted-foreground text-xs">{schedOpen ? "▴" : "▾"}</span>
@@ -637,6 +657,7 @@
         <span class="text-muted-foreground ml-2">{t("calendar.sched_hint")}</span>
       {/if}
     </div>
+    {#if peoplePages > 1}<div class="mb-2 flex items-center gap-2"><Button size="sm" disabled={peoplePage === 0} onclick={() => peoplePage--}>‹</Button><span>{peoplePage + 1} / {peoplePages} · {people.length}</span><Button size="sm" disabled={peoplePage + 1 >= peoplePages} onclick={() => peoplePage++}>›</Button></div>{/if}
     {#if fbError}
       <div class="mb-2 rounded border border-red-300 bg-red-50 px-2 py-1 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">{fbError}</div>
     {/if}
@@ -656,11 +677,11 @@
             {#if i >= ms && i < me}<div class="border-primary bg-primary/15 absolute inset-0 border-y-2 {i === Math.floor(ms) ? 'border-l-2 border-l-green-600' : ''} {i === Math.ceil(me) - 1 ? 'border-r-2 border-r-red-600' : ''}"></div>{/if}
           </div>
         {/each}
-        {#each people as p (p.addr + p.role)}
+        {#each people.slice(peoplePage * 50, (peoplePage + 1) * 50) as p (p.addr + p.role)}
           {@const PIcon = p.role === "room" ? DoorOpen : UserIcon}
-          <div class="bg-background sticky left-0 z-10 flex min-w-0 items-center gap-1.5 border-b px-2 {full ? 'h-9' : 'py-0.5'}" title={p.addr}>
+          <div class="bg-background sticky left-0 z-10 flex min-w-0 items-center gap-1.5 border-b px-2 {full ? 'h-9' : 'py-0.5'}" title={p.group ? `${p.addr} · ${p.group}` : p.addr}>
             <PIcon class="text-muted-foreground size-3.5 shrink-0" />
-            <span class="min-w-0 flex-1 truncate">{p.name || p.addr}</span>
+            <span class="min-w-0 flex-1 truncate">{p.name || p.addr}{#if p.group}<span class="text-muted-foreground block truncate text-[10px]">{p.group}</span>{/if}</span>
             {#if full}<span class="text-muted-foreground shrink-0 text-[10px]">{p.role === "req" ? t("calendar.required") : p.role === "opt" ? t("calendar.optional") : t("calendar.room")}</span>{/if}
           </div>
           {#if full}
@@ -670,7 +691,7 @@
                 {#each Array(slotCount) as _, i (i)}
                   {@const st = stateAt(p.addr, i)}
                   <!-- svelte-ignore a11y_click_events_have_key_events -->
-                  <div role="button" tabindex="-1" class="relative h-9 cursor-pointer border-l hover:outline hover:outline-1 hover:outline-primary/60 {st === 4 ? FB_CLASS[4] : ''}" onclick={() => pickSlot(i)}>
+                  <div role="button" tabindex="-1" class="relative h-9 cursor-pointer border-l hover:outline hover:outline-1 hover:outline-primary/60 {FB_CLASS[st] ?? FB_CLASS[4]}" onclick={() => pickSlot(i)}>
                     {#if i >= ms && i < me}<div class="border-primary bg-primary/10 pointer-events-none absolute inset-0 border-y-2 {i === Math.floor(ms) ? 'border-l-2 border-l-green-600' : ''} {i === Math.ceil(me) - 1 ? 'border-r-2 border-r-red-600' : ''}"></div>{/if}
                   </div>
                 {/each}

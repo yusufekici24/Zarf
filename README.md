@@ -1,4 +1,6 @@
-# Lynora
+# Zarf
+
+Sürüm **2.0.0** (önceki ürün adı Lynora). [Kişi yönetimi, grup zamanlayıcısı ve performans değerlendirmesi](docs/zarf-2.0.md). Mevcut hesaplar ve anahtarlık uyumluluğu için teknik `lynora` kimlikleri korunur.
 
 Debian tabanlı Linux dağıtımları için e-posta, takvim, kişiler, görevler ve notlar uygulaması.
 Kurumsal **Microsoft Exchange** desteği vardır ve **.msg** ileti dosyalarını açar.
@@ -124,10 +126,10 @@ istenir.
 
 | Dağıtım | Paket |
 |---|---|
-| Ubuntu 24.04 ve sonrası, Debian 13 ve türevleri (glibc 2.39+) | `Lynora_*_amd64.deb` |
+| Ubuntu 24.04 ve sonrası, Debian 13 ve türevleri (glibc 2.39+) | `Zarf_*_amd64.deb` |
 
 ```sh
-sudo apt install ./Lynora_1.7.6_amd64.deb      # bağımlılıklar otomatik kurulur
+sudo apt install ./Zarf_2.0.0_amd64.deb      # bağımlılıklar otomatik kurulur
 ```
 
 Paketler GitHub **Releases** sayfasında yayımlanır. Debian 12, Ubuntu 22.04 ve Pardus 23 gibi eski dağıtımlar için
@@ -136,7 +138,7 @@ paket Ubuntu 22.04 tabanında üretilir: `packaging/build-packages.sh` (Docker) 
 
 ### MailNix'ten geçiş
 
-Uygulamanın önceki adı MailNix'ti. Lynora paketi kurulurken eski `mail-nix` paketi kaldırılır. İlk açılışta veriler
+Uygulamanın önceki adı MailNix'ti. Zarf paketi kurulurken eski `mail-nix` veya `lynora` paketi kaldırılır; kişisel veri dizini korunur. İlk açılışta veriler
 `~/.local/share/mailnix` klasöründen `~/.local/share/lynora` klasörüne taşınır. Anahtarlıktaki parolalar, oturumda başlatma
 ve varsayılan e-posta uygulaması seçimi de yeni ada aktarılır. Eski `.mnbak` yedekleri geri yüklenebilir.
 `MAILNIX_*` ortam değişkenleri artık okunmaz, bunların yerine `LYNORA_*` kullanılır.
@@ -145,7 +147,7 @@ ve varsayılan e-posta uygulaması seçimi de yeni ada aktarılır. Eski `.mnbak
 
 1. Bilgisayar etki alanına katılmış olmalı (`realmd`/`sssd` veya `krb5-user` + `kinit`; Pardus'ta `pardus-domain-joiner` de kullanılabilir).
    Oturum açınca Kerberos bileti alınır (`klist` ile görülebilir).
-2. Lynora ilk açıldığında kullanıcının adresini bulur ve Exchange'e parolasız bağlanır.
+2. Zarf ilk açıldığında kullanıcının adresini bulur ve Exchange'e parolasız bağlanır.
    Kerberos kullanılamıyorsa yalnızca bir kez parola sorulur (NTLM).
 3. Microsoft 365 için kurumun Entra ID yöneticisi bir "genel istemci" uygulaması kaydetmelidir (yönlendirme adresi `http://localhost`).
    Uygulama kimliği **Ayarlar → Hesaplar → OAuth** bölümüne girilir. Derleme sırasında `LYNORA_MS_CLIENT_ID` ile pakete de gömülebilir.
@@ -154,7 +156,7 @@ ve varsayılan e-posta uygulaması seçimi de yeni ada aktarılır. Eski `.mnbak
 
 **Parola değişince:** Kerberos kullanan hesaplar parola saklamaz, bu yüzden AD parolası değişince bir şey yapmak gerekmez.
 Parolalı (NTLM/IMAP) hesaplarda sunucu parolayı reddettiği anda eşitleme durur ve klasör listesinde uyarı çıkar.
-"Parolayı güncelle" ile yeni parola girilir. Lynora reddedilen parolayı tekrar tekrar denemez.
+"Parolayı güncelle" ile yeni parola girilir. Zarf reddedilen parolayı tekrar tekrar denemez.
 
 ## Yeni dil eklemek
 

@@ -368,6 +368,15 @@ impl Ews {
     /// kısa süre bekleyip bir kez yineler; uzun sürede `MailError::busy` döner ve süre dolana kadar
     /// sunucuya yeni istek gönderilmez.
     pub fn call(&mut self, body: &str) -> MailResult<Element> {
+        let started = std::time::Instant::now();
+        let result = self.call_timed(body);
+        if std::env::var_os("ZARF_PERF").is_some() {
+            eprintln!("zarf perf: ews elapsed_ms={} success={} busy={}", started.elapsed().as_millis(), result.is_ok(), result.as_ref().err().is_some_and(|e| e.is_busy()));
+        }
+        result
+    }
+
+    fn call_timed(&mut self, body: &str) -> MailResult<Element> {
         for attempt in 0..2 {
             if let Some(left) = busy_left(&self.url) {
                 if left > BUSY_INLINE {

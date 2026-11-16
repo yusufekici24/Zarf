@@ -285,7 +285,7 @@ pub fn task_to_vtodo(t: &Task) -> Vec<String> {
 }
 
 pub fn export_ics(events: &[Event], method: Option<&str>, organizer: Option<&str>) -> String {
-    let mut l = vec!["BEGIN:VCALENDAR".to_string(), "VERSION:2.0".into(), "PRODID:-//Lynora//Lynora//TR".into(), "CALSCALE:GREGORIAN".into()];
+    let mut l = vec!["BEGIN:VCALENDAR".to_string(), "VERSION:2.0".into(), "PRODID:-//Zarf//Zarf//TR".into(), "CALSCALE:GREGORIAN".into()];
     if let Some(m) = method {
         l.push(format!("METHOD:{m}"));
     }
@@ -297,7 +297,7 @@ pub fn export_ics(events: &[Event], method: Option<&str>, organizer: Option<&str
 }
 
 pub fn export_tasks_ics(tasks: &[Task]) -> String {
-    let mut l = vec!["BEGIN:VCALENDAR".to_string(), "VERSION:2.0".into(), "PRODID:-//Lynora//Lynora//TR".into()];
+    let mut l = vec!["BEGIN:VCALENDAR".to_string(), "VERSION:2.0".into(), "PRODID:-//Zarf//Zarf//TR".into()];
     for t in tasks {
         l.extend(task_to_vtodo(t));
     }
@@ -621,7 +621,7 @@ pub fn make_reply(ics: &str, my_email: &str, partstat: &str) -> Option<(String, 
     let mut out = vec![
         "BEGIN:VCALENDAR".to_string(),
         "VERSION:2.0".into(),
-        "PRODID:-//Lynora//Lynora//TR".into(),
+        "PRODID:-//Zarf//Zarf//TR".into(),
         "METHOD:REPLY".into(),
         "BEGIN:VEVENT".into(),
         format!("DTSTAMP:{}", fmt_dt(crate::db::now(), false)),

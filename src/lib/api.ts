@@ -81,7 +81,7 @@ export const api = {
   /** Eki varsayılan uygulamayla açar (çalıştırılabilir türler açılmaz) */
   openAttachment: (path: string) => invoke<void>("open_attachment", { path }),
   notify: (title: string, body: string, sound: boolean) => invoke<void>("desktop_notify", { title, body, sound }),
-  /** Bir Lynora penceresi ekranda görünüyor mu (yeni posta uyarısı yalnızca görünmüyorken) */
+  /** Bir Zarf penceresi ekranda görünüyor mu (yeni posta uyarısı yalnızca görünmüyorken) */
   appVisible: () => invoke<boolean>("app_visible"),
   siblingIds: (folderId: number) => invoke<number[]>("sibling_ids", { folderId }),
   listMessages: (folderId: number | null, search: string, filter: string, order: ListOrder, offset = 0, limit = 500) =>
@@ -177,11 +177,11 @@ export const api = {
     invoke<{ name: string; mime: string; size: number; path: string }>("calendar_ics_temp", { start, end, name }),
   exportEvent: (id: number, path: string) => invoke<void>("export_event", { id, path }),
   listRooms: (query?: string) => invoke<{ list: string; name: string; email: string; office?: string }[]>("list_rooms", { query: query ?? null }),
-  freeBusy: (emails: string[], start: number, end: number, interval = 30) =>
-    invoke<Record<string, string>>("free_busy", { emails, start, end, interval }),
+  freeBusy: (emails: string[], start: number, end: number, interval = 30, accountId: number | null = null) =>
+    invoke<Record<string, string>>("free_busy", { emails, start, end, interval, accountId }),
   mailboxUsage: () => invoke<{ used: number; quota: number; email: string } | null>("mailbox_usage"),
-  freeBusyDetails: (emails: string[], start: number, end: number, interval = 30) =>
-    invoke<Record<string, { merged: string; events: { start: number; end: number; show_as: string; title: string; location: string }[] }>>("free_busy_details", { emails, start, end, interval }),
+  freeBusyDetails: (emails: string[], start: number, end: number, interval = 30, accountId: number | null = null) =>
+    invoke<Record<string, { merged: string; events: { start: number; end: number; show_as: string; title: string; location: string }[] }>>("free_busy_details", { emails, start, end, interval, accountId }),
   sendInvitation: (eventId: number, accountId: number, cancel = false) =>
     invoke<void>("send_invitation", { eventId, accountId, cancel }),
 

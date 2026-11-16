@@ -80,7 +80,7 @@
   <AlertDialog.Content data-confirm-dialog class="w-[min(460px,94vw)] max-w-none gap-0 overflow-hidden rounded-md p-0 data-[size=default]:sm:max-w-none" onOpenAutoFocus={(e) => { e.preventDefault(); (app.confirmReq?.safe ? cancelBtn : okBtn)?.focus(); }}>
     {@const req = app.confirmReq}
     <div class="flex h-8 items-center border-b pl-3 text-[12px]">
-      <span class="text-muted-foreground flex-1">Lynora</span>
+      <span class="text-muted-foreground flex-1">Zarf</span>
       <button class="flex h-full w-10 items-center justify-center hover:bg-[#c42b1c] hover:text-white" aria-label={t("common.close")} onclick={() => closeConfirm(false)}><X class="size-4" /></button>
     </div>
     <div class="flex gap-4 px-5 pt-5 pb-6">

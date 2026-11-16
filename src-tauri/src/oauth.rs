@@ -164,7 +164,7 @@ pub fn authorize(provider_name: &str, exchange: bool, login_hint: &str, open_url
         let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
         let params: HashMap<String, String> =
             query.split('&').filter_map(|kv| kv.split_once('=')).map(|(k, v)| (k.to_string(), http::url_decode(v))).collect();
-        let page = |msg: &str| format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!doctype html><meta charset=utf-8><title>Lynora</title><body style=\"font-family:sans-serif;text-align:center;padding-top:15vh\"><h2>Lynora</h2><p>{msg}</p></body>");
+        let page = |msg: &str| format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!doctype html><meta charset=utf-8><title>Zarf</title><body style=\"font-family:sans-serif;text-align:center;padding-top:15vh\"><h2>Zarf</h2><p>{msg}</p></body>");
         if let Some(code) = params.get("code") {
             if params.get("state").map(|s| s == &state).unwrap_or(false) {
                 let _ = stream.write_all(page(&crate::t!("oauth.done")).as_bytes());

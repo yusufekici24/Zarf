@@ -354,7 +354,7 @@ pub fn bring_to_front<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>) {
         std::thread::sleep(std::time::Duration::from_millis(600));
         let _ = w.set_always_on_top(false);
         // Odak yeniden zorlanmaz: kullanıcı bu arada başka uygulamaya (ör. Chrome) geçtiyse
-        // klavye arkada kalan Lynora penceresine gitmesin
+        // klavye arkada kalan Zarf penceresine gitmesin
         let _ = w.request_user_attention(None);
         // Masaüstü uyarıları yine en üstte kalsın (öne getirilen pencere örtmesin)
         if let Some(a) = w.app_handle().get_webview_window("alerts") {
@@ -388,7 +388,7 @@ pub fn kind_of(label: &str) -> String {
 
 fn build(app: &AppHandle, label: &str, visible: bool) -> tauri::Result<tauri::WebviewWindow> {
     WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
-        .title("Lynora")
+        .title("Zarf")
         .inner_size(1000.0, 760.0)
         .min_inner_size(560.0, 400.0)
         // Ana pencere gibi Outlook tarzı kendi başlık çubuğu; gölge ve kenarlardan
@@ -451,7 +451,7 @@ pub async fn open_window(app: AppHandle, kind: String, payload: Value, title: Op
         }
     }
     let data = json!({ "kind": kind, "payload": payload });
-    let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| "Lynora".into());
+    let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| "Zarf".into());
     // Yedek pencere hâlâ yükleniyorsa kısa bir süre onu bekle: yarı yüklenmiş pencere,
     // sıfırdan yeni pencere kurmaktan (WebKit süreci + arayüz yükleme) her zaman daha hızlı
     for _ in 0..30 {
@@ -871,7 +871,7 @@ fn alerts_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
         return Some(w);
     }
     WebviewWindowBuilder::new(app, "alerts", WebviewUrl::App("index.html".into()))
-        .title("Lynora")
+        .title("Zarf")
         .inner_size(ALERT_WIDTH, 120.0)
         .decorations(false)
         .transparent(true)
@@ -987,7 +987,7 @@ pub fn show_reminders(app: &AppHandle) {
     }
     // İlk açılış: içerik çizilince ön yüz gösterir (reveal_window)
     if let Ok(w) = WebviewWindowBuilder::new(app, "reminders", WebviewUrl::App("index.html".into()))
-        .title("Lynora")
+        .title("Zarf")
         .inner_size(540.0, 420.0)
         .min_inner_size(440.0, 340.0)
         .decorations(false)

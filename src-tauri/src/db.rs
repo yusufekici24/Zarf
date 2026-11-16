@@ -1774,7 +1774,7 @@ impl Db {
         if let Some(inbox) = self.folder_by_role(None, "inbox") {
             let body = crate::i18n::tr("welcome.body");
             let raw = crate::mail::build::simple_raw(
-                "Lynora <lynora@lynora.local>",
+                "Zarf <lynora@lynora.local>",
                 &crate::i18n::tr("welcome.to"),
                 &crate::i18n::tr("welcome.subject"),
                 &body,
