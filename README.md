@@ -3,35 +3,35 @@
 Sürüm **2.0.0** (önceki ürün adı Lynora). [Kişi yönetimi, grup zamanlayıcısı ve performans değerlendirmesi](docs/zarf-2.0.md). Mevcut hesaplar ve anahtarlık uyumluluğu için teknik `lynora` kimlikleri korunur.
 
 Debian tabanlı Linux dağıtımları için e-posta, takvim, kişiler, görevler ve notlar uygulaması.
-Kurumsal **Microsoft Exchange** desteği vardır ve **.msg** ileti dosyalarını açar.
+Kurumsal **Microsoft Exchange** desteği sunar ve **.msg** ileti dosyalarını açar.
 
-Altyapı: **Rust + Tauri 2** (arka uç), **Svelte 5 + Tailwind CSS + shadcn-svelte** (arayüz).
+Altyapı: **Rust + Tauri 2**, **Svelte 5 + Tailwind CSS + shadcn-svelte** (arayüz).
 
 ## Özellikler
 
 **Hesaplar**
-- Microsoft Exchange (şirket içi Exchange 2013+ ve Microsoft 365) EWS ile; IMAP/SMTP (Gmail, Hotmail, Yandex vb.).
+- Microsoft Exchange (on-prem Exchange 2013+) EWS ile; IMAP/SMTP (Gmail, Hotmail, Yandex vb.).
 - **Otomatik kurulum:** İlk açılışta oturum açmış kullanıcının adresi bulunur (Kerberos/SSSD/krb5.conf).
   Ayarlar Autodiscover ile alınır. Kurum ağında Kerberos ile **parola sorulmadan** bağlanılır.
 - Kimlik doğrulama: Kerberos (GSSAPI/SPNEGO, tek oturum açma), NTLMv2, parola, OAuth2 (Microsoft 365 / Google).
 - **Paylaşılan posta kutusu:** Tam Erişim yetkiniz olan kutu kendi kimliğinizle ayrı hesap gibi eklenir.
-- **Kimlikler (takma adlar):** Bir hesaba ek "Kimden" adresleri, yanıt adresi ve kimliğe özel imza.
+- **Kimlikler (takma adlar):** Bir hesaba ek "Kimden" adresleri değiştirilebilir, yanıt adresi ve kimliğe göre imza seçilebilir.
 - **Hesap kilitlenme koruması:** Sunucu parolayı reddederse (ör. AD'de parola değişti) hesap duraklatılır.
   Eski parola bir daha gönderilmez, böylece AD hesabı kilitlenmez. Yeni parola girildiğinde eşitleme yeniden başlar.
 
 **Posta**
-- Sık Kullanılanlar, klasör ağacı, arama klasörleri; konuşma görünümü; kurallar; kategoriler; bayrak ve takip.
+- Sık Kullanılanlar, klasör ağacı, arama klasörleri; konuşma görünümü; kurallar; kategoriler; bayrak ve takip gibi gelişmiş özellikler mevcuttur.
 - **Konuşmalar (OWA gibi):** Konuşma satırının okuna basınca iletileri, Gönderilmiş Öğeler'deki yanıtlar dahil,
   listede alt alta açılır. Okuma bölmesinde konuşmanın iletileri alt alta durur: gösterilen ileti açıktır, diğerleri
   tek satırdır, tıklanınca açılır ve okundu olur. **Seçenekler → Gelişmiş → Konuşmalar**: alt alta ya da tek ileti
-  görünümü, en yeni ileti üstte ya da altta, listede açılma oku.
+  görünümü, en yeni ileti üstte ya da altta gibi seçenekler mevcuttur.
 - **Okundu bilgisi kaybolmaz:** Okundu/okunmadı ve bayrak değişiklikleri yerelde hemen yazılır, sunucuya yazılana
   kadar bekleyen olarak tutulur. Bağlantı yokken (VPN, uyku) yapılan değişiklik bağlantı gelince gönderilir. Eşitleme
   bu arada sunucudaki eski durumu geri yazmaz; okunan ileti yeniden kalın görünmez.
 - **Anlık posta:** Exchange akış aboneliği ve IMAP IDLE ile yeni ileti sunucuya düştüğü anda gelir.
-- **Kurallar:** Exchange kuralları sunucuda çalışır. IMAP için yerel kurallar: çoklu koşul, ve/veya, düzenli ifade, özel durumlar.
+- **Kurallar:** Exchange kuralları sunucuda çalışır. IMAP için yerel kurallar: çoklu koşul, ve/veya, düzenli ifade, özel durumlar ayarlanabilir.
 - **Kuralları Şimdi Uygula:** Yerel kurallar seçilen klasördeki mevcut iletilere uygulanır. Alt klasörler ve okunmuş/okunmamış seçilebilir. **Önizle** hiçbir şeyi değiştirmeden hangi iletiye ne yapılacağını gösterir; çalıştırma ilerleme çubuğuyla sürer ve iptal edilebilir.
-- **Şablonlar ve düzenleyici:** İleti şablonları, bul/değiştir, HTML kaynağı, emoji, yazım denetimi (`hunspell-tr`).
+- **Şablonlar ve düzenleyici:** İleti şablonları, bul/değiştir, HTML kaynağı, emoji, yazım denetimi yapabilir (`hunspell-tr`).
 - **Çökme kurtarma:** Yazılan ileti yerelde saklanır, uygulama çökerse açılışta geri yükleme önerilir.
 - **Güvenilir göndericiler:** Adres ya da alan adı (`sirket.com`, alt alan adları dahil); bu kaynaklardan gelen resimler
   sorulmadan iner. Resim uyarısındaki "@sirket.com alan adına güven" düğmesi kurumdaki herkesi bir kerede ekler
