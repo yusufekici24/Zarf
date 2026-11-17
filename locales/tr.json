@@ -1653,5 +1653,13 @@
   "contacts.readonly": "Bu Exchange kaydı salt okunurdur. Düzenlemek için kişisel kopya oluşturun.",
   "contacts.copy": "Kişisel kopya oluştur",
   "contacts.required": "Ad veya e-posta adresi girin.",
-  "contacts.duplicate": "{0} adresiyle bir kişi zaten var. Ayrı bir kayıt oluşturulsun mu?"
+  "contacts.duplicate": "{0} adresiyle bir kişi zaten var. Ayrı bir kayıt oluşturulsun mu?",
+  "settings.me_highlight": "Adımın geçtiği iletileri renkli göster",
+  "settings.me_off": "Kapalı",
+  "settings.me_to": "Adım Kime satırındaysa",
+  "settings.me_cc": "Adım Bilgi satırındaysa",
+  "settings.me_tocc": "Adım Kime ya da Bilgi satırındaysa",
+  "settings.me_color": "Vurgu rengi",
+  "settings.me_names": "Aranacak ek adlar",
+  "settings.me_names_hint": "Hesap adresiniz ve adınız kendiliğinden aranır. Adres defterinde adınız farklı yazılıyorsa buraya ekleyin (birden çok adı noktalı virgülle ayırın)."
 }

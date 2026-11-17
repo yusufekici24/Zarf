@@ -497,6 +497,8 @@ pub struct MessageRow {
     pub subject: String,
     pub sender: String,
     pub to_addr: String,
+    /// Bilgi alıcıları: listede "adım Kime/Bilgi satırında" vurgusu için
+    pub cc: String,
     pub date: f64,
     pub snippet: String,
     pub is_read: bool,
@@ -529,6 +531,7 @@ impl MessageRow {
             subject: r.get("subject")?,
             sender: r.get("sender")?,
             to_addr: r.get("to_addr")?,
+            cc: r.get::<_, Option<String>>("cc").unwrap_or(None).unwrap_or_default(),
             date: r.get("date")?,
             snippet: r.get("snippet")?,
             is_read: r.get::<_, i64>("is_read")? != 0,
@@ -681,7 +684,7 @@ fn thread_keys(conv: &str, mid: &str, in_reply_to: &str, refs: &str, ns: &str) -
     keys
 }
 
-const LIST_COLS: &str = "id, folder_id, account_id, uid, subject, sender, to_addr, date, snippet, \
+const LIST_COLS: &str = "id, folder_id, account_id, uid, subject, sender, to_addr, cc, date, snippet, \
     is_read, is_flagged, is_draft, is_answered, importance, categories, has_attachments, \
     message_id, in_reply_to, remote_id, is_pinned, tid";
 

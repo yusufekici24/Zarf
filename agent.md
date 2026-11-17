@@ -5,7 +5,7 @@ burayı da güncelleyin (yeni modül, tablo, ayar anahtarı, olay ya da tuzak).
 
 Zarf, Debian tabanlı Linux için Outlook benzeri e-posta, takvim, kişiler, görevler ve notlar uygulamasıdır.
 Kurumsal Exchange (EWS) birinci önceliktir, IMAP/SMTP de desteklenir. Arayüz metinleri ve kod açıklamaları Türkçedir.
-Ürün adı Zarf (2.0.0); eski adları Lynora, MailNix ve Linux Posta. lynora veri/çalıştırılabilir dosya kimlikleri ve Lynora anahtarlık hizmeti yükseltme uyumluluğu için korunur.
+Ürün adı Zarf (2.0.0'dan beri); eski adları Lynora, MailNix ve Linux Posta. lynora veri/çalıştırılabilir dosya kimlikleri ve Lynora anahtarlık hizmeti yükseltme uyumluluğu için korunur.
 
 - Arka uç: Rust + Tauri 2 (`src-tauri/`). SQLite (rusqlite, gömülü), rustls, kendi HTTP/EWS/SMTP istemcileri.
 - Ön yüz: Svelte 5 (runes) + SvelteKit statik + Tailwind 4 + shadcn-svelte (`src/`).
@@ -151,12 +151,17 @@ katılımcılar) yalnızca ChangeKey'i değişen/yeni toplantılar için `calend
   (gösterilen ileti), `thread` (okuma bölmesindeki konuşma), `expanded` (listede açılmış konuşmalar),
   `load(keep)` / `refresh()` / `loadMore()`, `select` → `show` → `autoRead`, `setRead`, `toggleExpand`.
 - `MessageList.svelte`: sanal kaydırma (satır türleri `head`/`row`/`child`, ofsetler önceden hesaplanır).
+  Adı Kime/Bilgi satırında geçen iletiler renkli yazılır (`toMe`, kurallar `me.ts`; liste satırı bunun için `cc` de taşır).
+- İleti sürükleme: `MessageList` işaretçi olaylarıyla yürütür (HTML5 sürükle-bırak değil), durum `mail.drag`.
+  İmlecin altındaki klasör `mail.drag.over`'a yazılır; `FolderPane` onu `drop-target` sınıfıyla vurgular, kapalı
+  klasörü 700 ms'de açar, bölme kenarında listeyi kaydırır. Klasör satırları `data-folder-id` ve `data-drop-key` taşır.
 - `ReadingPane.svelte`: `subject`/`details` snippet'leri; `stacked` ise konuşma alt alta (açık ileti + tek satırlık
   diğerleri), değilse tek ileti + geçiş düğmeleri. `MessageBody.svelte`: korumalı iframe, `autoHeight` kipi.
 - `SettingsDialog.svelte`: `get/set` bekleyen değişiklikleri tutar, **Tamam**'da `commit()` yazar. Yardımcı
   snippet'ler: `section`, `check(key, label, varsayılan)`, `pick(key, label, varsayılan, [[değer, ad]], geniş)`.
 - Yardımcılar: `format.ts` (tarih, ad/adres), `trust.ts` (güvenilir göndericiler), `uifont.ts` (arayüz/okuma yazı
-  tipi), `accent.ts` (renk teması), `fonts.ts` (Kırtasiye), `zoom.ts` (ölçek), `security.ts`, `quicksteps.svelte.ts`.
+  tipi), `accent.ts` (renk teması), `fonts.ts` (Kırtasiye), `zoom.ts` (ölçek), `security.ts`, `quicksteps.svelte.ts`,
+  `me.ts` ("adım Kime/Bilgi satırında" eşleşmesi ve vurgu renkleri).
 - Renk teması: `<html data-accent="…">` + `app.css`'teki `html[data-accent]` / `html.dark[data-accent]` kuralları
   `--primary`'yi değiştirir. Vurgu tonları için **sabit mavi yazmayın**; `text-primary`, `bg-primary/NN`,
   `bg-(--primary-soft)` (seçili), `bg-(--primary-hover)` (üzerine gelme), `bg-(--primary-faint)` kullanın. Anlam taşıyan
@@ -172,6 +177,7 @@ katılımcılar) yalnızca ChangeKey'i değişen/yeni toplantılar için `calend
 | `read_font`, `read_font_size` | `""` (Calibri), aile; `11` pt | MessageBody |
 | `list_font` | `normal`, `small`, `large`, `xlarge` | MessageList |
 | `unread_bold` | `1`, `0` | MessageList |
+| `me_highlight`, `me_color`, `me_names` | `off`/`to`/`cc`/`tocc`; `red`/`orange`/`green`/`purple`/`blue`; `;` ile ayrılmış ek adlar | me.ts, MessageList |
 | `preview_lines`, `reading_zoom`, `mark_read_delay` | `1`; `100`; `0` (−1 = hiç) | liste, okuma |
 | `reading_pane` | `right`, `bottom`, `off` | MailView |
 | `conversations` | `0`, `1` | liste sorgusu |
@@ -200,6 +206,9 @@ hata · `mail://bg` arka plan etkinliği · `mail://older` eski iletiler geldi �
   döner (bileşen `.map` çağırırsa test sayfa hatasıyla düşer): yeni komut kullanan ekran için işleyici ekleyin.
   `__mock.calls` çağrıları, `__mock.emit(olay, yük)` olay göndermeyi sağlar; ayarlar penceresi için `window: "w-settings"`
   ve ardından `window://assign`. Saf TS fonksiyonları sayfa içinde `import("/src/lib/x.ts")` ile sınanabilir (bkz. trust.spec).
+- Gerçek WebKitGTK'de deneme (derleme ve sudo gerekmez): `scripts/webkit-mock.mjs` sahte arka ucu başlangıç betiğine
+  çevirir, `scripts/webkit-dene.py` ön yüzü görünmeyen bir pencerede açıp fare olayı gönderir, betik çalıştırır,
+  görüntü alır (kullanım dosyanın başında). Yalnızca yazılımla çizimi sınar; GPU ile çizim uygulamanın kendisinde denenir.
 
 ## Sürüm yayınlama
 
@@ -220,11 +229,18 @@ hata · `mail://bg` arka plan etkinliği · `mail://older` eski iletiler geldi �
   `message_content` için `REPLACE` değil UPSERT kullanılır.
 - rusqlite `execute_batch` her ifadeyi tek adım çalıştırır: `PRAGMA incremental_vacuum(N)` sorgu olarak sonuna kadar adımlanmalı.
 - ammonia: `<title>` `clean_content_tags`'e eklenmeli (yoksa metni gövdede görünür).
+- **WebKitGTK, fare basılıyken `:hover`'ı güncellemez** (basılan öğede kalır). Sürükleme sırasındaki vurgular
+  `hover:` sınıfıyla yapılmaz; imlecin altındaki öğe `document.elementFromPoint` ile bulunup duruma yazılır
+  (`mail.drag.over`). Chrome'da `:hover` çalıştığı için Playwright bu hatayı göstermez.
 - **WebKitGTK**: korumalı iframe'deki belgeye eklenen dinleyiciler ve gözlemciler çalışmaz (bağlantılar `links.rs`
   üzerinden yerel taraftan gelir; `autoHeight` dışarıdan zamanlayıcıyla ölçer). Gizli pencerede
   `requestAnimationFrame` hiç tetiklenmez.
 - **Yazı tipi**: arayüzde `Segoe UI Variable` kendiliğinden seçilmemeli; Windows yazı tipleri kurulu makinede tüm metin
-  kalın görünüyordu (okunmuş/okunmamış ayırt edilemiyordu). Varsayılan gömülü Noto Sans Variable.
+  kalın görünüyordu (okunmuş/okunmamış ayırt edilemiyordu). Varsayılan gömülü Noto Sans; **değişken yazı tipi gömmeyin**:
+  WebKitGTK kalınlık eksenini her çizimde uygulayamıyor (Ubuntu 24.04'te okunmamış satır üzerine gelince kalınlığını
+  yitiriyordu). `@fontsource/noto-sans` kalınlık başına ayrı dosya verir (400/500/600/700, `+layout.svelte`).
+- EWS ileti listesi alıcıları yalnızca görünen adla verir (`DisplayTo`/`DisplayCc`, adres yok); `to_addr`/`cc` ileti
+  açılınca MIME'dan adresli yazılır. Alıcıya bakan arayüz kuralları (`me.ts`) bu yüzden hem adı hem adresi arar.
 - EWS: dahili göndericide `EmailAddress` X.500 olabilir (`@` yok; liste başlığında yalnızca ad saklanır), ileti açılınca
   MIME'dan SMTP adresi yazılır. `CalendarView` sayfalanamaz: 1000 öğe sınırı (yukarıda).
 - EWS istek sınırı (`ErrorServerBusy`): yanıt SOAP Fault olarak gelir, bekleme süresi `BackOffMilliseconds` içindedir.

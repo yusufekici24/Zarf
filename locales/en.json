@@ -1653,5 +1653,13 @@
   "contacts.readonly": "This Exchange contact is read-only. Create a personal copy to edit it.",
   "contacts.copy": "Create personal copy",
   "contacts.required": "Enter a name or email address.",
-  "contacts.duplicate": "A contact with {0} already exists. Create a separate entry?"
+  "contacts.duplicate": "A contact with {0} already exists. Create a separate entry?",
+  "settings.me_highlight": "Color messages that name me",
+  "settings.me_off": "Off",
+  "settings.me_to": "When my name is on the To line",
+  "settings.me_cc": "When my name is on the Cc line",
+  "settings.me_tocc": "When my name is on the To or Cc line",
+  "settings.me_color": "Highlight color",
+  "settings.me_names": "Additional names to match",
+  "settings.me_names_hint": "Your account address and name are matched automatically. Add other spellings of your name from the address book here (separate several names with semicolons)."
 }

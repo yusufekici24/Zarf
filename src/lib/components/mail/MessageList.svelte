@@ -10,6 +10,7 @@
   import { i18n, t } from "$lib/i18n.svelte";
   import { dateGroup, displayName, fmtListDate, splitAddresses, splitNameAddr, startOfDay, addDays, toTs } from "$lib/format";
   import type { MessageRow } from "$lib/types";
+  import { addressedToMe, meColorClass, meKeys } from "$lib/me";
   import Paperclip from "@lucide/svelte/icons/paperclip";
   import Flag from "@lucide/svelte/icons/flag";
   import Pin from "@lucide/svelte/icons/pin";
@@ -136,6 +137,26 @@
     }
     return r;
   }
+  // Adım Kime/Bilgi satırında: satır seçilen renkle yazılır (Seçenekler > Posta; src/lib/me.ts)
+  const ME_MODE = $derived(app.setting("me_highlight", "off"));
+  const ME_KEYS = $derived(ME_MODE === "off" ? [] : meKeys(app.accounts, app.setting("me_names", "")));
+  const ME_CLASS = $derived(meColorClass(app.setting("me_color", "red")));
+  let meCache = new WeakMap<MessageRow, boolean>();
+  let meKey = "";
+  function toMe(m: MessageRow): boolean {
+    if (ME_MODE === "off" || mail.sentLike || !ME_KEYS.length) return false;
+    const k = `${ME_MODE}|${ME_KEYS.join("\n")}`;
+    if (k !== meKey) {
+      meKey = k;
+      meCache = new WeakMap();
+    }
+    let v = meCache.get(m);
+    if (v == null) {
+      v = addressedToMe(m, ME_MODE, ME_KEYS);
+      meCache.set(m, v);
+    }
+    return v;
+  }
   const showAvatars = $derived(app.setting("show_avatars", "1") === "1");
   const selectedSet = $derived(new Set(mail.selected));
 
@@ -215,6 +236,14 @@
     pressed = { id: m.id, x: e.clientX, y: e.clientY };
   }
 
+  /** İmlecin altındaki klasör satırı (klasör bölmesi `data-folder-id` ve `data-drop-key` yazar) */
+  function folderAt(x: number, y: number): { id: number; key: string; name: string } | null {
+    const el = document.elementFromPoint(x, y)?.closest("[data-folder-id]") as HTMLElement | null;
+    if (!el) return null;
+    const id = Number(el.dataset.folderId);
+    return { id, key: el.dataset.dropKey ?? `f${id}`, name: mail.folder(id)?.display ?? "" };
+  }
+
   function onwindowmove(e: PointerEvent) {
     if (!pressed) return;
     if (!mail.drag) {
@@ -229,6 +258,9 @@
       mail.drag.x = e.clientX;
       mail.drag.y = e.clientY;
     }
+    // Bırakılacak klasör vurgulansın (fare basılıyken :hover çalışmaz)
+    const over = folderAt(e.clientX, e.clientY);
+    if ((over?.key ?? "") !== (mail.drag.over?.key ?? "")) mail.drag.over = over;
     // İmlecin altındaki yeni ileti penceresi (varsa) vurgulanır
     const now = Date.now();
     if (now - lastHover > 70) {
@@ -248,13 +280,12 @@
     const x = e.clientX;
     const y = e.clientY;
     const ctrl = e.ctrlKey;
-    const target0 = document.elementFromPoint(x, y);
+    const target = folderAt(x, y);
     void api
       .dragMessages(e.screenX, e.screenY, d.ids, "drop")
       .then((label) => {
         if (label) return;
-        const el = target0?.closest("[data-folder-id]") as HTMLElement | null;
-        if (el) void mail.move(Number(el.dataset.folderId), d.ids, ctrl);
+        if (target) void mail.move(target.id, d.ids, ctrl);
       })
       .catch(() => {});
   }
@@ -432,6 +463,7 @@
             {@const c = it.m}
             {@const sel = selectedSet.has(c.id)}
             {@const where = otherFolder(c)}
+            {@const cme = toMe(c)}
             <div
               role="option"
               tabindex="-1"
@@ -446,7 +478,7 @@
               <span class="ml-5 w-[3px] shrink-0 {c.is_read ? 'bg-border' : 'bg-primary'}"></span>
               <div class="min-w-0 flex-1 py-1 pl-3">
                 <div class="flex items-center gap-1">
-                  <span class="truncate {c.is_read ? '' : BOLD ? 'font-bold' : 'text-primary'}" style="font-size:{FS - 1}px">{displayName(c.sender) || t("mail.no_sender")}</span>
+                  <span class="truncate {c.is_read ? '' : BOLD ? 'font-bold' : cme ? '' : 'text-primary'} {cme ? ME_CLASS : ''}" style="font-size:{FS - 1}px">{displayName(c.sender) || t("mail.no_sender")}</span>
                   <span class="flex-1"></span>
                   {#if c.has_attachments}<Paperclip class="text-muted-foreground size-3" />{/if}
                   <span class="text-muted-foreground shrink-0 text-[11px]">{fmtListDate(c.date)}</span>
@@ -461,10 +493,12 @@
             {@const cats = ri.cats}
             {@const count = mail.conversations ? mail.threadCount(m) : 1}
             {@const read = !mail.unread(m)}
+            {@const me = toMe(m)}
             <div
               role="option"
               tabindex="-1"
               aria-selected={sel}
+              data-to-me={me ? "" : undefined}
               class="group absolute top-0 right-0 left-0 flex cursor-default gap-2 border-b py-1.5 pr-2 {sel ? 'bg-(--primary-soft) dark:bg-primary/25' : 'hover:bg-(--primary-faint) dark:hover:bg-accent/60'}"
               style="transform:translateY({top}px);height:{ROW}px;contain:layout paint style"
               onclick={(e) => mail.select(m.id, e)}
@@ -510,7 +544,7 @@
               {/if}
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1">
-                  <span class="truncate {read ? '' : BOLD ? 'font-bold' : 'text-primary'}" style="font-size:{FS}px">{ri.who || t("mail.no_sender")}</span>
+                  <span class="truncate {read ? '' : BOLD ? 'font-bold' : me ? '' : 'text-primary'} {me ? ME_CLASS : ''}" style="font-size:{FS}px">{ri.who || t("mail.no_sender")}</span>
                   {#if count > 1}<span class="text-muted-foreground text-xs">({count})</span>{/if}
                   <span class="flex-1"></span>
                   {#if m.is_answered}<Reply class="text-muted-foreground size-3.5" />{/if}
@@ -521,7 +555,7 @@
                 <div class="flex items-center gap-1">
                   {#if m.is_draft && !mail.sentLike}<span class="text-xs font-semibold text-red-600">[{t("mail.draft")}]</span>{/if}
                   {#if !PREVIEW}{#each cats as c (c)}<span class="size-2.5 shrink-0 rounded-sm" style="background:{app.categoryColor(c)}" title={c}></span>{/each}{/if}
-                  <span class="truncate {read ? '' : BOLD ? 'text-primary font-semibold' : 'text-primary'}" style="font-size:{FS}px">{m.subject || t("mail.no_subject")}</span>
+                  <span class="truncate {read || !BOLD ? '' : 'font-semibold'} {me ? ME_CLASS : read ? '' : 'text-primary'}" style="font-size:{FS}px">{m.subject || t("mail.no_subject")}</span>
                   <span class="flex-1"></span>
                   <div class="hidden shrink-0 items-center gap-0.5 group-hover:flex">
                     <button class="hover:bg-background rounded p-0.5" title={t("common.delete")} onclick={(e) => { e.stopPropagation(); mail.selected = [m.id]; mail.delete(); }}><Trash2 class="size-3.5" /></button>
@@ -671,7 +705,10 @@
 </ContextMenu.Root>
 
 {#if mail.drag}
-  <div class="bg-primary text-primary-foreground pointer-events-none fixed z-[100] max-w-64 truncate rounded-md px-3 py-1.5 text-xs shadow-lg" style="left:{mail.drag.x + 12}px;top:{mail.drag.y + 8}px">
-    {mail.drag.label}{#if overCompose} · {t("compose.attach")}{/if}
+  <!-- Sürükleme etiketi: konu kısalır, bırakılacak klasörün adı her zaman okunur -->
+  <div class="bg-primary text-primary-foreground pointer-events-none fixed z-[100] flex max-w-96 items-center rounded-md px-3 py-1.5 text-xs shadow-lg" style="left:{mail.drag.x + 12}px;top:{mail.drag.y + 8}px">
+    <span class="min-w-0 truncate">{mail.drag.label}</span>
+    {#if overCompose}<span class="shrink-0 whitespace-pre">{" · "}{t("compose.attach")}</span>
+    {:else if mail.drag.over?.name}<span class="max-w-56 shrink-0 truncate font-semibold whitespace-pre" data-testid="drag-target">{" → "}{mail.drag.over.name}</span>{/if}
   </div>
 {/if}

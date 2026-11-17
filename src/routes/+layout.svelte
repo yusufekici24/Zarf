@@ -1,6 +1,13 @@
 <script lang="ts">
-  // Arayüz yazı tipi pakete gömülü (Segoe UI'ye yakın, OFL): her sistemde aynı görünüm
-  import "@fontsource-variable/noto-sans/wght.css";
+  // Arayüz yazı tipi pakete gömülü (Segoe UI'ye yakın, OFL): her sistemde aynı görünüm.
+  // Değişken yazı tipi değil, kalınlık başına ayrı dosya: WebKitGTK değişken yazı tipinin kalınlık eksenini
+  // her çizimde uygulayamıyor (Ubuntu 24.04'te okunmamış satır üzerine gelince kalınlığını yitiriyordu).
+  import "@fontsource/noto-sans/400.css";
+  import "@fontsource/noto-sans/500.css";
+  import "@fontsource/noto-sans/600.css";
+  import "@fontsource/noto-sans/700.css";
+  import "@fontsource/noto-sans/400-italic.css";
+  import "@fontsource/noto-sans/700-italic.css";
   import "../app.css";
   import { invoke } from "@tauri-apps/api/core";
   import SelectPopup from "$lib/components/common/SelectPopup.svelte";

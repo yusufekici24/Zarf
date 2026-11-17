@@ -171,7 +171,7 @@ html.dark[data-accent="graphite"] { --primary: oklch(0.75 0.02 250); }
   body {
     @apply bg-background text-foreground h-full overflow-hidden;
     /* Seçenekler > Genel > Yazı tipi (src/lib/uifont.ts); varsayılan gömülü Noto Sans */
-    font-family: var(--ui-font, "Noto Sans Variable", "Noto Sans", "Ubuntu", "Cantarell", "DejaVu Sans", "Liberation Sans", system-ui, sans-serif);
+    font-family: var(--ui-font, "Noto Sans", "Ubuntu", "Cantarell", "DejaVu Sans", "Liberation Sans", system-ui, sans-serif);
     font-size: 14px;
     -webkit-user-select: none;
     user-select: none;
@@ -364,8 +364,10 @@ html.dark[data-accent="graphite"] { --primary: oklch(0.75 0.02 250); }
   .folder-item[data-selected="true"] {
     @apply bg-primary/12 text-foreground font-semibold;
   }
-  .drop-target {
-    @apply ring-primary ring-2;
+  /* İleti sürüklenirken imlecin altındaki klasör (FolderPane; :hover fare basılıyken çalışmaz) */
+  .drop-target,
+  .drop-target[data-selected="true"] {
+    @apply ring-primary bg-(--primary-soft) ring-2 ring-inset;
   }
 }
 

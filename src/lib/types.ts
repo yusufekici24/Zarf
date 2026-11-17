@@ -81,6 +81,8 @@ export interface MessageRow {
   subject: string;
   sender: string;
   to_addr: string;
+  /** Bilgi alıcıları (liste satırında da gelir: "adım Kime/Bilgi satırında" vurgusu) */
+  cc?: string;
   date: number;
   snippet: string;
   is_read: boolean;

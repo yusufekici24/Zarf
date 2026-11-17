@@ -84,6 +84,37 @@
     return app.accounts.find((a) => a.id === f.account_id)?.email ?? t("folder.local");
   }
 
+  // ------------------------------------------------------- ileti sürüklenirken
+  // Bırakılacak klasör `mail.drag.over` ile vurgulanır (MessageList imlecin altındaki klasörü yazar):
+  // WebKit fare basılıyken :hover'ı güncellemediği için `hover:` sınıfı burada işe yaramaz.
+  let pane: HTMLDivElement | undefined = $state();
+  const dropKey = $derived(mail.drag?.over?.key ?? "");
+
+  // Kapalı bir klasörün üzerinde beklenince alt klasörleri açılır
+  $effect(() => {
+    const key = dropKey;
+    if (!key.startsWith("f") || !collapsed[key]) return;
+    const timer = setTimeout(() => (collapsed[key] = false), 700);
+    return () => clearTimeout(timer);
+  });
+
+  // İmleç bölmenin üst/alt kenarına yaklaşınca liste kayar (uzun klasör ağacında hedefe ulaşmak için)
+  const edge = $derived.by(() => {
+    const d = mail.drag;
+    if (!d || !pane) return 0;
+    const r = pane.getBoundingClientRect();
+    if (d.x < r.left || d.x > r.right || d.y < r.top || d.y > r.bottom) return 0;
+    return d.y < r.top + 28 ? -1 : d.y > r.bottom - 28 ? 1 : 0;
+  });
+  $effect(() => {
+    const dir = edge;
+    if (!dir) return;
+    const view = pane?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (!view) return;
+    const timer = setInterval(() => (view.scrollTop += dir * 12), 30);
+    return () => clearInterval(timer);
+  });
+
   // Şeridin "Klasör" sekmesinden gelen istekler
   import { onMount } from "svelte";
   onMount(() => {
@@ -119,9 +150,10 @@
       <span class="w-4.5"></span>
     {/if}
     <button
-      class="folder-item {mail.drag ? 'hover:ring-primary hover:ring-2' : ''}"
+      class="folder-item {dropKey === (fav ? 'v' : 'f') + f.id ? 'drop-target' : ''}"
       data-selected={mail.folderId === f.id && !mail.searchFolder}
       data-folder-id={f.id}
+      data-drop-key="{fav ? 'v' : 'f'}{f.id}"
       onclick={() => mail.selectFolder(f.id)}
       oncontextmenu={() => (menuTarget = { kind: "folder", folder: f })}
     >
@@ -143,6 +175,7 @@
 
 <ContextMenu.Root>
   <ContextMenu.Trigger class="flex h-full flex-col">
+    <div bind:this={pane} class="h-full min-h-0">
     <ScrollArea class="h-full">
       <div class="space-y-3 p-2">
         {#if app.favorites.length}
@@ -205,6 +238,7 @@
         </div>
       </div>
     </ScrollArea>
+    </div>
   </ContextMenu.Trigger>
   <ContextMenu.Content class="w-60">
     {#if menuTarget?.kind === "folder"}

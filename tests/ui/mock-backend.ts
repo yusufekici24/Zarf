@@ -13,6 +13,9 @@ export interface MockMessage {
   snippet: string;
   is_read: boolean;
   has_attachments?: boolean;
+  /** Kime ve Bilgi satırları (verilmezse Kime: "Ben <ben@kurum.com.tr>", Bilgi boş) */
+  to?: string;
+  cc?: string;
   /** Gövdede uzak resim var (okuma bölmesi indirmeden önce sorar) */
   has_remote?: boolean;
   html: string;
@@ -100,7 +103,7 @@ export async function installMock(page: Page, f: Fixtures) {
     };
     const folders = [folder(1, "Gelen Kutusu", "inbox", 0), folder(2, "Gönderilmiş Öğeler", "sent", 1), folder(3, "Silinmiş Öğeler", "trash", 2)];
     const row = (m: (typeof f.messages)[number], thread_count = 1, thread_unread = 0) => ({
-      id: m.id, folder_id: m.folder_id, account_id: 1, uid: m.id, subject: m.subject, sender: m.sender, to_addr: "Ben <ben@kurum.com.tr>",
+      id: m.id, folder_id: m.folder_id, account_id: 1, uid: m.id, subject: m.subject, sender: m.sender, to_addr: m.to ?? "Ben <ben@kurum.com.tr>", cc: m.cc ?? "",
       date: m.date, snippet: m.snippet, is_read: m.is_read, is_flagged: false, is_draft: false, is_answered: false, importance: 1,
       categories: "", has_attachments: !!m.has_attachments, message_id: `<m${m.id}@kurum.com.tr>`, in_reply_to: "", thread_count, is_pinned: false,
       thread_id: Math.min(...f.messages.filter((x) => ns(x.subject) === ns(m.subject)).map((x) => x.id)), thread_unread,
@@ -184,7 +187,7 @@ export async function installMock(page: Page, f: Fixtures) {
       get_message: (a) => {
         const m = f.messages.find((x) => x.id === a.id)!;
         return {
-          ...row(m), cc: "", bcc: "", refs: "", body_text: m.snippet, body_html: m.html, pending: "", html: m.html, text: m.snippet,
+          ...row(m), bcc: "", refs: "", body_text: m.snippet, body_html: m.html, pending: "", html: m.html, text: m.snippet,
           attachments: [], reply_to: "", read_receipt_to: "", has_remote: !!m.has_remote, has_calendar: false, has_vcard: false,
           folder_role: folders.find((x) => x.id === m.folder_id)?.role ?? "", external: false, security: "",
         };

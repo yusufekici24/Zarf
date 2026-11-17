@@ -19,6 +19,7 @@
   import { fmtSize, initials } from "$lib/format";
   import { SCALES, autoScale } from "$lib/zoom";
   import { READ_SIZES } from "$lib/uifont";
+  import { ME_COLORS } from "$lib/me";
   import { ACCENT_DEFAULT } from "$lib/accent";
   import AccentPicker from "$lib/components/common/AccentPicker.svelte";
   import { COMMON_FONTS, FONT_SIZES, fontCss, fontStack, parseFont, type FontKey, type FontSpec } from "$lib/fonts";
@@ -515,6 +516,15 @@
         {@render section(t("settings.sec_reading"))}
         {@render pick("list_font", t("settings.list_font"), "normal", [["small", t("settings.size_small")], ["normal", t("settings.size_normal")], ["large", t("settings.size_large")], ["xlarge", t("settings.size_xlarge")]], true)}
         {@render check("unread_bold", t("settings.unread_bold"), true)}
+        {@render pick("me_highlight", t("settings.me_highlight"), "off", [["off", t("settings.me_off")], ["to", t("settings.me_to")], ["cc", t("settings.me_cc")], ["tocc", t("settings.me_tocc")]], true)}
+        {#if get("me_highlight", "off") !== "off"}
+          {@render pick("me_color", t("settings.me_color"), "red", Object.entries(ME_COLORS).map(([k, v]): [string, string] => [k, t(v[0])]), true)}
+          <div class="flex items-center gap-2 py-[3px] pl-4 text-[13px]">
+            <span class="w-64 shrink-0">{t("settings.me_names")}:</span>
+            <input class="focus:border-primary h-[26px] min-w-56 rounded-[3px] border border-[#8a8a8a] bg-white px-1.5 text-[13px] outline-none dark:border-white/30 dark:bg-transparent" data-testid="me-names" value={get("me_names", "")} oninput={(e) => set("me_names", (e.target as HTMLInputElement).value)} />
+          </div>
+          <div class="text-muted-foreground max-w-[34rem] pb-1 pl-4 text-xs">{t("settings.me_names_hint")}</div>
+        {/if}
         {@render pick("read_font", t("settings.read_font"), "", fontOptions([["", t("settings.font_default", "Calibri")]]), true)}
         {@render pick("read_font_size", t("settings.read_font_size"), "11", READ_SIZES.map((v): [string, string] => [v, `${v} pt`]), true)}
         {@render pick("preview_lines", t("settings.preview_lines"), "1", [["0", t("settings.preview_off")], ["1", t("settings.preview_n", 1)], ["2", t("settings.preview_n", 2)], ["3", t("settings.preview_n", 3)]], true)}

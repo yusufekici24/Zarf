@@ -18,14 +18,21 @@ test("varsayılan arayüz yazı tipi gömülü Noto Sans: kurulu Segoe UI kendil
   const errors = await open(page);
   await expect(page.getByText("Bütçe toplantısı").first()).toBeVisible();
   const f = await bodyFont(page);
-  expect(f.startsWith('"Noto Sans Variable"'), f).toBe(true);
+  expect(f.startsWith('"Noto Sans"'), f).toBe(true);
+  // Kalınlık başına ayrı gömülü dosya (değişken yazı tipi değil): WebKitGTK kalınlık eksenini her çizimde uygulayamıyor
+  const faces = await page.evaluate(async () => {
+    await document.fonts.ready;
+    return [...document.fonts].filter((x) => x.family.replace(/["']/g, "") === "Noto Sans" && x.style === "normal").map((x) => x.weight);
+  });
+  expect([...new Set(faces)].sort()).toEqual(["400", "500", "600", "700"]);
+  expect(await page.evaluate(() => [...document.fonts].some((x) => /variable/i.test(x.family)))).toBe(false);
   expect(f).not.toContain("Segoe");
   expect(errors).toEqual([]);
 });
 
 test("seçilen arayüz ve okuma yazı tipi uygulanır", async ({ page }) => {
   await open(page, { settings: { ui_font: "DejaVu Sans", read_font: "Liberation Serif", read_font_size: "14" } });
-  await expect.poll(() => bodyFont(page)).toMatch(/^"DejaVu Sans", "Noto Sans Variable"/);
+  await expect.poll(() => bodyFont(page)).toMatch(/^"DejaVu Sans", "Noto Sans"/);
   await page.getByText("Bütçe toplantısı").first().click();
   const frame = page.frameLocator('iframe[title="message"]').first();
   await expect(frame.locator("body")).toContainText("saat 10:00");

@@ -3,8 +3,9 @@
 // Sistemde Windows yazı tipleri kurulu olsa bile "Segoe UI Variable" kendiliğinden seçilmez:
 // WebKitGTK bu değişken yazı tipinin kalınlık eksenini her zaman uygulayamıyor ve tüm metin
 // (okunmuş iletiler dahil) kalın görünebiliyor. İsteyen yazı tipini Seçenekler'den seçer.
+// Aynı nedenle gömülü Noto Sans da değişken değil, kalınlık başına ayrı dosyadır (400/500/600/700; +layout.svelte).
 
-export const UI_FONT_DEFAULT = `"Noto Sans Variable", "Noto Sans", "Ubuntu", "Cantarell", "DejaVu Sans", "Liberation Sans", system-ui, sans-serif`;
+export const UI_FONT_DEFAULT = `"Noto Sans", "Ubuntu", "Cantarell", "DejaVu Sans", "Liberation Sans", system-ui, sans-serif`;
 
 /** Kendi yazı tipi olmayan iletilerin okuma yazı tipi (Outlook varsayılanı Calibri 11 pt) */
 export const READ_FONT_DEFAULT = `Calibri, Carlito, "Noto Sans", sans-serif`;

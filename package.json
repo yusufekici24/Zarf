@@ -1,6 +1,6 @@
 {
   "name": "lynora",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "",
   "type": "module",
   "scripts": {
@@ -15,12 +15,12 @@
   },
   "license": "GPL-3.0-or-later",
   "dependencies": {
+    "@fontsource/noto-sans": "^5.3.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.8.3"
   },
   "devDependencies": {
     "@fluentui/svg-icons": "^1.1.344",
-    "@fontsource-variable/noto-sans": "^5.3.0",
     "@internationalized/date": "^3.12.4",
     "@lucide/svelte": "^1.57.0",
     "@playwright/test": "^1.64.1",

@@ -3,7 +3,34 @@
 Bir oturumun sonunda güncellenir: son sürümde ne var, neye güvenilmez, sırada ne var. Yeni oturumda önce bu
 dosya, sonra yalnızca ilgili konu belgesi okunur (`agent.md` → "Konu belgeleri").
 
-## Zarf 2.0.0 yayın hazırlığı (2026-11-17)
+## Son sürüm: Zarf 2.0.1 (2026-11-17)
+
+| Ne | Nerede |
+|---|---|
+| Adı Kime/Bilgi satırında geçen iletiler renkli yazılır (varsayılan kapalı; Seçenekler > Posta > Okuma Bölmesi: kip, renk, ek adlar) | `src/lib/me.ts`, `MessageList.svelte` `toMe`, `SettingsDialog.svelte`, `db.rs` `LIST_COLS` + `MessageRow.cc` |
+| İleti sürüklenirken bırakılacak klasör vurgulanır, adı sürükleme etiketinde yazar; kapalı klasör üzerinde beklenince açılır, bölme kenarında liste kayar | `mail.drag.over` (`mail.svelte.ts`), `MessageList.svelte` `folderAt`, `FolderPane.svelte`, `app.css` `.drop-target` |
+| Gömülü arayüz yazı tipi değişken Noto Sans yerine kalınlık başına ayrı dosya (400/500/600/700, italik 400/700) | `+layout.svelte`, `uifont.ts`, `app.css`; paket `@fontsource/noto-sans` |
+| Uygulama menüsünde eski adlarla da bulunur (`lynora`, `mailnix`, `linux posta`, `outlook`) | `packaging/lynora.desktop` `Keywords` |
+| Gerçek WebKitGTK'de deneme betikleri | `scripts/webkit-mock.mjs`, `scripts/webkit-dene.py` |
+
+Sürükleme hatasının nedeni: WebKitGTK fare basılıyken `:hover`'ı güncellemiyor, vurgu `hover:ring` sınıfına bağlıydı
+(WebKitGTK 2.52.6'da betikle doğrulandı; düzeltme aynı betikle açık ve koyu görünümde denendi).
+
+Test: `cargo test --lib` 108 geçti / 5 ignore; `npm run check` 0 hata / 15 uyarı; `npm run test:ui` 50 geçti
+(6'sı `highlight.spec.ts`); metinler 1663 anahtar.
+
+**Doğrulanmadı: Ubuntu 24.04'te okunmamış satırın üzerine gelince kalınlığını yitirmesi (kullanıcı bildirimi).**
+Ubuntu 26.04 / WebKitGTK 2.52.6'da hata yinelenemedi (yazılımla çizimde üzerine gelme öncesi ve sonrası aynı;
+hesaplanan stil 700/600 kalıyor). Yazı tipi değişikliği şu tahmine dayanır: eski WebKitGTK değişken yazı tipinin
+kalınlık eksenini kısmi yeniden çizimde uygulamıyor (`uifont.ts`'teki Segoe UI Variable sorunuyla aynı sınıf).
+2.0.1 ile sorun sürerse o makineden istenecekler: `dpkg -l libwebkit2gtk-4.1-0` sürümü; rengin de değişip
+değişmediği; Seçenekler > Gelişmiş > "Donanım hızlandırma" kapatılınca (yazılımla çizim) sorunun kaybolup kaybolmadığı.
+
+Exchange'de adı yalnızca görünen adla eşleştirmek yerine `PR_MESSAGE_TO_ME`/`PR_MESSAGE_CC_ME` (0x0057/0x0058)
+özellikleri liste isteğine eklenebilir; sütun ve yeniden tarama gerektirdiği için yapılmadı. Kırmızı vurgu gerçek
+Exchange verisiyle denenmedi.
+
+## Önceki sürüm: Zarf 2.0.0 (2026-11-17)
 
 Kırmızı-gri logo/açılış, yerel ve CardDAV kişi düzenleme, Exchange salt okunur/kopya
 akışı, yinelenen adres uyarısı, kişi ve zamanlayıcı sayfalaması, seçili takvim hesabıyla
@@ -15,7 +42,7 @@ Ayrıntılı ölçümler ve salt okunur tanı betikleri: `docs/PERFORMANS.md`, `
 Gerçek Exchange ve GTK kabulü, üretim verisi üzerinde sorgu planı ve p95 ölçümü
 henüz yapılmadı. Kayıt başına kalıcı CardDAV eşitleme hatası gösterimi henüz yok.
 
-## Çalışma ağacı: Zarf 2.0.0 (2026-11-17)
+## Zarf 2.0.0 içeriği (2026-11-17)
 
 - Ürün adı Zarf; vektör logo ve paket simgeleri yenilendi. GTK ve web açılış hareketi
   düzenlendi, hareket azaltma tercihi desteklendi. Eski veri ve anahtarlık kimlikleri korundu.
@@ -31,7 +58,7 @@ henüz yapılmadı. Kayıt başına kalıcı CardDAV eşitleme hatası gösterim
 - Gerçek Exchange, GTK ekranında görsel kabul ve kurulu sistemde yükseltme henüz denenmedi.
 - Önceden çalışma ağacında bulunan yazma penceresi değişiklikleri korundu ve testlere dahildir.
 
-## Son sürüm: 1.7.6 (2026-11-11)
+## Önceki sürüm: 1.7.6 (2026-11-11)
 
 Exchange istek sınırı düzeltmesi (aşağıda). 1.7.5'in (2026-11-10) içeriği:
 
@@ -44,7 +71,7 @@ Exchange istek sınırı düzeltmesi (aşağıda). 1.7.5'in (2026-11-10) içeri�
 
 Test durumu: `cargo test --lib` 108 geçti (5 ignore), `npm run check` 0 hata / 15 uyarı, `npm run test:ui` 30 geçti.
 
-## Sürümlenmemiş: yazma penceresi (2026-11-17, çalışma ağacında, commit yok)
+## Yazma penceresi (2.0.0 ile yayımlandı)
 
 Hata: yazma alanında vurgu rengi ilk satıra uygulanıyor, ikinci satır seçilip aynı renk seçilince uygulanmıyordu.
 Neden: düğme yerel `<input type="color">`'ın `change` olayına bağlıydı; o olay yalnızca değer değişince gelir.
@@ -61,7 +88,7 @@ Düzeltmeyle birlikte yazma penceresi genişletildi (ayrıntı: `docs/yazma-penc
 | Yan düzeltmeler: imleç boşken seçilen punto dev yazıyordu; tablo ızgarası menüsü seçince kapanmıyordu; eklenen tablonun kenarlık türü satır içinden düşüyordu | `RichEditor.svelte`, `ComposeWindow.svelte` |
 
 Test: `npm run check` 0 hata / 15 uyarı, `npm run test:ui` 40 geçti (10'u `compose.spec.ts`). Metinler
-`locales/*.json` (1649 anahtar). Sürüm numarası değişmedi (1.7.6); paket derlenmedi.
+`locales/*.json` (o tarihte 1649 anahtar).
 
 ## 1.7.6: Exchange istek sınırı (`ErrorServerBusy`)
 

@@ -44,7 +44,9 @@ class MailState {
   loading = $state(false);
   sortBy = $state<"date" | "from" | "subject" | "importance" | "flag">("date");
   sortDesc = $state(true);
-  drag = $state<{ ids: number[]; label: string; x: number; y: number } | null>(null);
+  /** Sürüklenen iletiler. `over`: imlecin altındaki klasör (`key`: sık kullanılan satırı "v", ağaçtaki "f" + kimlik).
+   *  WebKit fare basılıyken `:hover`'ı güncellemez; bırakılacak klasör bu yüzden buradan vurgulanır. */
+  drag = $state<{ ids: number[]; label: string; x: number; y: number; over?: { id: number; key: string; name: string } | null } | null>(null);
   /** Daha eski iletiler yükleniyor (Exchange) */
   loadingOlder = $state(false);
   /** Sunucuda başka eski ileti kalmadığı bilinen klasörler */
