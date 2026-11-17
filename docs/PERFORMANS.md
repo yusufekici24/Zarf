@@ -82,3 +82,32 @@ kapalı/açık, konuşma kapalı/açık sonuçlarını ayrıca karşılaştırı
 ölçüm olmadan topluca uygulanmadı. WAL kapatmak, FTS'yi gelişigüzel yeniden kurmak,
 her açılışta VACUUM/ANALYZE yapmak veya SQLite'ı başka DB ile değiştirmek bu bulguların
 önerdiği çözüm değildir. Önce gerçek yavaş işlem ve süre dağılımı belirlenmelidir.
+
+## Bildirilen senaryoya özel öncelik: başka bilgisayarda açılış / arama / eşitleme
+
+Koddan doğrulanan zaman çizelgesi: açılışta gerekirse DB geçişi beklenir; eşitleme
+1,5 saniye sonra, yedek pencere 3 saniye sonra, eksik FTS dizinini tamamlama 8 saniye
+sonra, ek adı geri doldurma 40 saniye sonra başlar. Büyük veya yeni taşınan posta
+kutusunda bunlar aynı disk/CPU üzerinde çakışabilir. Bunlar doğrulanmış kod yollarıdır;
+yavaş makinede hepsinin etkin olduğu henüz bilinmiyor.
+
+Özellikle **FTS tamamlanmamışken arama dizinsiz yola düşer**. Tanı betiğindeki
+`fts_build` boş değilse bunu ilk sırada inceleyin. Uygulamayı bir süre açık bırakıp
+aynı sorguyu tekrar ölçün; ilerleme durmuşsa indeks kurma hatasını araştırın. FTS'yi
+silerek yeniden kurmak başlangıçta yavaşlığı artırır. `--fts-term 'deneme'` doğrudan
+FTS sorgu süresini içerik yazdırmadan ölçer; uygulamanın tam arama ifadesiyle aynı test
+değildir. Boş olmayan `fts_build` durumunda bu sorgu yalnızca dizinlenmiş kısmı sayar.
+
+Arama kutusunda zaten 250 ms bekleme var. Çok sözcüklü arama önce tam ifade var mı
+sorguluyor; ayrıca yerel sonuçlardan sonra sunucu araması başlıyor. “Sonuçlar geldi
+ama gösterge sürüyor” ile “yerel liste hiç gelmiyor” ayrılmalı. İlki Exchange araması,
+ikincisi FTS/SQL/okuyucu beklemesi veya çizim olabilir.
+
+Önerilen karşılaştırma: aynı veriyle açılışta otomatik eşitlemeyi geçici kapatarak
+ilk açılışı ve aynı aramayı karşılaştırın; sonra ayarı geri açın. Belirgin fark varsa
+önce eşitleme/indeksleme işlerini ilk ekran hazır olana kadar erteleyen ve kullanıcı
+etkinliğinde yavaşlatan zamanlama değerlendirilmelidir. Aynı anda daha çok istek
+atmak Exchange ServerBusy sorununu artırabilir; paralellik ilk çözüm değildir.
+
+Bu makinede yavaş posta kutusu bulunmadığı için bu karşılaştırma yapılmış gibi
+raporlanmadı. Kesin DB müdahalesi, yavaş bilgisayarın tanı çıktısından sonra seçilmelidir.
