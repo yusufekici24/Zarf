@@ -467,6 +467,7 @@ fn view_from_raw(id: i64, raw: &[u8], base: Option<Message>) -> MessageView {
 
 #[tauri::command]
 pub async fn get_message(state: State<'_, AppState>, id: i64) -> R<MessageView> {
+    let perf_started = std::time::Instant::now();
     if id < 0 {
         let raw = state.raw_of(id).ok_or("?")?;
         return tauri::async_runtime::spawn_blocking(move || guarded(move || Ok(view_from_raw(id, &raw, None)))).await.map_err(err)?;
@@ -476,10 +477,14 @@ pub async fn get_message(state: State<'_, AppState>, id: i64) -> R<MessageView> 
     if state.db.needs_content(id) {
         let _ = state.raw_of_async(id).await;
     }
+    if std::env::var_os("ZARF_PERF").is_some() {
+        eprintln!("zarf perf: message_content_wait elapsed_ms={}", perf_started.elapsed().as_millis());
+    }
     // Ayrıştırma ve HTML temizleme ayrı iş parçacığında (büyük iletilerde arayüz beklemez)
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
         guarded(move || {
+            let parse_started = std::time::Instant::now();
             let m = db.message(id).ok_or_else(|| t!("error.not_found"))?;
             let raw = m.raw.clone();
             let role = db.folder(m.folder_id).and_then(|f| f.role).unwrap_or_default();
@@ -502,6 +507,9 @@ pub async fn get_message(state: State<'_, AppState>, id: i64) -> R<MessageView> 
                 view_from_raw(id, &raw, Some(m))
             };
             v.folder_role = role;
+            if std::env::var_os("ZARF_PERF").is_some() {
+                eprintln!("zarf perf: message_parse elapsed_ms={}", parse_started.elapsed().as_millis());
+            }
             Ok(v)
         })
     })

@@ -51,3 +51,23 @@ test("klasör değişince o klasörün iletileri listelenir", async ({ page }) =
   await expect(page.getByText("Aylık rapor")).toHaveCount(0);
   expect((await calls(page, "list_messages")).some((a) => a.folderId === 2)).toBe(true);
 });
+
+test("yavaş klasör sayacı ileti listesi yenilenmesini engellemez", async ({ page }) => {
+  await installMock(page, fixtures());
+  await page.goto("/");
+  await expect(page.getByText("Bütçe toplantısı").first()).toBeVisible();
+  await page.evaluate(() => {
+    const w = window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> }; __mock: { emit: (event: string, payload: unknown) => void }; releaseFolders: () => void; listRefreshed: boolean };
+    const original = w.__TAURI_INTERNALS__.invoke;
+    w.listRefreshed = false;
+    const hold = new Promise<void>(resolve => { w.releaseFolders = resolve; });
+    w.__TAURI_INTERNALS__.invoke = async (cmd, args) => {
+      if (cmd === "folder_tree") await hold;
+      if (cmd === "list_messages") w.listRefreshed = true;
+      return original(cmd, args);
+    };
+    w.__mock.emit("mail://changed", {});
+  });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { listRefreshed: boolean }).listRefreshed)).toBe(true);
+  await page.evaluate(() => (window as unknown as { releaseFolders: () => void }).releaseFolders());
+});

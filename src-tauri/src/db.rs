@@ -2290,6 +2290,7 @@ impl Db {
     /// Outlook gibi sayfalı liste: sıralama ve (isteğe bağlı) konuşma gruplaması
     /// veritabanında yapılır. Dönen ikinci değer toplam satır sayısıdır.
     pub fn messages_page(&self, folder_id: Option<i64>, search: &str, filter: &MsgFilter, order: &ListOrder, offset: i64, limit: i64) -> (Vec<MessageRow>, i64) {
+        let perf_started = std::time::Instant::now();
         // "ahmet emre aydın" gibi birden çok düz sözcük: önce ifade olarak (ad soyad gibi arka
         // arkaya) aranır; eşleşme varsa yalnızca bunlar gösterilir (dağıtım listelerinde ayrı
         // ayrı geçen Ahmet, Emre, Aydın'lar sonuçları doldurmaz), yoksa tüm sözcükler aranır
@@ -2358,6 +2359,9 @@ impl Db {
         } else {
             -1
         };
+        if std::env::var_os("ZARF_PERF").is_some() {
+            eprintln!("zarf perf: db_messages elapsed_ms={} rows={} conversations={} offset={}", perf_started.elapsed().as_millis(), rows.len(), order.conversations, offset);
+        }
         (rows, total)
     }
 

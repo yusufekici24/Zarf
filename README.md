@@ -7,6 +7,11 @@ Kurumsal **Microsoft Exchange** desteği sunar ve **.msg** ileti dosyalarını a
 
 Altyapı: **Rust + Tauri 2**, **Svelte 5 + Tailwind CSS + shadcn-svelte** (arayüz).
 
+## Zarf 2.0
+
+Kırmızı-gri marka ve açılış ekranı, grup üyelerini gösteren zamanlayıcı, kişi yönetimi
+ve büyük listelerde sayfalama. [Ayrıntılı performans analizi ve tanı adımları](docs/PERFORMANS.md).
+
 ## Özellikler
 
 **Hesaplar**

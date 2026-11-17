@@ -127,7 +127,22 @@ class AppState {
     this.announce();
   }
 
-  async loadFolders() {
+  private folderLoad: Promise<void> | null = null;
+  private folderReload = false;
+  loadFolders(): Promise<void> {
+    this.folderReload = true;
+    if (!this.folderLoad) {
+      this.folderLoad = (async () => {
+        do {
+          this.folderReload = false;
+          await this.loadFoldersOnce();
+        } while (this.folderReload);
+      })().finally(() => { this.folderLoad = null; });
+    }
+    return this.folderLoad;
+  }
+
+  private async loadFoldersOnce() {
     const r = await api.folderTree();
     this.folderGroups = r.groups;
     this.favorites = r.favorites;

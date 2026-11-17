@@ -10,7 +10,7 @@ Kurumsal Exchange (EWS) birinci önceliktir, IMAP/SMTP de desteklenir. Arayüz m
 - Arka uç: Rust + Tauri 2 (`src-tauri/`). SQLite (rusqlite, gömülü), rustls, kendi HTTP/EWS/SMTP istemcileri.
 - Ön yüz: Svelte 5 (runes) + SvelteKit statik + Tailwind 4 + shadcn-svelte (`src/`).
 - Paket: `.deb` (glibc 2.39+, yerel derleme) ya da Docker'da Ubuntu 22.04 tabanı (`packaging/build-packages.sh`).
-- Depo: github.com/yusufekici24/linux-mailappv2 (özel). Sürümler Releases'te `Zarf_X.Y.Z_amd64.deb`.
+- Depo: github.com/yusufekici24/Zarf-LinuxMailApplication (özel). Sürümler Releases'te `Zarf_X.Y.Z_amd64.deb`.
 
 ## Konu belgeleri (önce buraya bakın)
 
@@ -19,6 +19,7 @@ dosyadadır; ilgili işe başlamadan yalnızca o dosyayı okumak yeter.
 
 | Konu | Dosya |
 |---|---|
+| Performans: ölçümler, salt okunur DB tanısı, sayaç yenileme ve çözüm kararları | `docs/PERFORMANS.md` |
 | Zarf 2.0: grup zamanlayıcısı, kişi yönetimi değerlendirmesi, performans ve marka | `docs/zarf-2.0.md` |
 | Şu anki durum: son sürüm, doğrulanmamış noktalar, sıradaki işler | `docs/DURUM.md` |
 | Arama: sözdizimi, ifade ağacı, SQL/AQS, arama kutusu önerileri | `docs/arama.md` |

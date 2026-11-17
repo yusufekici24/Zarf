@@ -9,7 +9,9 @@ Kırmızı-gri logo/açılış, yerel ve CardDAV kişi düzenleme, Exchange salt
 akışı, yinelenen adres uyarısı, kişi ve zamanlayıcı sayfalaması, seçili takvim hesabıyla
 müsaitlik sorgulama, isteğe bağlı EWS süre ölçümü ve açılış Performance API ölçümleri.
 Önceki yazma penceresi geliştirmeleri bu sürüme dahildir.
-Doğrulama: Rust 108 başarılı / 5 ignore, Svelte 0 hata / 15 mevcut uyarı.
+Doğrulama: Rust 108 başarılı / 5 ignore, UI 44 başarılı, Svelte 0 hata / 15 mevcut uyarı.
+Klasör sayaçları artık ileti yenilemesini bekletmez; eşzamanlı sayaç çağrıları birleştirilir.
+Ayrıntılı ölçümler ve salt okunur tanı betikleri: `docs/PERFORMANS.md`, `scripts/`.
 Gerçek Exchange ve GTK kabulü, üretim verisi üzerinde sorgu planı ve p95 ölçümü
 henüz yapılmadı. Kayıt başına kalıcı CardDAV eşitleme hatası gösterimi henüz yok.
 

@@ -316,7 +316,7 @@
           const touched = new Set(changedFolders);
           changedAll = false;
           changedFolders.clear();
-          await app.loadFolders();
+          void app.loadFolders().catch(e => app.error(e));
           if (all || mail.folderId == null || touched.has(mail.folderId) || mail.searchFolder || app.search) app.bump("mail");
         }, 250);
       }));
