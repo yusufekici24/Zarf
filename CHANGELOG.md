@@ -4,15 +4,6 @@ Zarf'ın her sürümünde neyin değiştiği, kullanıcının gördüğü haliyl
 **Releases** sayfasındadır; 2.0'dan önceki sürümlerin paketleri artık yayımlanmıyor, onların notları da bu dosyanın
 sonundaki "2.0'a gelene kadar" bölümünde toplandı.
 
-Kurulum ve yükseltme her sürümde aynıdır:
-
-```sh
-sudo apt install ./Zarf_<sürüm>_amd64.deb
-```
-
-Ubuntu 24.04 ve sonrası, Debian 13 ve türevleri içindir (glibc 2.39 gerekir). Mevcut verileriniz, hesaplarınız ve
-anahtarlıktaki parolalarınız yükseltmede korunur.
-
 ---
 
 ## Zarf 2.0
