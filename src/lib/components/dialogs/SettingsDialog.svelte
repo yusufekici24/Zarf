@@ -20,6 +20,7 @@
   import { SCALES, autoScale } from "$lib/zoom";
   import { READ_SIZES } from "$lib/uifont";
   import { ME_COLORS } from "$lib/me";
+  import { UNDO_SEND_DEFAULT, UNDO_SEND_OPTIONS } from "$lib/undo-send";
   import { ACCENT_DEFAULT } from "$lib/accent";
   import AccentPicker from "$lib/components/common/AccentPicker.svelte";
   import { COMMON_FONTS, FONT_SIZES, fontCss, fontStack, parseFont, type FontKey, type FontSpec } from "$lib/fonts";
@@ -543,7 +544,8 @@
         {@render check("open_next_after_delete", t("settings.open_next_after_delete"), false)}
         {@render section(t("settings.sec_send"))}
         {@render pick("default_account", t("settings.default_account"), String(app.defaultAccountId() ?? ""), app.accounts.map((a) => [String(a.id), a.email]), true)}
-        {@render pick("undo_send", t("settings.undo_send"), "0", ["0", "5", "10", "20", "30"].map((v) => [v, v === "0" ? t("settings.undo_off") : t("settings.undo_n_sec", v)]), true)}
+        {@render pick("undo_send", t("settings.undo_send"), UNDO_SEND_DEFAULT, UNDO_SEND_OPTIONS.map((v) => [v, v === "0" ? t("settings.undo_off") : t("settings.undo_n_sec", v)]), true)}
+        <p class="text-muted-foreground max-w-[34rem] py-1 pl-4 text-[12px]">{t("settings.undo_send_help")}</p>
       {:else if tab === "stationery"}
         {@render intro(t("settings.stationery_intro"))}
         {@render section(t("settings.sec_font_new"))}

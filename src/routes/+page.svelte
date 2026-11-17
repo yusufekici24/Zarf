@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
+  import { secondsLeft } from "$lib/undo-send";
   import { applyScale, stepScale, fitWindow, watchScreen } from "$lib/zoom";
   import { ModeWatcher, setMode } from "mode-watcher";
   import { listen } from "@tauri-apps/api/event";
@@ -154,6 +155,52 @@
     const addrs = [m.sender, m.to_addr, m.cc].join(",").match(/[\w.+-]+@[\w.-]+/g) ?? [];
     const attendees = [...new Set(addrs.map((a) => a.toLowerCase()))].filter((a) => !me.includes(a)).join(",");
     app.newItem("calendar", { title: m.subject, description: m.text.slice(0, 4000), attendees });
+  }
+
+  /** Gönderimi geri alma bildirimi: kalan süreyi sayar. İleti süre dolunca arka uçta gönderilir
+      (bildirim duraklasa ya da pencere gizli olsa da); burada yalnızca "Geri al" / "Şimdi gönder". */
+  function undoSendToast(id: number, dueMs: number) {
+    const tid = `undo-send-${id}`;
+    let settled = false;
+    let shown = 0;
+    const finish = () => {
+      settled = true;
+      clearInterval(timer);
+    };
+    const sendNow = () => {
+      if (settled) return;
+      finish();
+      void api.retryOutbox(id);
+    };
+    const undoIt = async () => {
+      if (settled) return;
+      finish();
+      try {
+        const draft = await api.cancelOutbox(id);
+        app.compose({ mode: "draft", sourceId: draft });
+      } catch (err) {
+        app.error(err);
+      }
+    };
+    const show = () => {
+      const left = secondsLeft(dueMs);
+      if (left === shown) return;
+      shown = left;
+      toast(t("compose.sending_in", left), {
+        id: tid,
+        duration: Number.POSITIVE_INFINITY,
+        action: { label: t("compose.undo_send"), onClick: () => void undoIt() },
+        cancel: { label: t("compose.send_now"), onClick: sendNow },
+        // Kapat düğmesi / kaydırarak kapatma: beklemeden gönder
+        onDismiss: sendNow,
+      });
+    };
+    const timer = setInterval(() => {
+      if (Date.now() < dueMs) return show();
+      finish();
+      toast.dismiss(tid);
+    }, 200);
+    show();
   }
 
   function onkeydown(e: KeyboardEvent) {
@@ -397,29 +444,11 @@
       }));
       unsub.push(await listen<{ name: string; detail: unknown }>("app://action", (e) => window.dispatchEvent(new CustomEvent(e.payload.name, { detail: e.payload.detail }))));
       // Yeni ileti penceresinden gönderildi: Outlook'taki "Gönderimi geri al" burada
-      unsub.push(await listen<{ id: number; undo: number; sendAt: number | null; subject: string }>("compose://sent", (e) => {
-        const { id, undo, sendAt } = e.payload;
+      unsub.push(await listen<{ id: number; undo: number; due?: number | null; sendAt: number | null; subject: string }>("compose://sent", (e) => {
+        const { id, undo, due, sendAt } = e.payload;
         if (app.net !== "online" && !sendAt) toast(t("mail.queued_offline"), { duration: 6000 });
-        if (undo > 0) {
-          let undone = false;
-          toast(t("compose.sending"), {
-            duration: undo * 1000,
-            action: {
-              label: t("compose.undo_send"),
-              onClick: async () => {
-                undone = true;
-                try {
-                  const draft = await api.cancelOutbox(id);
-                  app.compose({ mode: "draft", sourceId: draft });
-                } catch (err) {
-                  app.error(err);
-                }
-              },
-            },
-            onAutoClose: () => { if (!undone) void api.retryOutbox(id); },
-            onDismiss: () => { if (!undone) void api.retryOutbox(id); },
-          });
-        } else if (sendAt) toast.success(t("compose.scheduled", fmtDateTime(sendAt)));
+        if (undo > 0) undoSendToast(id, due ? due * 1000 : Date.now() + undo * 1000);
+        else if (sendAt) toast.success(t("compose.scheduled", fmtDateTime(sendAt)));
       }));
 
       const args = await api.startupArgs();

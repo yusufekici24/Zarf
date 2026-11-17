@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Arayüz testlerinin sahte arka ucunu (tests/ui/mock-backend.ts) düz bir başlangıç betiğine çevirir;
 // scripts/webkit-dene.py bu betiği gerçek WebKitGTK'ye yükler.
-//   node scripts/webkit-mock.mjs cikti.js ['{"theme":"light","me_highlight":"tocc"}']
+//   node scripts/webkit-mock.mjs cikti.js ['{"theme":"light","me_highlight":"tocc"}'] ['{"window":"w-compose"}']
+// Üçüncü bağımsız değişken fixtures() üzerine yazılır (ör. pencere etiketi; yazma penceresine içerik
+// sayfada `__mock.emit("window://assign", …)` ile verilir, bkz. tests/ui/compose.spec.ts).
 // İletiler: yarısı okunmamış, Kime/Bilgi satırları çeşitli (hesap: ben@kurum.com.tr).
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -28,7 +30,8 @@ const messages = Array.from({ length: 8 }, (_, k) => ({
   html: "<p>Merhaba</p>",
 }));
 
-const f = mod.fixtures({ messages, settings: { language: "tr", start_module: "mail", reading_pane: "right", sync_on_start: "0", mark_read_delay: "-1", ...settings } });
+const over = JSON.parse(process.argv[4] || "{}");
+const f = mod.fixtures({ messages, ...over, settings: { language: "tr", start_module: "mail", reading_pane: "right", sync_on_start: "0", mark_read_delay: "-1", ...settings } });
 let script = "";
 await mod.installMock({ addInitScript: async (fn, arg) => void (script = `(${fn.toString()})(${JSON.stringify(arg)});`) }, f);
 writeFileSync(out, script);

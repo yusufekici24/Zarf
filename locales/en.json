@@ -1661,5 +1661,8 @@
   "settings.me_tocc": "When my name is on the To or Cc line",
   "settings.me_color": "Highlight color",
   "settings.me_names": "Additional names to match",
-  "settings.me_names_hint": "Your account address and name are matched automatically. Add other spellings of your name from the address book here (separate several names with semicolons)."
+  "settings.me_names_hint": "Your account address and name are matched automatically. Add other spellings of your name from the address book here (separate several names with semicolons).",
+  "compose.sending_in": "Sending in {0} s",
+  "compose.send_now": "Send now",
+  "settings.undo_send_help": "After you click Send, the message waits this long; use the notification in the main window to undo or send it right away."
 }

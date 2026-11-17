@@ -1131,8 +1131,11 @@ pub fn cancel_outbox(state: State<AppState>, id: i64) -> R<i64> {
     if p.len() != 3 || p[0] != "send" {
         return Err(t!("compose.undo_too_late"));
     }
-    // Önce beklemeye al ki zamanlayıcı göndermesin
-    state.db.set_message_field(id, "pending", "hold");
+    // Önce beklemeye al ki zamanlayıcı göndermesin. Koşullu: gönderim başladıysa ("sending:")
+    // ileti artık geri alınamaz; aksi halde hem gönderilir hem taslak olarak açılırdı
+    if !state.db.swap_pending(id, &m.pending, "hold") {
+        return Err(t!("compose.undo_too_late"));
+    }
     let account_id = p[2].parse::<i64>().ok();
     let draft = state.mail.save_draft(account_id, m.raw.clone(), None).ok_or("?")?;
     state.db.delete_message(id);

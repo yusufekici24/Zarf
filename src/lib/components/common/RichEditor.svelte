@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   // Biçimlendirmeli e-posta düzenleyicisi (contenteditable + biçim araç çubuğu).
   import { t } from "$lib/i18n.svelte";
   import { app } from "$lib/stores/app.svelte";
@@ -17,6 +18,7 @@
   import { FONT_SIZES } from "$lib/fonts";
   import { escapeHtml } from "$lib/format";
   import { i18n } from "$lib/i18n.svelte";
+  import { EditHistory, MERGE_MS, closesGroup, inputKind, readSelection, writeSelection, type Snapshot } from "$lib/editor-history";
 
   let {
     html = $bindable(""),
@@ -58,9 +60,111 @@
     if (editor && h !== lastSet) {
       editor.innerHTML = h;
       lastSet = h;
+      // İlk içerik geçmişin başıdır; sonradan dışarıdan gelen içerik (imza değişimi …) geri alınabilir adımdır
+      untrack(() => {
+        cancelTyping();
+        if (history.size) history.record(h, null);
+        else history.reset(h);
+      });
       onactivity?.();
     }
   });
+
+  // ---------------------------------------------------------------- geri al / yinele
+  // Kendi geçmişimiz (src/lib/editor-history.ts): Ctrl+Z, Ctrl+Y ve Ctrl+Shift+Z her ortamda çalışır ve
+  // DOM'u doğrudan değiştiren komutlar (satır aralığı, harf dönüşümü, tablo) da geri alınır.
+  const history = new EditHistory();
+  /** Açık yazma grubu: içerik henüz geçmişe yazılmadı (her tuşta seri hale getirmemek için) */
+  let typing: { kind: string; at: number } | null = null;
+  let typingTimer: ReturnType<typeof setTimeout> | undefined;
+  /** >0: birden çok DOM değişikliğinden oluşan komut sürüyor; sonunda tek adım kaydedilir */
+  let quiet = 0;
+
+  function record() {
+    if (!editor || quiet) return;
+    history.record(editor.innerHTML, readSelection(editor));
+  }
+  function cancelTyping() {
+    clearTimeout(typingTimer);
+    typing = null;
+  }
+  /** Açık yazma grubunu tek adım olarak kaydeder */
+  function commitTyping() {
+    if (!typing) return;
+    cancelTyping();
+    record();
+  }
+  /** Birden çok DOM değişikliği yapan komutu tek geri alma adımı yapar */
+  function step(fn: () => void) {
+    commitTyping();
+    quiet++;
+    try {
+      fn();
+    } finally {
+      quiet--;
+    }
+    record();
+  }
+  function applySnapshot(s: Snapshot) {
+    if (!editor) return;
+    editor.innerHTML = s.html;
+    editor.focus();
+    writeSelection(editor, s.sel);
+    savedRange = null;
+    saveRange();
+    bubble = null;
+    pending = true;
+    onactivity?.();
+    if (!dirtyNotified) {
+      dirtyNotified = true;
+      onchange?.();
+    }
+    readCaret();
+  }
+  export function undo() {
+    commitTyping();
+    const s = history.undo();
+    if (s) applySnapshot(s);
+  }
+  export function redo() {
+    commitTyping();
+    const s = history.redo();
+    if (s) applySnapshot(s);
+  }
+
+  /** Ctrl ile basılan Z/Y: harfe bakılır (Türkçe F klavyede tuşların yeri farklı); harf Latin değilse
+      (ör. Rusça düzen) tuşun yerine */
+  function historyKey(e: KeyboardEvent): "z" | "y" | null {
+    const k = e.key.toLowerCase();
+    if (k === "z" || k === "y") return k;
+    if (/^\p{L}$/u.test(k) && /^[a-zçğıöşü]$/.test(k)) return null;
+    return e.code === "KeyZ" ? "z" : e.code === "KeyY" ? "y" : null;
+  }
+
+  function onbeforeinput(e: InputEvent) {
+    // Düzenle menüsü / sağ tık "Geri al" da aynı geçmişi kullanır
+    if (e.inputType === "historyUndo" || e.inputType === "historyRedo") {
+      e.preventDefault();
+      if (e.inputType === "historyUndo") undo();
+      else redo();
+      return;
+    }
+    // Yazma grubu bu girdiden önce kapanacaksa önceki durum şimdi (değişiklikten önce) kaydedilir
+    if (closesGroup(typing, inputKind(e.inputType))) commitTyping();
+  }
+  function oninput(e: Event) {
+    sync(true);
+    if (quiet) return;
+    const kind = inputKind((e as InputEvent).inputType);
+    if (!kind) {
+      cancelTyping();
+      record();
+      return;
+    }
+    typing = { kind, at: Date.now() };
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(commitTyping, MERGE_MS);
+  }
 
   function flush() {
     clearTimeout(syncTimer);
@@ -72,10 +176,12 @@
   }
 
   let dirtyNotified = false;
-  function sync() {
+  /** İçerik değişti: kaydedilmemiş sayılır. Komutlardan çağrılınca geri alma adımı da yazılır */
+  function sync(fromInput = false) {
     if (!editor) return;
     pending = true;
     fixFontSize();
+    if (!fromInput && !typing) record();
     onactivity?.();
     // Yazarken hiçbir şey kopyalanmaz (uzun alıntılı yanıtta takılma yapıyordu): içerik
     // odak çıkınca ya da istendiğinde (gönder/kaydet: getHtml) alınır
@@ -124,6 +230,7 @@
   });
   function restoreRange() {
     if (!editor) return;
+    commitTyping();
     // Odak düzenleyicideyse seçim yerindedir; değilse odak verilince tarayıcının koyduğu imlece
     // güvenilmez, son kaydedilen seçim geri yüklenir
     const had = document.activeElement === editor;
@@ -142,6 +249,8 @@
   }
 
   export function exec(cmd: string, value?: string) {
+    if (cmd === "undo") return undo();
+    if (cmd === "redo") return redo();
     restoreRange();
     document.execCommand(cmd, false, value);
     sync();
@@ -195,9 +304,12 @@
   /** Paragraf stili (Başlık 1, Alıntı, Kod …); aynı stil yeniden seçilirse normale döner */
   export function setBlock(tag: string) {
     const to = caret.block === tag ? "div" : tag;
-    // Alıntı bloğu biçim değiştirilerek kalkmaz: önce girinti azaltılır
-    if (caret.block === "blockquote") exec("outdent");
-    if (to !== "div" || caret.block !== "blockquote") exec("formatBlock", `<${to}>`);
+    const was = caret.block;
+    step(() => {
+      // Alıntı bloğu biçim değiştirilerek kalkmaz: önce girinti azaltılır
+      if (was === "blockquote") exec("outdent");
+      if (to !== "div" || was !== "blockquote") exec("formatBlock", `<${to}>`);
+    });
   }
 
   const BLOCKS = "div,p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th";
@@ -211,15 +323,17 @@
 
   /** Satır aralığı (1 = tek, 1.5, 2 …): seçimdeki paragraflara yazılır */
   export function setLineHeight(value: string) {
-    restoreRange();
-    let blocks = selectedBlocks();
-    if (!blocks.length) {
-      // Metin doğrudan düzenleyicinin içindeyse önce bir paragrafa alınır
-      document.execCommand("formatBlock", false, "<div>");
-      blocks = selectedBlocks();
-    }
-    for (const b of blocks) b.style.lineHeight = value;
-    sync();
+    step(() => {
+      restoreRange();
+      let blocks = selectedBlocks();
+      if (!blocks.length) {
+        // Metin doğrudan düzenleyicinin içindeyse önce bir paragrafa alınır
+        document.execCommand("formatBlock", false, "<div>");
+        blocks = selectedBlocks();
+      }
+      for (const b of blocks) b.style.lineHeight = value;
+      sync();
+    });
   }
 
   /** Seçili metnin harflerini çevirir (BÜYÜK, küçük, Her Sözcük, Tümce düzeni); biçim korunur */
@@ -284,6 +398,9 @@
     caret = { ...caret, painter: lock ? 2 : 1 };
   }
   function applyPaint() {
+    if (paint) step(paintSelection);
+  }
+  function paintSelection() {
     const p = paint;
     if (!p) return;
     document.execCommand("removeFormat");
@@ -422,6 +539,9 @@
 
   /** Outlook "Tablo" ızgarasından: satır × sütun tablo */
   export function insertTable(r: number, c: number) {
+    step(() => insertTableNow(r, c));
+  }
+  function insertTableNow(r: number, c: number) {
     const cell = '<td style="border:1px solid #bfbfbf;padding:3px 6px;min-width:48px;vertical-align:top"><br></td>';
     const row = `<tr>${cell.repeat(c)}</tr>`;
     const html = `<table data-lyn-new style="border-collapse:collapse;border:1px solid #bfbfbf">${row.repeat(r)}</table><div><br></div>`;
@@ -611,6 +731,7 @@
     const text = c.text.trim() || c.url.trim();
     if (c.el && editor?.contains(c.el)) {
       c.el.setAttribute("href", url);
+      commitTyping();
       if (text !== c.initial) c.el.textContent = text;
       editor.focus();
       sync();
@@ -674,8 +795,16 @@
   });
 
   function onkeydown(e: KeyboardEvent) {
-    if (plain) return;
     const ctrl = e.ctrlKey || e.metaKey;
+    // Geri al: Ctrl+Z; yinele: Ctrl+Y ya da Ctrl+Shift+Z (WebKitGTK Ctrl+Y'yi kendisi bağlamıyor)
+    const hk = historyKey(e);
+    if (ctrl && !e.altKey && hk) {
+      e.preventDefault();
+      if (hk === "z" && !e.shiftKey) undo();
+      else redo();
+      return;
+    }
+    if (plain) return;
     if (e.key === "Escape") {
       // Açık olan yüzen kutu ya da biçim boyacısı kapanır (pencere kapanmaz)
       if (!bubble && !caret.painter) return;
@@ -808,7 +937,7 @@
   export function replaceCurrent(query: string, replacement: string, caseSensitive = false): boolean {
     const current = window.getSelection()?.toString() ?? "";
     if (fold(current, caseSensitive) !== fold(query, caseSensitive)) return findNext(query, caseSensitive);
-    document.execCommand("insertText", false, replacement);
+    step(() => document.execCommand("insertText", false, replacement));
     sync();
     findNext(query, caseSensitive);
     return true;
@@ -821,6 +950,18 @@
     const q = fold(query, caseSensitive);
     let count = 0;
     let limit = Infinity;
+    commitTyping();
+    quiet++;
+    try {
+      count = replaceFrom(q, replacement, caseSensitive, limit);
+    } finally {
+      quiet--;
+    }
+    if (count) sync();
+    return count;
+  }
+  function replaceFrom(q: string, replacement: string, caseSensitive: boolean, limit: number): number {
+    let count = 0;
     for (;;) {
       const { nodes, text } = textIndex();
       const at = nodes.length ? fold(text, caseSensitive).lastIndexOf(q, limit) : -1;
@@ -831,7 +972,6 @@
       if (at < q.length) break;
       limit = at - q.length;
     }
-    if (count) sync();
     return count;
   }
 </script>
@@ -863,7 +1003,8 @@
     spellcheck={app.setting("spell_check", "1") === "1" ? "true" : "false"}
     class="rich-editor min-h-0 flex-1 overflow-auto px-4 py-3 outline-none {plain ? 'font-mono whitespace-pre-wrap' : ''} {caret.painter ? 'painting' : ''}"
     style="{fontStyle}{zoom !== 1 ? `;zoom:${zoom}` : ''}"
-    oninput={sync}
+    {oninput}
+    {onbeforeinput}
     onblur={flush}
     onscroll={() => (bubble = null)}
     {onkeydown}

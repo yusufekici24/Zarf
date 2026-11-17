@@ -1,5 +1,6 @@
 <script lang="ts">
   import { defaultSignature, loadSignatures, signatureBlock } from "$lib/signatures";
+  import { UNDO_SEND_DEFAULT } from "$lib/undo-send";
   import { identityByEmail, identityForReply, loadIdentities, type Identity } from "$lib/identities";
   import { loadTemplates, saveTemplates, type Template } from "$lib/templates";
   import { EMOJI } from "$lib/emoji";
@@ -531,13 +532,16 @@
     try {
       // Outlook'taki "Gönderimi geri al": ileti kısa bir süre giden kutusunda bekletilir
       // (imzalı ya da şifreli ileti düzenlenemez: taslağa dönemeyeceği için bekletilmez)
-      const undo = sendAt || sign || encrypt ? 0 : Number(app.setting("undo_send", "0")) || 0;
+      // Süre dolunca arka uç iletiyi tam zamanında gönderir (sync.rs send_later); ana penceredeki
+      // bildirim yalnızca geri sayımı ve "Geri al" / "Şimdi gönder" düğmelerini gösterir
+      const undo = sendAt || sign || encrypt ? 0 : Number(app.setting("undo_send", UNDO_SEND_DEFAULT)) || 0;
       const p = payload();
-      if (undo > 0) p.send_at = Math.floor(Date.now() / 1000) + undo + 30;
+      const due = undo > 0 ? Date.now() / 1000 + undo : null;
+      if (due) p.send_at = due;
       const id = await api.sendMail(p);
       dirty = false;
       // Gönderim bildirimi ve "geri al" ana pencerede gösterilir; bu pencere hemen kapanır
-      await emitTo("main", "compose://sent", { id, undo, sendAt, subject }).catch(() => {});
+      await emitTo("main", "compose://sent", { id, undo, due, sendAt, subject }).catch(() => {});
       close(true);
     } catch (e) {
       toast.error(errorText(e));

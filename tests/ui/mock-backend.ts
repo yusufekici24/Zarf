@@ -193,6 +193,9 @@ export async function installMock(page: Page, f: Fixtures) {
         };
       },
       storage_info: () => f.storage,
+      // Gönderimi geri alma: Giden Kutusu'ndaki ileti taslağa döner (yeni taslağın kimliği)
+      cancel_outbox: () => 900,
+      retry_outbox: () => null,
       compact_database: () => {
         const before = f.storage.size;
         f.storage = { size: before - f.storage.free, free: 0, incremental: true };

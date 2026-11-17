@@ -33,6 +33,27 @@
     window.addEventListener("unhandledrejection", (e) => log("error", e.reason));
   }
 
+  // Metin kutularında (Kime, Konu, arama, not …) geri al / yinele. WebKitGTK Ctrl+Z'yi ve Ctrl+Y'yi kendisi
+  // bağlamıyor (WebKitGTK 2.52'de denendi: tuş hiçbir şey yapmıyor, execCommand("undo"/"redo") çalışıyor).
+  // Yinele: Ctrl+Y ya da Ctrl+Shift+Z. Biçimli düzenleyici kendi geçmişini kullanır (RichEditor, editor-history.ts).
+  if (typeof window !== "undefined") {
+    window.addEventListener(
+      "keydown",
+      (e) => {
+        if (!(e.ctrlKey || e.metaKey) || e.altKey || e.defaultPrevented) return;
+        const el = e.target as HTMLElement | null;
+        const field = el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !["checkbox", "radio", "range", "color", "button", "submit", "file"].includes(el.type));
+        if (!el || !(field || el.isContentEditable) || el.closest(".rich-editor") || (el as HTMLInputElement).readOnly) return;
+        const k = e.key.toLowerCase();
+        const cmd = k === "z" ? (e.shiftKey ? "redo" : "undo") : k === "y" && !e.shiftKey ? "redo" : "";
+        if (!cmd) return;
+        e.preventDefault();
+        document.execCommand(cmd);
+      },
+      true,
+    );
+  }
+
   // Açık menü/panel/açılır liste/kişi kartı varken <html data-layer-open>: ileti gövdesi
   // çerçevesi tıklama almaz (app.css). Yalnızca öğe eklenip çıkarılınca bir kez denetlenir.
   if (typeof window !== "undefined") {

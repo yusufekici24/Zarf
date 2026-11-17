@@ -1,4 +1,55 @@
-# Zarf 2.0 performans incelemesi — 17 Kasım 2026
+# Zarf performans incelemesi — 17 Kasım 2026
+
+## 2.0.2 ölçümü: gerçek kodla 150 bin iletili sentetik kutu (17 Kasım 2026)
+
+`db.rs` `perf_tests` (çalıştırma: `ZARF_PERF_N=150000 cargo test --release --lib perf_tests -- --ignored --nocapture`).
+Uygulamanın kendi `insert_message` / `messages_page` / `folder_counts` … fonksiyonları, geçici dosyada WAL'lı gerçek
+veritabanı. 150.000 ileti (Gelen Kutusu 75.215), 28 klasör, %20'si gövdeli, 2000 gönderen, 1–5 iletilik konuşmalar;
+DB 315 MB. Sözcükler 36 sözcüklük havuzdan: aramalar gerçek kutudan **çok daha fazla** eşleşir (en kötü durum).
+Ortanca süreler (ms), release derleme, bu makine (NVMe):
+
+| İşlem | 2.0.1 | 2.0.2 |
+|---|---:|---:|
+| Liste ilk sayfa (500, tarih) | 2,8 | 2,9 |
+| Liste ilk sayfa, konuşma görünümü | 56,8 | 57,9 |
+| Yenileme, aşağı kaydırılmış liste (3000 satır) | 11,0 | 12,0 |
+| Yenileme, 3000 satır, konuşma görünümü | 88,2 | 89,4 |
+| Klasör sayaçları / okunmamış toplamı | 6,2 / 2,8 | 6,2 / 2,7 |
+| Gönderene göre sıralı ilk sayfa | 36,0 | 36,5 |
+| Arama: tek sözcük, klasör / tüm klasörler | 19,6 / 109,8 | 19,8 / 110,7 |
+| **Arama: iki sözcük (ad soyad), tüm klasörler** | **2119,8** | **604,8** |
+| Arama: `kimden:`, tüm klasörler / `gizli:` (dizinsiz) | 25,2 / 30,7 | 21,5 / 26,4 |
+| İleti açma, konuşma iletileri, okundu (1 / 500) | <0,1 | <0,1 / 1,4 |
+| Eşitleme yazması: 1000 yeni başlık | 162 | 135 |
+| Yazıcı kilitliyken arayüz listesi | 6,0 | 5,3 (okuyucu beklemiyor) |
+
+Ön yüz, gerçek WebKitGTK 2.52'de (`scripts/webkit-dene.py`, liste taklidi hızlı sürümle değiştirilerek): 500 satır ilk
+yükleme 5 ms, 3000 satırlık yenileme 5 ms, DOM'da 47 satır (sanal liste), toplam ~1700 öğe. IPC'nin JSON maliyeti ve
+GPU çizimi bu ölçümde yok.
+
+### Bulgu ve düzeltme: iki sözcüklü arama
+
+Birden çok sözcük önce ifade olarak (yan yana, ad soyad gibi) aranır. Dizin (FTS5) yalnızca "sözcüklerin hepsi
+geçiyor mu"yu eliyordu; "yan yana mı" denetimi aday her satırda bütün sütunlar (gövde dahil) Rust'ta sözcüklere
+bölünerek yapılıyordu. Sıralama için bir kez, toplam için bir kez daha. Artık dizin sorgusu `NEAR(…, k-2)` ile
+yan yanalığı (aynı sütunda) da eler; sırayı `lyn_match` denetlemeye devam eder. Sonuç kümesi değişmez: dizinli ve
+dizinsiz yolu karşılaştıran test (`search_index_matches_scan_and_follows_changes`) 15 yeni ifade sorgusuyla geçiyor.
+Kalan 0,6 sn bu sentetik veride gerçekten eşleşen binlerce satırın sıralanması ve sayılmasıdır.
+
+### Ölçülen ama değiştirilmeyenler (öneri)
+
+1. **Konuşma görünümü** (`conversations=1`, varsayılan kapalı): sorgu bütün klasörü `GROUP BY tid` ile gruplar; 75 bin
+   iletili klasörde sayfa başına ~58 ms, kaydırılmış listede eşitleme sırasındaki her yenilemede ~89 ms. Çözüm:
+   konuşma başlarını artımlı güncellenen özet tabloda tutmak (ekleme/silme/okundu/taşıma tetikleyicileri + testler).
+   Büyük ve riskli bir değişiklik; kullanıcıdan "konuşma görünümünde yavaş" bildirimi gelirse yapılmalı.
+2. **Gönderene göre sıralama** 36 ms: `ltrim(sender, '" ') COLLATE NOCASE` ifadesi dizinsiz. İfade dizini eklenebilir
+   (yazma maliyeti küçük). Şu an ihtiyaç yok.
+3. **Gönderen fotoğrafları**: listede görünen her yeni gönderen için Exchange'e `GetUserPhoto` (en fazla 3 eşzamanlı;
+   diskte 7 gün / yoksa 1 gün önbellek). Hızlı kaydırmada eşitlemeyle aynı Exchange istek sınırını paylaşır
+   (`ErrorServerBusy`). Gerçek sunucuda `ZARF_PERF=1` çıktısında ServerBusy sık görülürse fotoğraf istekleri
+   eşitleme bitene kadar ertelenmeli.
+4. Veritabanı ve ön yüz büyük kutuda hızlı; bildirilen yavaşlık arama dışında büyük olasılıkla **ağ / Exchange**
+   tarafındadır. Kullanıcının makinesinde aşağıdaki tanı (`ZARF_PERF=1`) bunu ayırır.
 
 ## Sonuç ve kanıt sınırı
 

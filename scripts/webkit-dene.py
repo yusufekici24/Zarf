@@ -10,6 +10,8 @@ basılıyken :hover'ın güncellenmemesi) burada denenir. Uygulama derlenmez, su
 Adımlar sırayla çalışır:
   shot:ad        /tmp/cikti-ad.png yazar          move:x,y | down:x,y | up:x,y   fare (sol düğme)
   wait:ms        bekler                           js:ifade                       sonucu "js>" ile yazar
+  key:ctrl+z     tuş (ctrl/shift/alt + GDK adı: z, Return, End, BackSpace …)
+  type:metin     metni harf harf yazar
 Gerekenler: python3-gi, gir1.2-gtk-3.0, gir1.2-webkit2-4.1. Pencere 1400x900'dür.
 """
 import sys
@@ -35,8 +37,38 @@ win.add(view)
 win.show_all()
 print("webkit", WebKit2.get_major_version(), WebKit2.get_minor_version(), WebKit2.get_micro_version(), flush=True)
 
-pointer = Gdk.Display.get_default().get_default_seat().get_pointer()
+seat = Gdk.Display.get_default().get_default_seat()
+pointer = seat.get_pointer()
+keyboard = seat.get_keyboard()
+keymap = Gdk.Keymap.get_for_display(Gdk.Display.get_default())
 held = 0
+
+
+def key(spec: str) -> None:
+    """Tuşa basıp bırakır: "ctrl+shift+z", "Return", "ğ" …"""
+    *mods, name = spec.split("+") if spec != "+" else ["+"]
+    keyval = Gdk.keyval_from_name(name)
+    if keyval in (0, 0xFFFFFF):
+        keyval = Gdk.unicode_to_keyval(ord(name))
+    state = 0
+    for m in mods:
+        state |= {"ctrl": Gdk.ModifierType.CONTROL_MASK, "shift": Gdk.ModifierType.SHIFT_MASK, "alt": Gdk.ModifierType.MOD1_MASK}[m.lower()]
+    ok, entries = keymap.get_entries_for_keyval(keyval)
+    for kind in (Gdk.EventType.KEY_PRESS, Gdk.EventType.KEY_RELEASE):
+        ev = Gdk.Event.new(kind)
+        ev.window = view.get_window()
+        ev.send_event = True
+        ev.time = Gdk.CURRENT_TIME
+        ev.keyval = keyval
+        ev.state = Gdk.ModifierType(state)
+        if ok and entries:
+            ev.hardware_keycode = entries[0].keycode
+            ev.group = entries[0].group
+        ch = chr(Gdk.keyval_to_unicode(keyval)) if Gdk.keyval_to_unicode(keyval) else ""
+        ev.string = ch
+        ev.length = len(ch.encode())
+        ev.set_device(keyboard)
+        view.event(ev)
 
 
 def mouse(kind: str, x: float, y: float) -> None:
@@ -72,6 +104,13 @@ def run(i: int = 0) -> bool:
         x, y = arg.split(",")
         mouse(op, float(x), float(y))
         return then(250)
+    if op == "key":
+        key(arg)
+        return then(150)
+    if op == "type":
+        for ch in arg:
+            key("space" if ch == " " else ch)
+        return then(150)
     if op == "shot":
         win.get_pixbuf().savev(f"{prefix}-{arg}.png", "png", [], [])
         print("shot", f"{prefix}-{arg}.png", flush=True)
@@ -89,8 +128,14 @@ def run(i: int = 0) -> bool:
     sys.exit(f"bilinmeyen adım: {steps[i]}")
 
 
+started = False
+
+
 def loaded(_view, event) -> None:
-    if event == WebKit2.LoadEvent.FINISHED:
+    # Yüklenme olayı birden çok kez gelebilir (Vite yeniden yükleme): adımlar yalnızca bir kez başlar
+    global started
+    if event == WebKit2.LoadEvent.FINISHED and not started:
+        started = True
         GLib.timeout_add(3500, run, 0)
 
 

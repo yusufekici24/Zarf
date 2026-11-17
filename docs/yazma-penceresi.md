@@ -9,6 +9,7 @@ neresi ne yapar. Düzenleyici imza ve şablon düzenleyicilerinde, okuma bölmes
 |---|---|
 | `src/lib/editor.ts` | `CaretState` (imleçteki biçim), `EditorApi` (araç çubuklarının çağırdığı komutlar), renk paletleri, paragraf stilleri (`BLOCK_STYLES`), tablo stilleri (`TABLE_STYLES`), `changeCase`, `textStats`, `normalizeUrl`, `portal` eylemi |
 | `src/lib/editor-table.ts` | Tablo işlemleri (`tableOp`: satır/sütun ekle-sil, stil, genişlik) ve `applyTableStyle` |
+| `src/lib/editor-history.ts` | Geri al / yinele geçmişi (`EditHistory`), yazma grubu kuralları (`inputKind`, `closesGroup`), seçim ↔ metin konumu (`readSelection`, `writeSelection`) |
 | `src/lib/editor-colors.svelte.ts` | Renk düğmelerinin son rengi ve "son kullanılanlar" (bütün düğmeler paylaşır; `localStorage`) |
 | `src/lib/components/common/RichEditor.svelte` | Yazı alanı, komutlar, imleç durumu, seçim araç çubuğu, bağlantı kartı, biçim boyacısı, klavye |
 | `src/lib/components/editor/EditorTools.svelte` | Biçim düğmeleri, tek yerde. `layout`: `basic` / `font` / `paragraph` (şerit grupları), `bar` (düzenleyicinin kendi araç çubuğu), `mini` (seçim araç çubuğu) |
@@ -39,6 +40,25 @@ neresi ne yapar. Düzenleyici imza ve şablon düzenleyicilerinde, okuma bölmes
   `ComposeWindow` Esc'i bunlar açıkken pencereyi kapatmak için kullanmaz.
 - Şeritteki "Tablo" sekmesi bağlamsaldır: yalnızca `caret.table` doğruyken listelenir (`ribbonTab`).
 
+## Geri al / yinele
+
+- Tarayıcının geri alma yığını kullanılmaz. WebKitGTK'de (2.52'de betikle denendi) **Ctrl+Z ve Ctrl+Y hiçbir şey
+  yapmıyor**; DOM'u doğrudan değiştiren komutlar da o yığına girmiyordu. Düzenleyici kendi geçmişini tutar
+  (`editor-history.ts`): her adımda `innerHTML` + seçim (metin konumu; `<br>`/`<img>` birer karakter).
+- Kısayollar `RichEditor.onkeydown`'da: Ctrl+Z geri al, Ctrl+Y ve Ctrl+Shift+Z yinele (harfe bakılır; Türkçe F
+  klavyede tuş yeri farklı). Düzenle menüsünden gelen `historyUndo`/`historyRedo` (`onbeforeinput`), şerit ve başlık
+  çubuğu düğmeleri (`exec("undo"|"redo")`) aynı geçmişi kullanır.
+- Yazarken her tuşta içerik seri hale getirilmez (büyük alıntılı yanıtta takılırdı): yazma grubu (`typing`) açık
+  kalır; 1,2 sn ara, Enter, yazma ↔ silme geçişi ya da herhangi bir komut (`restoreRange` → `commitTyping`) grubu tek
+  adım olarak kaydeder. Birden çok DOM değişikliği yapan komutlar `step()` ile tek adımdır (satır aralığı, paragraf
+  stili, biçim boyacısı, tablo ekleme, tümünü değiştir).
+- **Yeni komut DOM'u değiştiriyorsa** `restoreRange()` ile başlayıp `sync()` ile bitmeli (kayıt `sync`'tedir); birden
+  çok adımlıysa `step()` içinde çalışmalı.
+- Sınır: 200 adım ya da toplam 40 milyon karakter (satır içi resimli büyük iletide bellek şişmesin); aşılırsa en eski
+  adımlar düşer. Dışarıdan gelen içerik (ilk yükleme) geçmişin başıdır; sonraki dış değişiklik (imza) adımdır.
+- Metin kutuları (Kime, Konu, arama …) için `+layout.svelte`'teki pencere işleyicisi Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z'yi
+  `document.execCommand("undo"|"redo")`'ya yönlendirir (WebKitGTK'de çalışır).
+
 ## Komutlar (`EditorApi`)
 
 `exec` (execCommand sarmalayıcısı), `setFontSize`, `stepFontSize` (Ctrl+Shift+> / Ctrl+<), `setColor`,
@@ -58,8 +78,6 @@ boşluk ekler. Esc önce seçim araç çubuğunu / biçim boyacısını kapatır
 
 ## Bilinen sınırlar
 
-- Satır aralığı, harf dönüşümü ve tablo işlemleri DOM'u doğrudan değiştirir; tarayıcının geri alma yığınına
-  girmez (Ctrl+Z bunları geri almaz).
 - Birleştirilmiş hücreli tablolarda sütun ekleme/silme hücre sırasına göre yapılır.
 - Sözcük sayısı alıntılanan özgün iletiyi saymaz.
 - Testler Chrome'da çalışır; `execCommand` davranışı WebKitGTK'de farklı olabilir (bkz. `docs/DURUM.md`).

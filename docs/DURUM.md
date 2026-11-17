@@ -3,7 +3,27 @@
 Bir oturumun sonunda güncellenir: son sürümde ne var, neye güvenilmez, sırada ne var. Yeni oturumda önce bu
 dosya, sonra yalnızca ilgili konu belgesi okunur (`agent.md` → "Konu belgeleri").
 
-## Son sürüm: Zarf 2.0.1 (2026-11-17)
+## Zarf 2.0.2 (2026-11-17, paket derlendi; yayın/commit durumu için git log ve Releases'e bakın)
+
+| Ne | Nerede |
+|---|---|
+| Gönderimi geri alma: varsayılan 10 sn (kapalı/5/10/20/30, Seçenekler > Posta > Gönderme); ileti süre dolunca tam zamanında gider (önceden +30 sn pay ve 30 sn'lik denetim yüzünden 30–60 sn gecikebiliyordu); bildirimde geri sayım, "Geri al", "Şimdi gönder" | `undo-send.ts`, `ComposeWindow.send`, `+page.svelte` `undoSendToast`, `sync.rs` `send_later` |
+| Gönderim ile geri alma aynı anda kazanamaz (koşullu `pending`: `sending:` / `hold`); gönderilemeyen ileti yeniden denenir; kapanışta yarım kalan gönderim açılışta geri alınır | `db.rs` `swap_pending`, `reset_stuck_sending`; `sync.rs` `send_outbox_item`; `commands.rs` `cancel_outbox` |
+| Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z: düzenleyicide kendi geçmişi (satır aralığı, harf dönüşümü, tablo da geri alınır), metin kutularında `execCommand` | `editor-history.ts`, `RichEditor.svelte`, `+layout.svelte`; `docs/yazma-penceresi.md` |
+| İki sözcüklü arama hızlandı (150 bin iletide 2,1 sn → 0,6 sn; FTS5 `NEAR`) | `db.rs` `fts_query`; `docs/PERFORMANS.md` |
+| Performans ölçümü (gerçek kod, sentetik büyük kutu) ve WebKitGTK'de tuş gönderme | `db.rs` `perf_tests`, `scripts/webkit-dene.py` |
+
+Neden: WebKitGTK 2.52'de Ctrl+Z ve Ctrl+Y ne metin kutusunda ne düzenlenebilir alanda bir şey yapmıyor (betikle
+doğrulandı); düzeltme aynı betikle yazma penceresinde ve Konu alanında denendi.
+
+Test: `cargo test --lib` 109 geçti / 6 ignore; `npm run check` 0 hata / 15 uyarı; `npm run test:ui` 59 geçti
+(9'u `undo.spec.ts`); metinler 1666 anahtar.
+
+Doğrulanmadı: gerçek Exchange'de gönderimi geri alma (yalnızca birim testi ve arayüz taklidi); Ubuntu 24.04'te
+kısayollar (26.04 / WebKitGTK 2.52'de denendi); kullanıcının bildirdiği yavaşlığın kaynağı (yukarıdaki ölçüm
+sentetik; o makinede `ZARF_PERF=1 lynora` çıktısı gerekiyor, bkz. `docs/PERFORMANS.md`).
+
+## Önceki sürüm: Zarf 2.0.1 (2026-11-17)
 
 | Ne | Nerede |
 |---|---|

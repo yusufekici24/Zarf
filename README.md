@@ -1,6 +1,6 @@
 # Zarf
 
-Sürüm **2.0.1** (önceki ürün adı Lynora). [Kişi yönetimi, grup zamanlayıcısı ve performans değerlendirmesi](docs/zarf-2.0.md). Mevcut hesaplar ve anahtarlık uyumluluğu için teknik `lynora` kimlikleri korunur.
+Sürüm **2.0.2** (önceki ürün adı Lynora). [Kişi yönetimi, grup zamanlayıcısı ve performans değerlendirmesi](docs/zarf-2.0.md). Mevcut hesaplar ve anahtarlık uyumluluğu için teknik `lynora` kimlikleri korunur.
 
 Debian tabanlı Linux dağıtımları için e-posta, takvim, kişiler, görevler ve notlar uygulaması.
 Kurumsal **Microsoft Exchange** desteği sunar ve **.msg** ileti dosyalarını açar.
@@ -134,7 +134,7 @@ istenir.
 | Ubuntu 24.04 ve sonrası, Debian 13 ve türevleri (glibc 2.39+) | `Zarf_*_amd64.deb` |
 
 ```sh
-sudo apt install ./Zarf_2.0.1_amd64.deb      # bağımlılıklar otomatik kurulur
+sudo apt install ./Zarf_2.0.2_amd64.deb      # bağımlılıklar otomatik kurulur
 ```
 
 Paketler GitHub **Releases** sayfasında yayımlanır. Debian 12, Ubuntu 22.04 ve Pardus 23 gibi eski dağıtımlar için

@@ -36,7 +36,7 @@ dosya açıp bu tabloya satır ekleyin. Bir oturumun sonunda `docs/DURUM.md` gü
 ```sh
 npm run tauri dev                       # geliştirme
 npm run check                           # svelte-check (0 hata; 15 eski uyarı var)
-cd src-tauri && cargo test --lib        # Rust birim testleri (108)
+cd src-tauri && cargo test --lib        # Rust birim testleri (109)
 npm run test:ui                         # Playwright arayüz testleri (sahte arka uç, sistem Chrome'u)
 npx tauri build --bundles deb           # → src-tauri/target/release/bundle/deb/Zarf_X.Y.Z_amd64.deb
 ```
@@ -186,6 +186,7 @@ katılımcılar) yalnızca ChangeKey'i değişen/yeni toplantılar için `calend
 | `load_remote`, `trusted_senders` (JSON dizi), `plain_text_only` | `0`; `[]`; `0` | ReadingPane, trust.ts |
 | `font_new`, `font_reply`, `font_plain` (JSON) | Calibri 11 / Consolas 10 | fonts.ts |
 | `compose_mini_toolbar`, `compose_zoom` | `1`; `100` | RichEditor, ComposeWindow (`docs/yazma-penceresi.md`) |
+| `undo_send` | `10` (sn; `0` kapalı, 5/10/20/30) | `undo-send.ts`, ComposeWindow, +page `undoSendToast`, sync.rs `send_later` |
 | `theme`, `language`, `start_module`, `sync_interval`, `sync_on_select`, `work_offline` | | app |
 
 ## Olaylar (Rust → ön yüz)
@@ -208,7 +209,12 @@ hata · `mail://bg` arka plan etkinliği · `mail://older` eski iletiler geldi �
   ve ardından `window://assign`. Saf TS fonksiyonları sayfa içinde `import("/src/lib/x.ts")` ile sınanabilir (bkz. trust.spec).
 - Gerçek WebKitGTK'de deneme (derleme ve sudo gerekmez): `scripts/webkit-mock.mjs` sahte arka ucu başlangıç betiğine
   çevirir, `scripts/webkit-dene.py` ön yüzü görünmeyen bir pencerede açıp fare olayı gönderir, betik çalıştırır,
-  görüntü alır (kullanım dosyanın başında). Yalnızca yazılımla çizimi sınar; GPU ile çizim uygulamanın kendisinde denenir.
+  görüntü alır, tuş gönderir (kullanım dosyanın başında). Yalnızca yazılımla çizimi sınar; GPU ile çizim uygulamanın
+  kendisinde denenir. Görünmez pencerede `setTimeout` kısılır: ölçüm betiklerinde zamanlayıcı yerine mikro görev
+  kullanın. `mock-backend.ts`'in `list_messages` taklidi satır başına bütün iletileri tarar (binlerce iletide yavaş):
+  büyük liste ölçerken taklidi sayfada hızlı bir sürümle değiştirin.
+- Veritabanı ölçümü (gerçek kod, sentetik büyük kutu): `ZARF_PERF_N=150000 cargo test --release --lib perf_tests -- --ignored --nocapture`
+  (`db.rs` `perf_tests`; sonuçlar `docs/PERFORMANS.md`).
 
 ## Sürüm yayınlama
 
@@ -229,6 +235,12 @@ hata · `mail://bg` arka plan etkinliği · `mail://older` eski iletiler geldi �
   `message_content` için `REPLACE` değil UPSERT kullanılır.
 - rusqlite `execute_batch` her ifadeyi tek adım çalıştırır: `PRAGMA incremental_vacuum(N)` sorgu olarak sonuna kadar adımlanmalı.
 - ammonia: `<title>` `clean_content_tags`'e eklenmeli (yoksa metni gövdede görünür).
+- **WebKitGTK Ctrl+Z / Ctrl+Y'yi bağlamıyor** (2.52'de denendi; ne metin kutusunda ne düzenlenebilir alanda).
+  Düzenleyici kendi geçmişini kullanır, metin kutuları `execCommand("undo"|"redo")`'ya yönlendirilir
+  (`docs/yazma-penceresi.md` → Geri al / yinele). Playwright (Chrome) bunu göstermez: kısayollar Chrome'da zaten çalışır.
+- Gönderimi geri alma: ileti Giden Kutusu'nda `send:<zaman>:<hesap>` ile bekler; gönderim `sending:` ile, geri alma
+  `hold` ile **koşullu** sahiplenir (`Db::swap_pending`), ikisi birden kazanamaz. Kapanışta yarım kalan `sending:`
+  açılışta `send:`'e döner (`reset_stuck_sending`). Kısa bekleme (≤10 dk) `send_later` ile tam zamanında gönderilir.
 - **WebKitGTK, fare basılıyken `:hover`'ı güncellemez** (basılan öğede kalır). Sürükleme sırasındaki vurgular
   `hover:` sınıfıyla yapılmaz; imlecin altındaki öğe `document.elementFromPoint` ile bulunup duruma yazılır
   (`mail.drag.over`). Chrome'da `:hover` çalıştığı için Playwright bu hatayı göstermez.

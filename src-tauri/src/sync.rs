@@ -239,6 +239,7 @@ impl MailService {
             enum_seen: enum_seen.clone(),
             folder_locks: folder_locks.clone(),
         };
+        db.reset_stuck_sending();
         spawn_worker("lynora-mail", worker(&db), queue.clone(), true);
         spawn_worker("lynora-mail-bg", worker(&db), bg.clone(), false);
         mail::net::set_work_offline(db.setting("work_offline").as_deref() == Some("1"));
@@ -915,10 +916,25 @@ impl MailService {
         m.pending = format!("send:{}:{}", send_at.unwrap_or(0.0), account_id);
         let id = self.db.insert_message(&m).ok()?;
         self.changed(Some(outbox.id));
-        if send_at.map(|t| t <= now()).unwrap_or(true) {
-            self.submit_keyed(format!("send:{id}"), true, t!("status.sending"), move |w| w.send_outbox_item(id));
+        match send_at.map(|t| t - now()) {
+            Some(wait) if wait > 0.0 => self.send_later(id, wait),
+            _ => self.submit_keyed(format!("send:{id}"), true, t!("status.sending"), move |w| w.send_outbox_item(id)),
         }
         Some(id)
+    }
+
+    /// Gönderimi geri alma süresi (birkaç saniye): ileti süre dolunca tam zamanında gönderilir.
+    /// 30 sn'lik genel Giden Kutusu denetimini beklemez; uzun zamanlanmış gönderimler (saatler
+    /// sonra) o denetime kalır. Geri alınmış ya da gönderilmiş ileti `send_outbox_item`'da atlanır.
+    fn send_later(&self, id: i64, wait: f64) {
+        if wait > 600.0 {
+            return;
+        }
+        let svc = self.clone();
+        let _ = std::thread::Builder::new().name("lynora-send-later".into()).spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs_f64(wait));
+            svc.submit_keyed(format!("send:{id}"), true, t!("status.sending"), move |w| w.send_outbox_item(id));
+        });
     }
 
     pub fn process_outbox(&self) {
@@ -1581,6 +1597,21 @@ impl Worker {
         }
         let account_id: i64 = p[2].parse().unwrap_or(0);
         let acc = self.db.account(account_id).ok_or_else(|| MailError(t!("error.no_account")))?;
+        // İleti sahiplenilir: bu andan sonra "Geri al" başarısız olur (ileti hem gönderilip hem
+        // taslağa dönmesin). Başka bir iş zaten gönderiyorsa ya da geri alındıysa atlanır.
+        let sending = format!("sending:{}:{}", p[1], p[2]);
+        if !self.db.swap_pending(id, &m.pending, &sending) {
+            return Ok(());
+        }
+        let r = self.send_claimed(id, m.clone(), acc, account_id);
+        if r.is_err() {
+            // Gönderilemedi: Giden Kutusu'nda yeniden denenecek duruma döner
+            self.db.swap_pending(id, &sending, &m.pending);
+        }
+        r
+    }
+
+    fn send_claimed(&mut self, id: i64, m: Message, acc: crate::db::Account, account_id: i64) -> MailResult<()> {
         if acc.is_exchange() {
             // Exchange: Gizli alıcılar MIME içinde kalır, sunucu kopyayı Gönderilmiş Öğeler'e koyar
             let raw = m.raw.clone();
@@ -1725,6 +1756,38 @@ mod tests {
             .unwrap();
         let inbox = db.insert_folder(&Folder { account_id: Some(acc), name: "INBOX".into(), remote_name: Some("INBOX".into()), role: Some("inbox".into()), ..Default::default() }).unwrap();
         (acc, inbox)
+    }
+
+    /// Gönderimi geri alma: gönderim ile "Geri al" aynı iletiyi aynı anda sahiplenemez; gönderilemeyen
+    /// ileti Giden Kutusu'nda yeniden denenecek duruma döner; kapanışta yarım kalan gönderim geri alınır
+    #[test]
+    fn outbox_send_and_undo_cannot_both_win() {
+        let db = Db::open_memory().unwrap();
+        let acc = db
+            .save_account(&crate::db::Account { name: "t".into(), email: "t@x.test".into(), smtp_host: "127.0.0.9".into(), smtp_port: 1, smtp_security: "none".into(), username: "t".into(), password: "p".into(), ..Default::default() })
+            .unwrap();
+        let outbox = db.folder_by_role(None, "outbox").expect("giden kutusu");
+        let add = |pending: &str| db.insert_message(&Message { folder_id: outbox.id, to_addr: "a@x.test".into(), raw: b"Subject: x\r\n\r\nx".to_vec(), pending: pending.into(), ..Default::default() }).unwrap();
+        let pend = |id: i64| db.message(id).unwrap().pending;
+        let send = format!("send:0:{acc}");
+
+        // Koşullu değişim tek kez başarır
+        let a = add(&send);
+        assert!(db.swap_pending(a, &send, "hold"));
+        assert!(!db.swap_pending(a, &send, "sending:0:1"));
+        // Geri alınmış (hold) ileti gönderilmez, durumu değişmez
+        test_worker(&db).send_outbox_item(a).unwrap();
+        assert_eq!(pend(a), "hold");
+
+        // Sunucuya ulaşılamadı: ileti silinmez, yeniden denenecek duruma döner
+        let b = add(&send);
+        assert!(test_worker(&db).send_outbox_item(b).is_err());
+        assert_eq!(pend(b), send);
+
+        // Gönderim sırasında uygulama kapandı: açılışta yeniden gönderilecek duruma döner
+        let c = add(&format!("sending:0:{acc}"));
+        assert_eq!(db.reset_stuck_sending(), 1);
+        assert_eq!(pend(c), send);
     }
 
     /// Okundu/bayrak değişiklikleri klasör ve değer başına tek STORE ile gider; yazılınca bekleyenlerden düşer

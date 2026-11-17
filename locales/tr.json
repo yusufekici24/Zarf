@@ -1661,5 +1661,8 @@
   "settings.me_tocc": "Adım Kime ya da Bilgi satırındaysa",
   "settings.me_color": "Vurgu rengi",
   "settings.me_names": "Aranacak ek adlar",
-  "settings.me_names_hint": "Hesap adresiniz ve adınız kendiliğinden aranır. Adres defterinde adınız farklı yazılıyorsa buraya ekleyin (birden çok adı noktalı virgülle ayırın)."
+  "settings.me_names_hint": "Hesap adresiniz ve adınız kendiliğinden aranır. Adres defterinde adınız farklı yazılıyorsa buraya ekleyin (birden çok adı noktalı virgülle ayırın).",
+  "compose.sending_in": "İleti {0} sn sonra gönderilecek",
+  "compose.send_now": "Şimdi gönder",
+  "settings.undo_send_help": "Gönder'e bastıktan sonra ileti bu süre kadar bekletilir; ana penceredeki bildirimden geri alabilir ya da hemen gönderebilirsiniz."
 }

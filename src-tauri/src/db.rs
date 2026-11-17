@@ -617,9 +617,18 @@ fn like_pattern(word: &str) -> String {
 /// Arama dizini sorgusu: sözcüklerin hepsi verilen sütunlardan birinde sözcük başı olarak geçmeli
 /// (`{subject sender} : ("ahmet"* AND "aydin"*)`). Sözcükler search_words'ten gelir (katlanmış,
 /// yalnızca harf/rakam) ve dizindeki metin de aynı katlamayla yazılmıştır.
-fn fts_query(cols: &[&str], words: &[String]) -> String {
+/// İfade (`phrase`: ad soyad, adres, tırnaklı metin): sözcükler aynı sütunda yan yana olmalı
+/// (`NEAR(…, k-2)`: FTS5'te sınır ilk ve son sözcük arasındaki token sayısıdır, aradaki diğer aranan
+/// sözcükler de sayılır). Dizin sırayı denetlemez; sıra satırda `lyn_match` ile denetlenir. Önceden yalnızca
+/// "hepsi geçiyor mu" elendiği için yaygın iki ad aramasında aday satır çok kalıyor ve her birinin
+/// bütün sütunları (gövde dahil) Rust'ta sözcüklere bölünüyordu (150 bin iletide ~2 sn).
+fn fts_query(cols: &[&str], words: &[String], phrase: bool) -> String {
     let terms: Vec<String> = words.iter().map(|w| format!("\"{}\"*", w.replace('"', "\"\""))).collect();
-    format!("{{{}}} : ({})", cols.join(" "), terms.join(" AND "))
+    if phrase && words.len() > 1 {
+        format!("{{{}}} : NEAR({}, {})", cols.join(" "), terms.join(" "), words.len() - 2)
+    } else {
+        format!("{{{}}} : ({})", cols.join(" "), terms.join(" AND "))
+    }
 }
 
 /// Kayıtlı ad/adres çiftini Outlook gibi temizler (tırnaklar, görünmez karakterler, kodlu adlar)
@@ -2518,6 +2527,24 @@ impl Db {
         }
     }
 
+    /// `pending` alanını yalnızca beklenen değerdeyse değiştirir (tek SQL, yarış yok).
+    /// Giden Kutusu: gönderim "send:…" → "sending:…" ile, geri alma "send:…" → "hold" ile
+    /// iletiyi sahiplenir; ikisinden yalnızca biri başarır.
+    pub fn swap_pending(&self, id: i64, from: &str, to: &str) -> bool {
+        self.conn()
+            .execute("UPDATE messages SET pending = ?1 WHERE id = ?2 AND pending = ?3", params![to, id, from])
+            .map(|n| n == 1)
+            .unwrap_or(false)
+    }
+
+    /// Uygulama gönderim sırasında kapandıysa "sending:" kalmış iletiler yeniden gönderilecek
+    /// duruma ("send:") döner. Açılışta bir kez, kuyruk çalışmadan önce çağrılır.
+    pub fn reset_stuck_sending(&self) -> usize {
+        self.conn()
+            .execute("UPDATE messages SET pending = 'send:' || substr(pending, 9) WHERE pending LIKE 'sending:%'", [])
+            .unwrap_or(0)
+    }
+
     pub fn delete_message(&self, id: i64) {
         let _ = self.conn().execute("DELETE FROM messages WHERE id = ?1", [id]);
     }
@@ -4001,7 +4028,7 @@ fn expr_sql(e: &SearchExpr, fts: bool, args: &mut Vec<String>) -> Option<String>
                 // Dizin sözcük başı eşleşmesini zaten kesin yapar; yalnızca sözcüklerin
                 // arka arkaya geçmesi (ifade) satırın kendisinde denetlenir
                 sql = String::from("id IN (SELECT rowid FROM message_fts WHERE message_fts MATCH ?)");
-                args.push(fts_query(cols, &words));
+                args.push(fts_query(cols, &words, phrase));
                 if !phrase {
                     return Some(format!("({sql})"));
                 }
@@ -4269,6 +4296,9 @@ mod search_tests {
             "aydın", "AYDIN", "aydin", "ahmet emre aydın", "\"emre aydin\"", "\"aydin emre\"", "ahmet.aydin@kurum.com.tr", "kişi:ahmet", "sukru", "İstanbul",
             "ıstanbul", "kalamis", "konu:butce", "konu:rapor", "gövde:ekte", "gövde:iletil", "çiçek", "cicek", "kategori:kirmizi", "ekadı:teklif",
             "ekadı:2026", "fatura 2026", "odeme@firma", "kimden:muhasebe", "kime:ben", "rapor is:unread", "yok", "a", "2026", "e-posta", "bey'e",
+            // İfade araması dizinde NEAR ile elenir: yan yana, ters sıra, araya sözcük giren, sütunlar arası
+            "emre aydın", "aydın emre", "ahmet aydın", "\"ahmet aydin\"", "ahmet emre aydın ahmet", "ahmet.aydin@kurum", "kurum.com.tr",
+            "aydın ışık", "ışık çiçek emre", "çiçek çiçek", "bütçe ahmet", "rapor ektedir", "ektedir rapor", "ödeme e posta", "e-posta ile odeme",
         ];
         assert!(db.fts_ready.load(Ordering::Relaxed));
         let indexed: Vec<Vec<i64>> = queries.iter().map(|q| run(q)).collect();
@@ -4844,5 +4874,152 @@ mod search_tests {
         // Arama sayfalı listede de çalışır
         let (f, _) = db.messages_page(Some(inbox.id), "kimden:K3", &MsgFilter::All, &o, 0, 5000);
         assert!(!f.is_empty() && f.iter().all(|m| m.sender.starts_with("K3")));
+    }
+}
+
+/// Gerçekçi büyüklükte sentetik posta kutusu üzerinde uygulamanın kendi sorgularının süresi.
+/// Normal test koşusunda çalışmaz; ölçüm için (SQLite C kodu optimize derlensin diye release):
+///   ZARF_PERF_N=150000 cargo test --release --lib perf_tests -- --ignored --nocapture
+/// Veritabanı geçici dosyadadır (WAL dahil gerçek disk yolu); içerik rastgele üretilir.
+#[cfg(test)]
+mod perf_tests {
+    use super::*;
+    use std::time::Instant;
+
+    /// Ortanca ve en kötü süre (ms), `n` tekrar
+    fn time(n: usize, mut f: impl FnMut()) -> (f64, f64) {
+        let mut v: Vec<f64> = (0..n)
+            .map(|_| {
+                let t = Instant::now();
+                f();
+                t.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        (v[v.len() / 2], v[v.len() - 1])
+    }
+
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    const WORDS: &[&str] = &[
+        "toplantı", "bütçe", "rapor", "proje", "takvim", "onay", "sözleşme", "fatura", "teklif", "güncelleme", "sunucu", "erişim",
+        "talep", "planlama", "eğitim", "yıllık", "aylık", "haftalık", "denetim", "risk", "müşteri", "değerlendirme", "işlem", "kayıt",
+        "bildirim", "yedekleme", "güvenlik", "parola", "uygulama", "tutanak", "hazırlık", "personel", "izin", "bakım", "sistem", "ağ",
+    ];
+
+    fn text(r: &mut Rng, n: usize) -> String {
+        (0..n).map(|_| WORDS[r.below(WORDS.len() as u64) as usize]).collect::<Vec<_>>().join(" ")
+    }
+
+    #[test]
+    #[ignore]
+    fn perf_mailbox() {
+        let n: usize = std::env::var("ZARF_PERF_N").ok().and_then(|v| v.parse().ok()).unwrap_or(100_000);
+        let dir = std::env::temp_dir().join(format!("zarf-perf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Db::open(dir.join("lynora.db")).unwrap();
+        let acc = db.save_account(&Account { name: "k".into(), email: "ben@kurum.com.tr".into(), kind: "exchange".into(), ..Default::default() }).unwrap();
+        let folder = |name: &str, role: Option<&str>| db.insert_folder(&Folder { account_id: Some(acc), name: name.into(), remote_name: Some(name.into()), role: role.map(String::from), ..Default::default() }).unwrap();
+        let inbox = folder("Gelen Kutusu", Some("inbox"));
+        let sent = folder("Gönderilmiş Öğeler", Some("sent"));
+        let archive = folder("Arşiv", Some("archive"));
+        let others: Vec<i64> = (0..25).map(|i| folder(&format!("Klasör {i}"), None)).collect();
+        let mut r = Rng(0x9e3779b97f4a7c15);
+        let senders: Vec<String> = (0..2000).map(|i| format!("{} Kişi{i} <kisi{i}@kurum.com.tr>", text(&mut r, 1))).collect();
+        let start = 1_600_000_000.0;
+        let mk = |r: &mut Rng, i: usize, total: usize| -> Message {
+            let f = match r.below(100) {
+                0..=49 => inbox,
+                50..=64 => sent,
+                65..=79 => archive,
+                _ => others[r.below(others.len() as u64) as usize],
+            };
+            // Konuşmalar: ardışık 1-5 ileti aynı Exchange konuşma kimliğini paylaşır
+            let conv = format!("c{}", i / (1 + (i % 5)));
+            let body = r.below(100) < 20;
+            let subject = format!("{}{}", if i % 3 == 0 { "YNT: " } else { "" }, text(r, 4));
+            Message {
+                folder_id: f,
+                account_id: Some(acc),
+                remote_id: Some(format!("r{i}")),
+                subject,
+                sender: senders[r.below(senders.len() as u64) as usize].clone(),
+                to_addr: "Ben Kullanıcı, Ekip Listesi".into(),
+                cc: if r.below(4) == 0 { "Ali Veli, Deneme Kişi".into() } else { String::new() },
+                date: start + (i as f64) * (300_000_000.0 / total as f64),
+                snippet: text(r, 18),
+                is_read: f != inbox || r.below(100) >= 3,
+                is_flagged: r.below(100) < 2,
+                has_attachments: r.below(100) < 15,
+                conv,
+                message_id: format!("<m{i}@kurum.com.tr>"),
+                body_text: if body { text(r, 250) } else { String::new() },
+                raw: if body { text(r, 400).into_bytes() } else { vec![] },
+                ..Default::default()
+            }
+        };
+
+        let t = Instant::now();
+        for i in 0..n {
+            db.insert_message(&mk(&mut r, i, n)).unwrap();
+        }
+        let build = t.elapsed().as_secs_f64();
+        let size = std::fs::metadata(dir.join("lynora.db")).map(|m| m.len()).unwrap_or(0) + std::fs::metadata(dir.join("lynora.db-wal")).map(|m| m.len()).unwrap_or(0);
+        let inbox_n: i64 = db.rconn().query_row("SELECT COUNT(*) FROM messages WHERE folder_id = ?1", [inbox], |r| r.get(0)).unwrap();
+        println!("\nZARF PERF  ileti={n}  gelen kutusu={inbox_n}  kurulum={build:.1} sn ({:.3} ms/ileti)  boyut={:.0} MB", build * 1000.0 / n as f64, size as f64 / 1e6);
+
+        let page = |conv: bool, limit: i64, search: &str, f: Option<i64>| db.messages_page(f, search, &MsgFilter::All, &ListOrder { by: "date".into(), desc: true, conversations: conv }, 0, limit);
+        let row = |name: &str, (med, max): (f64, f64)| println!("{name:<58} ortanca {med:>8.2} ms   en kötü {max:>8.2} ms");
+        row("Liste ilk sayfa (500, tarih, konuşma kapalı)", time(9, || assert!(!page(false, 500, "", Some(inbox)).0.is_empty())));
+        row("Liste ilk sayfa (500, konuşma açık)", time(9, || assert!(!page(true, 500, "", Some(inbox)).0.is_empty())));
+        row("Yenileme: aşağı kaydırılmış liste (3000 satır, konuşma kapalı)", time(5, || assert!(!page(false, 3000, "", Some(inbox)).0.is_empty())));
+        row("Yenileme: aşağı kaydırılmış liste (3000 satır, konuşma açık)", time(5, || assert!(!page(true, 3000, "", Some(inbox)).0.is_empty())));
+        row("Klasör sayaçları (folder_counts)", time(9, || assert!(!db.folder_counts().is_empty())));
+        row("Okunmamış toplamı (unread_total)", time(9, || assert!(db.unread_total() > 0)));
+        row("Gönderene göre sıralı ilk sayfa", time(5, || assert!(!db.messages_page(Some(inbox), "", &MsgFilter::All, &ListOrder { by: "from".into(), desc: false, conversations: false }, 0, 500).0.is_empty())));
+        row("Okunmamış süzgeci ilk sayfa", time(9, || assert!(!db.messages_page(Some(inbox), "", &MsgFilter::Unread, &ListOrder::default(), 0, 500).0.is_empty())));
+        row("Arama: tek sözcük, klasör (FTS)", time(5, || { page(false, 500, "sözleşme", Some(inbox)); }));
+        row("Arama: tek sözcük, tüm klasörler", time(5, || { page(false, 500, "sözleşme", None); }));
+        row("Arama: iki sözcük (önce ifade denemesi), tüm klasörler", time(5, || { page(false, 500, "bütçe toplantı", None); }));
+        row("Arama: kimden:kisi12, tüm klasörler", time(5, || { page(false, 500, "kimden:kisi12", None); }));
+        row("Arama: gizli: alan (dizinsiz)", time(5, || { page(false, 500, "bcc:kimse", None); }));
+        let ids: Vec<i64> = page(false, 500, "", Some(inbox)).0.iter().map(|m| m.id).collect();
+        row("İleti aç: message(id) (gövde dahil)", time(50, || { db.message(ids[r.below(ids.len() as u64) as usize]); }));
+        row("Konuşma iletileri (conversation)", time(50, || { let m = db.message_row(ids[7]).unwrap(); db.conversation(&m); }));
+        row("Okundu işaretle: 1 ileti (set_flags_local)", time(20, || db.set_flags_local(&ids[..1], "is_read", true)));
+        row("Okundu işaretle: 500 ileti", time(5, || db.set_flags_local(&ids, "is_read", true)));
+
+        // Eşitleme yazması: 1000 yeni başlık tek tek işlemde (bugünkü ews_insert_headers) ile tek işlemde
+        let mut i = n;
+        let mut batch = |count: usize| -> Vec<Message> { (0..count).map(|_| { i += 1; mk(&mut r, i, n) }).collect() };
+        let one = batch(1000);
+        let t = Instant::now();
+        for m in &one {
+            db.insert_message(m).unwrap();
+        }
+        row("Eşitleme: 1000 yeni ileti, ileti başına işlem", (t.elapsed().as_secs_f64() * 1000.0, 0.0));
+        // Yazıcı bağlantısı tutulurken okuma (arayüz) bekler mi: WAL'da okuyucular yazıcıyı beklemez
+        let reader_wait = {
+            let w = db.conn();
+            let t = Instant::now();
+            assert!(!page(false, 500, "", Some(inbox)).0.is_empty());
+            drop(w);
+            t.elapsed().as_secs_f64() * 1000.0
+        };
+        row("Yazıcı kilitliyken arayüz listesi (okuyucu bekler mi)", (reader_wait, 0.0));
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
