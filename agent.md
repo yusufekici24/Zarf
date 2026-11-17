@@ -22,6 +22,7 @@ dosyadadır; ilgili işe başlamadan yalnızca o dosyayı okumak yeter.
 | Performans: ölçümler, salt okunur DB tanısı, sayaç yenileme ve çözüm kararları | `docs/PERFORMANS.md` |
 | Zarf 2.0: grup zamanlayıcısı, kişi yönetimi değerlendirmesi, performans ve marka | `docs/zarf-2.0.md` |
 | Şu anki durum: son sürüm, doğrulanmamış noktalar, sıradaki işler | `docs/DURUM.md` |
+| Kullanıcıya dönük sürüm geçmişi (her sürümde ne değişti) | `CHANGELOG.md` |
 | Arama: sözdizimi, ifade ağacı, SQL/AQS, arama kutusu önerileri | `docs/arama.md` |
 | Konuşmalar: `tid`, `thread_keys`, bağlama kuralları, konuşmada okundu | `docs/konusmalar.md` |
 | İleti gövdesi: HTML temizleme, tablo ve resim düzeni | `docs/ileti-govdesi.md` |
@@ -222,10 +223,13 @@ hata · `mail://bg` arka plan etkinliği · `mail://older` eski iletiler geldi �
 
 1. Sürüm numarası 6 yerde: `package.json`, `package-lock.json` (satır 3 ve 9), `src-tauri/Cargo.toml`,
    `src-tauri/Cargo.lock` (`name = "lynora"` girdisi), `src-tauri/tauri.conf.json`, README'deki kurulum satırı.
-2. `npm run check`, `cargo test --lib`, `npm run test:ui`, ardından `npx tauri build --bundles deb`.
-3. Commit (yazar `yusufekici24 <yusuf.142536@gmail.com>`; **commit ve PR'lara AI/Claude imzası eklenmez**), açıklamalı
+2. `CHANGELOG.md`'nin en üstüne sürümün girdisi: kullanıcının gördüğü haliyle, sade Türkçe (ne bozuktu, şimdi ne
+   oluyor; kod adı yok). Release notları bu girdiden kısaltılır. 2.0 öncesi sürümler Releases'ten ve etiketlerden
+   kaldırıldı (17 Kas 2026); notları yalnızca `CHANGELOG.md`'de "2.0'a gelene kadar" bölümündedir.
+3. `npm run check`, `cargo test --lib`, `npm run test:ui`, ardından `npx tauri build --bundles deb`.
+4. Commit (yazar `yusufekici24 <yusuf.142536@gmail.com>`; **commit ve PR'lara AI/Claude imzası eklenmez**), açıklamalı
    etiket `vX.Y.Z` ("Zarf X.Y.Z"), `git push origin main` ve `git push origin vX.Y.Z`; CI'yi bekleyin.
-4. `gh release create vX.Y.Z <deb> --verify-tag --title "Zarf X.Y.Z" --notes-file notlar.md --latest`; paketi
+5. `gh release create vX.Y.Z <deb> --verify-tag --title "Zarf X.Y.Z" --notes-file notlar.md --latest`; paketi
    `gh release download` ile indirip sha256'yı yereldekiyle karşılaştırın.
 
 ## Tuzaklar

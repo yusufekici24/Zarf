@@ -1,6 +1,6 @@
 # Zarf
 
-Sürüm **2.0.5** (önceki ürün adı Lynora). [Kişi yönetimi, grup zamanlayıcısı ve performans değerlendirmesi](docs/zarf-2.0.md). Mevcut hesaplar ve anahtarlık uyumluluğu için teknik `lynora` kimlikleri korunur.
+Sürüm **2.0.5** (önceki adları Lynora ve MailNix). Her sürümde neyin değiştiği: [CHANGELOG.md](CHANGELOG.md). Mevcut hesaplar ve anahtarlık uyumluluğu için teknik `lynora` kimlikleri korunur.
 
 Debian tabanlı Linux dağıtımları için e-posta, takvim, kişiler, görevler ve notlar uygulaması.
 Kurumsal **Microsoft Exchange** desteği sunar ve **.msg** ileti dosyalarını açar.
@@ -10,7 +10,9 @@ Altyapı: **Rust + Tauri 2**, **Svelte 5 + Tailwind CSS + shadcn-svelte** (aray�
 ## Zarf 2.0
 
 Kırmızı-gri marka ve açılış ekranı, grup üyelerini gösteren zamanlayıcı, kişi yönetimi
-ve büyük listelerde sayfalama. [Ayrıntılı performans analizi ve tanı adımları](docs/PERFORMANS.md).
+ve büyük listelerde sayfalama. [Kişi yönetimi ve zamanlayıcı değerlendirmesi](docs/zarf-2.0.md),
+[ayrıntılı performans analizi ve tanı adımları](docs/PERFORMANS.md). 2.0 öncesi sürümlerde yapılanlar
+[sürüm geçmişinde](CHANGELOG.md#20a-gelene-kadar) toplanmıştır.
 
 ## Özellikler
 
@@ -104,28 +106,8 @@ ve büyük listelerde sayfalama. [Ayrıntılı performans analizi ve tanı adım
   yazılır. Yalnızca SQL metni yazılır, ileti içeriği ve adresler yazılmaz; dosya 1 MB'ı aşınca `.1` olarak kenara alınır.
   Yavaşlık bildirirken bu dosyayı ekleyin.
 
-Sentetik posta kutularında ölçülen süreler:
-
-| İşlem | Önce | 1.3.0 |
-|---|---|---|
-| Klasörü açma, ilk sayfa (6 bin ileti, 1,5 GB) | 186 ms | 1–2 ms |
-| Tüm kutularda arama (30 bin ileti, 1 GB) | 1–5 sn | 3–50 ms |
-| Konuşma görünümü (30 bin ileti) | 130 ms | 9–12 ms |
-| Bir konuşmayı açma (30 bin ileti) | 127 ms | < 0,1 ms |
-
-İki harflik önek araması (ör. `ka`) çok sayıda sözcüğü kapsadığı için yaklaşık 0,2 sn sürer.
-
-### Sürüm yükseltme
-
-1.1.0 ve öncesinden yükseltince veritabanı ilk açılışta **bir kez** yeni düzene geçer. Bu sırada açılış ekranında
-"Veritabanı yeni sürüme hazırlanıyor (yalnızca bir kez)…" yazar (1,5 GB'lık posta kutusunda birkaç saniye). Geçiş
-yarıda kesilirse sonraki açılışta kaldığı yerden sürer, dosya büyümez. Arama dizini eski iletiler için arka planda
-kurulur (30 bin iletide birkaç saniye); bitene kadar arama eski yöntemle çalışır. Yeni düzene geçen veritabanını
-eski sürümler açamaz: geri dönmek için yükseltmeden önce alınmış bir yedek gerekir.
-
-1.3.x'ten 1.4.0'a yükseltmede geçiş yoktur: yalnızca bir tablo (bekleyen bayraklar) ve bir sütun (toplantı ChangeKey)
-eklenir, 1.3.x bu veritabanını açmaya devam eder. İlk takvim eşitlemesinde toplantıların ayrıntıları bir kez yeniden
-istenir.
+İki harflik önek araması (ör. `ka`) çok sayıda sözcüğü kapsadığı için yaklaşık 0,2 sn sürer. Ölçülen süreler ve
+eski sürümlerden yükseltme notları [sürüm geçmişindedir](CHANGELOG.md).
 
 ## Kurulum
 
