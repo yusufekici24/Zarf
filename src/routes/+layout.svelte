@@ -14,6 +14,7 @@
   import { app } from "$lib/stores/app.svelte";
   import { applyUiFont, uiFontsReady } from "$lib/uifont";
   import { startPerfMonitor } from "$lib/perf";
+  import { startActivityReport } from "$lib/activity";
   import { ACCENT_DEFAULT, applyAccent } from "$lib/accent";
   let { children } = $props();
 
@@ -25,6 +26,8 @@
   if (typeof window !== "undefined") void uiFontsReady();
   // Yavaş olaylar perf.log'a (src/lib/perf.ts)
   if (typeof window !== "undefined") startPerfMonitor();
+  // Yedek pencere kullanıcı boştayken kurulur (activity.ts)
+  if (typeof window !== "undefined") startActivityReport();
 
   // Yakalanmayan ön yüz hatalarını uygulama günlüğüne aktar
   const log = (level: string, message: unknown) => {

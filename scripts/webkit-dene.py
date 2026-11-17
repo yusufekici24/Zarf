@@ -31,6 +31,13 @@ ucm = WebKit2.UserContentManager()
 with open(init_js, encoding="utf-8") as fh:
     ucm.add_script(WebKit2.UserScript.new(fh.read(), WebKit2.UserContentInjectedFrames.TOP_FRAME, WebKit2.UserScriptInjectionTime.START, None, None))
 view = WebKit2.WebView.new_with_user_content_manager(ucm)
+# WEBKIT_DENE_KISMA=0: gizli sayfada zamanlayıcı kısma kapalı (uygulamanın yaptığı gibi, src-tauri windows.rs)
+if __import__("os").environ.get("WEBKIT_DENE_KISMA") == "0":
+    _st = view.get_settings()
+    _fl = _st.get_all_features()
+    for _i in range(_fl.get_length()):
+        if _fl.get(_i).get_identifier() == "HiddenPageDOMTimerThrottling":
+            _st.set_feature_enabled(_fl.get(_i), False)
 # WEBKIT_DENE_GIZLI=1: pencere hiç gösterilmez (uygulamanın açılışta gizli hazırlanan ana penceresi gibi);
 # görüntü alınamaz, betik ve olaylar çalışır
 if __import__("os").environ.get("WEBKIT_DENE_GIZLI") == "1":

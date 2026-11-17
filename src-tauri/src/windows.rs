@@ -25,6 +25,11 @@ struct Registry {
 }
 
 static REG: std::sync::LazyLock<Mutex<Registry>> = std::sync::LazyLock::new(Default::default);
+/// Pencere açılış ölçümü (perf.log): açma isteği zamanı ve yedekten mi açıldı; ilk kare çizilince yazılır
+static OPENING: std::sync::LazyLock<Mutex<HashMap<String, (std::time::Instant, String, bool)>>> = std::sync::LazyLock::new(Default::default);
+fn opening_started(label: &str, kind: &str, spare: bool, started: std::time::Instant) {
+    OPENING.lock().unwrap_or_else(|e| e.into_inner()).insert(label.to_string(), (started, kind.to_string(), spare));
+}
 
 fn reg() -> std::sync::MutexGuard<'static, Registry> {
     REG.lock().unwrap_or_else(|e| e.into_inner())
@@ -326,6 +331,10 @@ fn set_opacity<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>, v: f64) {
 #[tauri::command]
 pub fn window_painted(window: tauri::WebviewWindow) {
     set_opacity(&window, 1.0);
+    app_activity();
+    if let Some((t, kind, spare)) = OPENING.lock().unwrap_or_else(|e| e.into_inner()).remove(window.label()) {
+        crate::perf::log(&format!("pencere_açıldı {} tür={kind} yedekten={spare} süre_ms={}", window.label(), t.elapsed().as_millis()));
+    }
 }
 
 /// Ön yüz ilk çizimini bitirince çağırır: pencere ancak o zaman görünür (beyaz ekran yok)
@@ -413,10 +422,13 @@ pub fn ensure_spare(app: &AppHandle) {
     }
     let label = format!("w-{}", NEXT.fetch_add(1, Ordering::SeqCst));
     reg().spare = Some(format!("pending:{label}"));
+    let t = std::time::Instant::now();
+    crate::perf::log(&format!("yedek_pencere_kuruluyor {label}"));
     // Arka plan iş parçacığından çağrılır; Tauri pencereyi ana döngüde oluşturur
     if build(app, &label, false).is_err() {
         reg().spare = None;
     }
+    crate::perf::log(&format!("yedek_pencere_kuruldu {label} süre_ms={}", t.elapsed().as_millis()));
 }
 
 /// Pencere ön yüzü yüklendiğinde çağırır: içeriği varsa alır; yoksa yedek olarak bekler.
@@ -453,6 +465,9 @@ pub async fn open_window(app: AppHandle, kind: String, payload: Value, title: Op
             return Ok(win.label().to_string());
         }
     }
+    let started = std::time::Instant::now();
+    // Pencere açılırken yeni yedek kurulmasın (açılışı yavaşlatır): açma isteği de etkinlik sayılır
+    app_activity();
     let data = json!({ "kind": kind, "payload": payload });
     let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| "Zarf".into());
     // Yedek pencere hâlâ yükleniyorsa kısa bir süre onu bekle: yarı yüklenmiş pencere,
@@ -478,16 +493,14 @@ pub async fn open_window(app: AppHandle, kind: String, payload: Value, title: Op
     };
     if let Some(label) = spare {
         if let Some(win) = app.get_webview_window(&label) {
+            opening_started(&label, &kind, true, started);
             let _ = win.set_title(&title);
             place_window(&win, &kind);
             let _ = win.emit_to(label.as_str(), "window://assign", data);
             // İçerik çizilince ön yüz gösterir (reveal_window); gelmezse kısa süre sonra
             reveal_later(&win, 1200);
-            let app2 = app.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(800));
-                ensure_spare(&app2);
-            });
+            // Yeni yedek hemen değil, kullanıcı boştayken kurulur (spare_scheduler): kurulum GTK döngüsünü
+            // ~250 ms dondurur ve kullanıcı az önce açılan pencerede tıklarken olursa tıklamalar gecikir
             return Ok(label);
         }
         reg().active.retain(|l| l != &label);
@@ -497,15 +510,44 @@ pub async fn open_window(app: AppHandle, kind: String, payload: Value, title: Op
     reg().kinds.insert(label.clone(), kind.clone());
     // Gizli oluşturulur; ön yüz içeriği çizince gösterir (beyaz ekran görünmez)
     let win = build(&app, &label, false).map_err(|e| e.to_string())?;
+    opening_started(&label, &kind, false, started);
     let _ = win.set_title(&title);
     place_window(&win, &kind);
     reveal_later(&win, 5000);
-    let app2 = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(1500));
-        ensure_spare(&app2);
-    });
     Ok(label)
+}
+
+/// Son kullanıcı girdisi (tıklama, tuş, tekerlek; her pencereden `app_activity` ile, en çok saniyede bir)
+static LAST_INPUT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+/// Yedek pencere kurulmadan önce kullanıcının boşta kalması gereken süre
+const SPARE_IDLE: std::time::Duration = std::time::Duration::from_millis(2000);
+
+#[tauri::command]
+pub fn app_activity() {
+    *LAST_INPUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+}
+
+/// Yedek pencere yoksa (açılışta ya da yedek kullanıldıktan sonra) kullanıcı en az `SPARE_IDLE` boyunca
+/// hiçbir pencerede bir şey yapmadığında kurar. Yeni WebKit penceresi kurmak GTK ana döngüsünü ~250 ms
+/// dondurur (perf.log `gtk_kilit`): sabit zamanda kurulunca (açılışın 3. saniyesi, pencere açıldıktan 0,8 sn
+/// sonra) kullanıcının o anki tıklamaları geç işleniyordu. Kapatılan pencere zaten yedek olur (recycle_window).
+/// Yedek pencere şimdi kurulmalı mı: yedek yok ve kullanıcı en az `SPARE_IDLE` boyunca bir şey yapmadı
+fn spare_due(has_spare: bool, last_input: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    !has_spare && last_input.is_none_or(|t| now.saturating_duration_since(t) >= SPARE_IDLE)
+}
+
+pub fn spare_scheduler(app: AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let has_spare = reg().spare.is_some();
+            let last = *LAST_INPUT.lock().unwrap_or_else(|e| e.into_inner());
+            if spare_due(has_spare, last, std::time::Instant::now()) {
+                ensure_spare(&app);
+            }
+        }
+    });
 }
 
 /// İleti/yeni ileti penceresi kapatılırken yok edilmez, gizlenip hazır yedek pencere olur:
@@ -1016,5 +1058,22 @@ pub fn close_reminders(app: AppHandle) {
 pub fn hide_reminders(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("reminders") {
         let _ = w.hide();
+    }
+}
+
+#[cfg(test)]
+mod spare_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// Yedek pencere yalnızca yedek yokken ve kullanıcı 2 sn boştayken kurulur
+    #[test]
+    fn spare_waits_for_idle_user() {
+        let now = Instant::now();
+        assert!(spare_due(false, None, now), "hiç girdi yoksa kurulur");
+        assert!(!spare_due(true, None, now), "yedek varsa kurulmaz");
+        assert!(!spare_due(false, Some(now - Duration::from_millis(500)), now), "az önce tıklandıysa beklenir");
+        assert!(!spare_due(false, Some(now - Duration::from_millis(1999)), now));
+        assert!(spare_due(false, Some(now - Duration::from_millis(2000)), now), "2 sn boşta: kurulur");
     }
 }

@@ -44,14 +44,24 @@ export function startPerfMonitor() {
   started = true;
 
   // Kilitlenme: 100 ms'lik zamanlayıcı çok geç gelirse ana iş parçacığı o kadar meşguldü. Gizli pencerede
-  // tarayıcı zamanlayıcıları kendisi kıstığı için yalnızca görünürken sayılır.
+  // WebKit tekrarlanan zamanlayıcıları kısar (1 sn'lik dilimler): yalnızca görünürken sayılır ve görünürlük
+  // değişince sayaç sıfırlanır (yedek pencere gösterildiği an gelen kısılmış tik "kilit" sayılmasın).
   let last = performance.now();
   let longest = 0;
+  // Önceki tik gizliyken geldiyse aradaki boşluk kısmadandır (pencere gösterilince kısılmış tik, görünürlük
+  // olayından önce gelebiliyor): sayılmaz
+  let wasVisible = document.visibilityState === "visible";
+  document.addEventListener("visibilitychange", () => {
+    last = performance.now();
+    wasVisible = false;
+  });
   setInterval(() => {
     const now = performance.now();
     const gap = now - last - 100;
     last = now;
-    if (document.visibilityState !== "visible") return;
+    const counted = wasVisible;
+    wasVisible = document.visibilityState === "visible";
+    if (!counted || !wasVisible) return;
     if (gap > longest) longest = gap;
     if (gap >= BLOCK_MS) perfNote(`kilit ms=${Math.round(gap)}`);
   }, 100);

@@ -46,6 +46,24 @@ pub fn log(line: &str) {
     }
 }
 
+/// GTK ana döngüsünün gecikmesi: tıklama ve tuşlar pencereye bu döngüden gelir. Döngü meşgulken (ör. yeni
+/// WebKit penceresi kurulurken) bütün pencereler tıklamaya geç tepki verir; sayfanın kendi ölçümü bunu
+/// göremez. 50 ms'lik zamanlayıcı 150 ms'den fazla gecikirse `gtk_kilit` yazılır. Ana iş parçacığında çağrılır.
+#[cfg(target_os = "linux")]
+pub fn watch_main_loop() {
+    use gtk::glib;
+    let last = std::cell::Cell::new(Instant::now());
+    glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+        let now = Instant::now();
+        let gap = now.duration_since(last.get()).as_millis().saturating_sub(50);
+        last.set(now);
+        if gap >= 150 && since_start() > 2000 {
+            log(&format!("gtk_kilit ms={gap} t={}", since_start()));
+        }
+        glib::ControlFlow::Continue
+    });
+}
+
 fn read(path: &str) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }

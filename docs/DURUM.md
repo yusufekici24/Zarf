@@ -3,6 +3,25 @@
 Bir oturumun sonunda güncellenir: son sürümde ne var, neye güvenilmez, sırada ne var. Yeni oturumda önce bu
 dosya, sonra yalnızca ilgili konu belgesi okunur (`agent.md` → "Konu belgeleri").
 
+## Zarf 2.0.4 (2026-11-17)
+
+Kullanıcının 2.0.3 `perf.log`'u (aynı model makine, ekran ölçeği 2): ana pencere 1,4 sn'de görünür, 0,3–0,5 sn'de
+tıklanabilir; okuma bölmesinde ileti açılışları 300 ms altında (satır yok), yavaş Exchange çağrısı yok. Açılışın
+~3,35. saniyesinde ana pencerede tıklamalar 184–427 ms geç işleniyordu, sayfa kilitli değildi.
+
+| Bulgu | Düzeltme | Nerede |
+|---|---|---|
+| Yeni yedek pencere kurmak GTK ana döngüsünü ~250 ms donduruyor (yeni `gtk_kilit` ölçümüyle, gerçek uygulamada 3/3); kurulum sabit zamanlarda oluyordu: açılışın 3. saniyesi ve her pencere açılışından 0,8 sn sonra, yani tam kullanıcı tıklarken | Yedek, kullanıcı son 2 sn'de hiçbir pencerede tıklamadıysa/yazmadıysa kurulur; pencere açma isteği ve ilk çizim de etkinlik sayılır. Pencere yedekten ~180 ms'de açılıyor, yeni yedek ~2,3 sn sonra boşta | `windows.rs` `spare_scheduler`, `spare_due`, `app_activity`; `src/lib/activity.ts` |
+| 2.0.3 log'undaki `ui[w-1]`/`ui[w-2]` 3 sn'lik "kilit" satırları gerçek değil: gizli yedek pencerede WebKit tekrarlanan zamanlayıcıları kısıyor, pencere gösterilince gelen geç tik kilit sayılıyordu (görünürlük olayı tikten sonra geliyor) | Önceki tik gizliyken geldiyse boşluk sayılmaz | `src/lib/perf.ts` |
+| Ölçüm eksikleri | `gtk_kilit` (GTK döngüsü ≥150 ms gecikme), `pencere_açıldı` (açma isteğinden ilk kareye, yedekten mi), `yedek_pencere_kuruluyor/kuruldu` | `perf.rs` `watch_main_loop`, `windows.rs` |
+
+Deneme yöntemi (sudo ve gerçek veri gerekmez): geçici veri klasörüyle (`LYNORA_DATA_DIR`, ayarlarda
+`welcome_shown=1` ki otomatik hesap kurulumu kurum sunucusunu yoklamasın) `target/release/lynora` başlatılır, ikinci
+çağrı `lynora dosya.eml` yedek pencereyi kullanır; sonuç o klasördeki `perf.log`'da. Not: düz `cargo build --release`
+arayüzü gömmez (geliştirme sunucusunu arar), `npx tauri build --no-bundle` kullanın.
+
+Test: `cargo test --lib` 111 geçti / 6 ignore; `npm run check` 0 hata / 15 uyarı; `npm run test:ui` 63 geçti.
+
 ## Zarf 2.0.3 (2026-11-17)
 
 | Ne | Nerede |

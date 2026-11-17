@@ -269,6 +269,8 @@ pub fn run() {
                 let _ = handle.emit(event, payload);
             });
             std::thread::spawn(perf::log_system);
+            #[cfg(target_os = "linux")]
+            perf::watch_main_loop();
             let mail = sync::MailService::new(db.clone(), emitter);
             app.manage(AppState {
                 db: db.clone(),
@@ -290,12 +292,8 @@ pub fn run() {
             // Eski adla (MailNix) yapılmış masaüstü ayarlarını yeni ada aktar
             std::thread::spawn(commands::migrate_legacy_integration);
 
-            // Yeni ileti / okuma pencereleri anında açılsın diye yedek pencere hazırla
-            let h2 = app.handle().clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_secs(3));
-                windows::ensure_spare(&h2);
-            });
+            // Yeni ileti / okuma pencereleri anında açılsın diye yedek pencere hazırla (kullanıcı boştayken)
+            windows::spare_scheduler(app.handle().clone());
 
             // Görev çubuğu okunmamış sayısı arka uçta da tutulur: ana pencere gizli/küçültülmüş,
             // ekran kilitli ya da uygulama yeni açılmışken de (ön yüz beklemeden) her zaman doğru
@@ -571,6 +569,7 @@ pub fn run() {
             commands::meeting_info,
             commands::frontend_log,
             commands::perf_log,
+            windows::app_activity,
             commands::set_folder_favorite,
             commands::message_temp_file,
             commands::set_autostart,

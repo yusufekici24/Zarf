@@ -243,6 +243,9 @@ hata · `mail://bg` arka plan etkinliği · `mail://older` eski iletiler geldi �
 - Gönderimi geri alma: ileti Giden Kutusu'nda `send:<zaman>:<hesap>` ile bekler; gönderim `sending:` ile, geri alma
   `hold` ile **koşullu** sahiplenir (`Db::swap_pending`), ikisi birden kazanamaz. Kapanışta yarım kalan `sending:`
   açılışta `send:`'e döner (`reset_stuck_sending`). Kısa bekleme (≤10 dk) `send_later` ile tam zamanında gönderilir.
+- **Yeni WebKit penceresi kurmak GTK ana döngüsünü ~250 ms dondurur** (bütün pencereler tıklamaya geç tepki verir;
+  perf.log `gtk_kilit`). Yedek pencere `spare_scheduler` ile yalnızca kullanıcı boştayken kurulur; sabit zamanlı
+  `ensure_spare` çağrısı eklemeyin. Gizli pencerede WebKit tekrarlanan zamanlayıcıları kısar (1 sn dilimleri).
 - **WebKitGTK, fare basılıyken `:hover`'ı güncellemez** (basılan öğede kalır). Sürükleme sırasındaki vurgular
   `hover:` sınıfıyla yapılmaz; imlecin altındaki öğe `document.elementFromPoint` ile bulunup duruma yazılır
   (`mail.drag.over`). Chrome'da `:hover` çalıştığı için Playwright bu hatayı göstermez.
