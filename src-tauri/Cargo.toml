@@ -1,6 +1,6 @@
 [package]
 name = "lynora"
-version = "2.0.2"
+version = "2.0.3"
 description = "Debian tabanlı dağıtımlar için e-posta, takvim, kişiler, görevler ve notlar uygulaması"
 authors = ["Lynora Geliştiricileri"]
 license = "GPL-3.0-or-later"

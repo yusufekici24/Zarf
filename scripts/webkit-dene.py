@@ -31,10 +31,18 @@ ucm = WebKit2.UserContentManager()
 with open(init_js, encoding="utf-8") as fh:
     ucm.add_script(WebKit2.UserScript.new(fh.read(), WebKit2.UserContentInjectedFrames.TOP_FRAME, WebKit2.UserScriptInjectionTime.START, None, None))
 view = WebKit2.WebView.new_with_user_content_manager(ucm)
-win = Gtk.OffscreenWindow()
-win.set_default_size(1400, 900)
-win.add(view)
-win.show_all()
+# WEBKIT_DENE_GIZLI=1: pencere hiç gösterilmez (uygulamanın açılışta gizli hazırlanan ana penceresi gibi);
+# görüntü alınamaz, betik ve olaylar çalışır
+if __import__("os").environ.get("WEBKIT_DENE_GIZLI") == "1":
+    win = Gtk.Window()
+    win.set_default_size(1400, 900)
+    win.add(view)
+    view.realize()
+else:
+    win = Gtk.OffscreenWindow()
+    win.set_default_size(1400, 900)
+    win.add(view)
+    win.show_all()
 print("webkit", WebKit2.get_major_version(), WebKit2.get_minor_version(), WebKit2.get_micro_version(), flush=True)
 
 seat = Gdk.Display.get_default().get_default_seat()
@@ -136,7 +144,8 @@ def loaded(_view, event) -> None:
     global started
     if event == WebKit2.LoadEvent.FINISHED and not started:
         started = True
-        GLib.timeout_add(3500, run, 0)
+        # İlk adımdan önceki bekleme (ms): WEBKIT_DENE_BEKLE ile değiştirilebilir (açılışı ölçerken 0)
+        GLib.timeout_add(int(__import__("os").environ.get("WEBKIT_DENE_BEKLE", "3500")), run, 0)
 
 
 view.connect("load-changed", loaded)

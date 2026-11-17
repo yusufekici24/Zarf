@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { secondsLeft } from "$lib/undo-send";
+  import { uiFontsReady } from "$lib/uifont";
+  import { measureStartup } from "$lib/perf";
   import { applyScale, stepScale, fitWindow, watchScreen } from "$lib/zoom";
   import { ModeWatcher, setMode } from "mode-watcher";
   import { listen } from "@tauri-apps/api/event";
@@ -341,9 +343,15 @@
       app.module = (app.setting("start_module", "mail") as ModuleName) || "mail";
       ready = true;
       performance.measure("zarf:startup", "zarf:startup");
-      // İlk çizim bitince pencere gösterilir: beyaz ekran ve yerleşim kayması görünmez
-      // (requestAnimationFrame gizli WebKit penceresinde hiç çalışmaz; DOM güncellenince gösterilir)
-      void tick().then(() => setTimeout(() => void api.revealWindow().catch(() => {}), 0));
+      // İlk çizim bitince ve gömülü yazı tipi yüklenince pencere gösterilir: beyaz ekran, yerleşim kayması
+      // ve açılıştan sonra yazı tipinin değişmesi görünmez (requestAnimationFrame gizli WebKit penceresinde
+      // hiç çalışmaz; DOM güncellenince gösterilir)
+      void Promise.all([tick(), uiFontsReady()]).then(() =>
+        setTimeout(() => {
+          void api.revealWindow().catch(() => {});
+          if (IS_MAIN) measureStartup(performance.now());
+        }, 0),
+      );
       // Diğer bölümler açılış bittikten sonra boşta yüklenir (geçiş anında beklenmez)
       setTimeout(() => {
         for (const f of [...Object.values(views), lazyAccountDialog]) void f().catch(() => {});

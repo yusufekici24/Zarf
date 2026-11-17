@@ -3,7 +3,35 @@
 Bir oturumun sonunda güncellenir: son sürümde ne var, neye güvenilmez, sırada ne var. Yeni oturumda önce bu
 dosya, sonra yalnızca ilgili konu belgesi okunur (`agent.md` → "Konu belgeleri").
 
-## Zarf 2.0.2 (2026-11-17, paket derlendi; yayın/commit durumu için git log ve Releases'e bakın)
+## Zarf 2.0.3 (2026-11-17)
+
+| Ne | Nerede |
+|---|---|
+| Açılıştan kısa süre sonra ekranın "yakınlaşıp yazı tipinin değişmesi": pencere, kullanılan bütün Noto Sans yüzleri (400/500/600/700, italik 400/700; Türkçe harf kümesi dahil) yüklenince gösterilir | `uifont.ts` `uiFontsReady`, `+layout.svelte`, `+page.svelte` (revealWindow) |
+| Yeni iletiye tıklayınca yavaş açılma: eşitlemede yeni ileti geldiyse en yeni 5 iletinin gövdesi hemen ön kuyrukta iner (önceden arka plan kuyruğunun sonunda, taramalar/takvim/kişiler bitene kadar bekliyordu) | `ews_sync.rs` `ews_prefetch_new`, `ews_sync_folder` |
+| Gövde 120 ms'de gelmezse okuma bölmesinde başlık + önizleme + "İleti indiriliyor…" (önceki ileti ekranda kalıyordu) | `mail.svelte.ts` `show`, `placeholderView`; `ReadingPane.svelte` `loadingBody` |
+| Kalıcı performans günlüğü `~/.local/share/lynora/perf.log` (her zaman açık, yalnızca yavaş olaylar, kişisel içerik yok): sistem bilgisi, ana pencerenin gösterilme anı, açılışta "tıklanabilir" an, arayüz kilitlenmeleri (≥300 ms), geç işlenen tıklamalar, ileti açılışı (indirme/ayrıştırma/çizim), yavaş/meşgul Exchange çağrıları (≥1,5 sn) | `src-tauri/src/perf.rs`, `commands::perf_log`, `src/lib/perf.ts` |
+
+Yazı tipi bulgusu (gizli WebKitGTK penceresinde, `WEBKIT_DENE_GIZLI=1`): düzeltmesiz sürümde pencere gösterildiği anda
+12 Noto Sans yüzünden 5'i yüklüydü, kalanlar sonradan geliyordu; düzeltmeyle 12'si de gösterilmeden önce yüklü.
+Kullanıcının makinesindeki etkinin tamamen bu olduğu doğrulanmadı (görsel deneme yapılamadı). Açılıştan 6 sn sonra
+`watchScreen` ekran boyutunu farklı okursa ölçek yeniden uygulanır; sorun sürerse ikinci aday budur.
+
+Yeni ileti gövdesi: tıklama hâlâ indirmeyi beklerse (ileti ön yükleme bitmeden açıldıysa) süreyi bağlantı kurulumu
+(Kerberos + TLS, havuzda bağlantı yoksa), ekli büyük MIME ya da Exchange istek sınırı belirler; `ZARF_PERF=1`
+çıktısındaki `message_content_wait` bunu gösterir.
+
+Bildirilen: açılışta çizim sonrası 2–3 sn tıklanamıyor, yeni ileti 2–3 sn'de açılıyor, sonra tıklamalar 1–2 sn.
+Bu makinede (Core Ultra 7) derlenmiş arayüz WebKitGTK'de: açılışta tek kilit 171 ms (pencere gösterilmeden önce),
+sonraki 8 sn'de 60 ms'yi aşan kilit yok; 2 MB resimli 300 satır tablolu ileti açılışında kilit yok. Yavaşlık o
+makineye özgü (işlemci, çizim/GPU, ölçek ya da Exchange); karar `perf.log`'a göre verilecek.
+`perf.log` okuma: `kilit`/`tıklama_çizim` yüksek ve `ileti_aç indirme_ms` düşükse sorun çizim/işlemci (donanım
+hızlandırma, ölçek, yazı tipi denenir); `indirme_ms` ya da `ews süre_ms` yüksekse ağ/Exchange.
+
+Test: `cargo test --lib` 110 geçti / 6 ignore; `npm run check` 0 hata / 15 uyarı; `npm run test:ui` 63 geçti
+(4'ü `startup-open.spec.ts`).
+
+## Zarf 2.0.2 (2026-11-17)
 
 | Ne | Nerede |
 |---|---|

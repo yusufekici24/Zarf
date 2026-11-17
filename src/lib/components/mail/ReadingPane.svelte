@@ -37,6 +37,7 @@
   import Lock from "@lucide/svelte/icons/lock";
   import ShieldAlert from "@lucide/svelte/icons/shield-alert";
   import ShieldCheck from "@lucide/svelte/icons/shield-check";
+  import Loader from "@lucide/svelte/icons/loader-circle";
   import { securityFailed, securityText, securityTrusted } from "$lib/security";
   import { open as openDialog, save as saveDialog } from "$lib/dialog";
   import { toast } from "svelte-sonner";
@@ -360,6 +361,13 @@
         </div>
       {/if}
   {/snippet}
+  {#snippet loadingBody()}
+    <!-- Gövde sunucudan iniyor: önizleme metni ve gösterge (mail.show geçici görünümü) -->
+    <div class="space-y-3 px-4 py-3" data-testid="body-loading">
+      <div class="text-muted-foreground flex items-center gap-2 text-xs"><Loader class="size-3.5 animate-spin" />{t("mail.loading_body")}</div>
+      <p class="selectable text-sm whitespace-pre-wrap">{m.text}</p>
+    </div>
+  {/snippet}
   <div class="flex h-full min-h-0 flex-col" bind:clientWidth={paneW}>
     {#if stacked}
       <div class="border-b px-4 pt-3 pb-2">
@@ -371,7 +379,7 @@
           {#if tm.id === m.id}
             <div class="border-b" data-testid="conversation-open" use:reveal>
               <div class="space-y-2 px-4 pt-3 pb-2">{@render details()}</div>
-              <MessageBody bind:this={body} html={m.html} text={m.text} allowRemote={allowRemote || trusted} {zoom} autoHeight />
+              {#if m.loading}{@render loadingBody()}{:else}<MessageBody bind:this={body} html={m.html} text={m.text} allowRemote={allowRemote || trusted} {zoom} autoHeight />{/if}
             </div>
           {:else}
             {@const who = splitNameAddr(tm.sender)}
@@ -405,7 +413,7 @@
         </div>
       {/if}
       <div class="min-h-0 flex-1">
-        <MessageBody bind:this={body} html={m.html} text={m.text} allowRemote={allowRemote || trusted} {zoom} />
+        {#if m.loading}{@render loadingBody()}{:else}<MessageBody bind:this={body} html={m.html} text={m.text} allowRemote={allowRemote || trusted} {zoom} />{/if}
       </div>
     {/if}
   </div>

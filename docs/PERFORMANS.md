@@ -51,6 +51,14 @@ Kalan 0,6 sn bu sentetik veride gerçekten eşleşen binlerce satırın sıralan
 4. Veritabanı ve ön yüz büyük kutuda hızlı; bildirilen yavaşlık arama dışında büyük olasılıkla **ağ / Exchange**
    tarafındadır. Kullanıcının makinesinde aşağıdaki tanı (`ZARF_PERF=1`) bunu ayırır.
 
+## Kullanıcının makinesinde tanı: perf.log (2.0.3'ten itibaren)
+
+`~/.local/share/lynora/perf.log` her zaman yazılır (1 MB'ı geçince `perf.log.1`). Satırlar:
+`sistem …` (sürüm, işlemci, bellek, sanal makine, NVIDIA, WebKit çizim ayarları), `açılış ana_pencere_gösterildi_ms`
+(süreç başlangıcından), `ui[main] açılış gösterildi_ms tıklanabilir_ms en_uzun_kilit_ms`, `ui[…] kilit ms` (≥300),
+`tıklama_gecikmesi ms` (≥150), `tıklama_çizim ms` (≥300), `ileti_çiz getirme_ms çizim_ms html_kb` (≥300),
+`ileti_aç indirme_ms ayrıştırma_ms mime_kb html_kb` (≥300), `ews işlem süre_ms başarılı meşgul` (≥1,5 sn ya da meşgul).
+
 ## Sonuç ve kanıt sınırı
 
 Şu an SQLite'ın değiştirilmesini veya veritabanının yeniden oluşturulmasını gerektiren

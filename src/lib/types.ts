@@ -131,6 +131,8 @@ export interface MessageView extends MessageRow {
   external: boolean;
   /** Güvenlik biçimi; boşsa imzasız ve şifresiz */
   security: string;
+  /** Yalnızca ön yüzde: gövde henüz gelmedi, liste satırından geçici görünüm (mail.show) */
+  loading?: boolean;
 }
 
 export interface SecurityView {

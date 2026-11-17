@@ -23,6 +23,7 @@ pub mod visibility;
 pub mod windows;
 pub mod secret;
 pub mod splash;
+pub mod perf;
 
 use commands::AppState;
 use std::sync::atomic::{AtomicBool, AtomicI64};
@@ -142,6 +143,7 @@ fn tray(app: &tauri::AppHandle) {
 }
 
 pub fn run() {
+    perf::mark_start();
     #[cfg(target_os = "linux")]
     tune_webkit();
     // Dosya diyaloğu: masaüstünün dosya seçici servisi varsa ayrı süreçte (uygulama donmaz)
@@ -266,6 +268,7 @@ pub fn run() {
             let emitter: sync::Emitter = Arc::new(move |event: &str, payload: serde_json::Value| {
                 let _ = handle.emit(event, payload);
             });
+            std::thread::spawn(perf::log_system);
             let mail = sync::MailService::new(db.clone(), emitter);
             app.manage(AppState {
                 db: db.clone(),
@@ -567,6 +570,7 @@ pub fn run() {
             commands::respond_meeting,
             commands::meeting_info,
             commands::frontend_log,
+            commands::perf_log,
             commands::set_folder_favorite,
             commands::message_temp_file,
             commands::set_autostart,

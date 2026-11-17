@@ -3,6 +3,7 @@ import { api } from "$lib/api";
 import { t } from "$lib/i18n.svelte";
 import { app, type ComposeRequest } from "./app.svelte";
 import { IS_MAIN } from "$lib/window";
+import { afterPaint, perfNote } from "$lib/perf";
 import type { Folder, MessageRow, MessageView } from "$lib/types";
 import { toast } from "svelte-sonner";
 
@@ -14,6 +15,33 @@ export const SEARCH_FOLDERS = [
 ];
 
 const PAGE = 500;
+/** Gövde bu süreden uzun sürerse okuma bölmesinde geçici görünüm (başlıklar + önizleme) */
+const PLACEHOLDER_MS = 120;
+
+/** Liste satırından okuma bölmesi için geçici ileti görünümü: gövde gelene kadar */
+export function placeholderView(row: MessageRow): MessageView {
+  return {
+    ...row,
+    cc: row.cc ?? "",
+    bcc: "",
+    refs: "",
+    body_text: "",
+    body_html: "",
+    pending: "",
+    html: "",
+    text: row.snippet,
+    attachments: [],
+    reply_to: "",
+    read_receipt_to: "",
+    has_remote: false,
+    has_calendar: false,
+    has_vcard: false,
+    folder_role: "",
+    external: false,
+    security: "",
+    loading: true,
+  };
+}
 
 export function normalizeSubject(s: string): string {
   let r = s.trim();
@@ -327,15 +355,32 @@ class MailState {
 
   async show(id: number, whole = true) {
     if (this.readTimer) clearTimeout(this.readTimer);
+    const t0 = performance.now();
+    const row = this.messages.find((m) => m.id === id) ?? Object.values(this.expanded).flat().find((m) => m.id === id);
+    // Gövde hemen gelmezse (Exchange'den henüz inmemiş yeni ileti) başlıklar ve önizleme hemen gösterilir;
+    // önceki ileti ekranda kalıp tıklama "çalışmıyor" gibi görünmesin
+    const provisional = row
+      ? setTimeout(() => {
+          if (this.selected.length === 1 && this.selected[0] === id && this.current?.id !== id) this.current = placeholderView(row);
+        }, PLACEHOLDER_MS)
+      : undefined;
     try {
       const v = await api.getMessage(id);
+      clearTimeout(provisional);
       if (this.selected.length !== 1 || this.selected[0] !== id) return;
+      const t1 = performance.now();
       this.current = v;
+      // Yavaş açılış perf.log'a: getirme (arka uç: indirme + ayrıştırma + IPC) ve çizim ayrı
+      void afterPaint().then(() => {
+        const t2 = performance.now();
+        if (t2 - t0 >= 300) perfNote(`ileti_çiz getirme_ms=${Math.round(t1 - t0)} çizim_ms=${Math.round(t2 - t1)} html_kb=${Math.round(v.html.length / 1024)}`);
+      });
       // Konuşma sorgusu yalnızca konuşmada birden çok ileti varsa (tüm tabloyu tarar)
-      const row = this.messages.find((m) => m.id === id);
       this.thread = this.conversations && (row?.thread_count ?? 2) > 1 ? await api.conversation(id) : [];
       this.autoRead(v, () => this.selected.length === 1 && this.selected[0] === id, whole && this.hiddenUnread(row) > 0);
     } catch (e) {
+      clearTimeout(provisional);
+      if (this.current?.id === id && this.current.loading) this.current = null;
       app.error(e);
     }
   }

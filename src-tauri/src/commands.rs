@@ -477,9 +477,7 @@ pub async fn get_message(state: State<'_, AppState>, id: i64) -> R<MessageView> 
     if state.db.needs_content(id) {
         let _ = state.raw_of_async(id).await;
     }
-    if std::env::var_os("ZARF_PERF").is_some() {
-        eprintln!("zarf perf: message_content_wait elapsed_ms={}", perf_started.elapsed().as_millis());
-    }
+    let content_ms = perf_started.elapsed().as_millis();
     // Ayrıştırma ve HTML temizleme ayrı iş parçacığında (büyük iletilerde arayüz beklemez)
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -507,8 +505,10 @@ pub async fn get_message(state: State<'_, AppState>, id: i64) -> R<MessageView> 
                 view_from_raw(id, &raw, Some(m))
             };
             v.folder_role = role;
-            if std::env::var_os("ZARF_PERF").is_some() {
-                eprintln!("zarf perf: message_parse elapsed_ms={}", parse_started.elapsed().as_millis());
+            // Yavaş açılış günlüğe: gövdenin indirilmesi (Exchange) mi, ayrıştırma mı
+            let parse_ms = parse_started.elapsed().as_millis();
+            if content_ms + parse_ms >= 300 || std::env::var_os("ZARF_PERF").is_some() {
+                crate::perf::log(&format!("ileti_aç id={id} indirme_ms={content_ms} ayrıştırma_ms={parse_ms} mime_kb={} html_kb={}", raw.len() / 1024, v.html.len() / 1024));
             }
             Ok(v)
         })
@@ -2703,6 +2703,14 @@ pub fn compact_database(state: State<AppState>) -> R<Value> {
 #[tauri::command(async)]
 pub fn frontend_log(level: String, message: String) {
     eprintln!("[ui:{level}] {message}");
+}
+
+/// Ön yüzün ölçtüğü yavaş olaylar (arayüz kilitlenmesi, geç işlenen tıklama, ileti açılışı): perf.log
+#[tauri::command(async)]
+pub fn perf_log(window: tauri::WebviewWindow, lines: Vec<String>) {
+    for l in lines.iter().take(50) {
+        crate::perf::log(&format!("ui[{}] {}", window.label(), l.chars().take(300).collect::<String>()));
+    }
 }
 
 #[tauri::command(async)]

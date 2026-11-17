@@ -92,6 +92,7 @@ Svelte bileşeni → store (mail/app) → api.ts invoke → commands.rs (#[tauri
 | `ews_sync.rs` | Exchange eşitlemesi: klasör listesi, klasör (`ews_sync_folder`, tam tarama `ews_enumerate`, değişiklikler `ews_apply_changes`), gövde ön yükleme, sabitlenenler, takvim (`ews_sync_calendar`), kişiler, kurallar |
 | `pim_sync.rs` / `dav_sync.rs` | Exchange görev/not/kişi grubu; CalDAV/CardDAV çift yönlü eşitleme |
 | `windows.rs` | İkincil pencereler, yedek pencere, uyarı kartları, anımsatıcı penceresi |
+| `perf.rs` | Kalıcı performans günlüğü `perf.log` (yalnızca yavaş olaylar; ön yüz `src/lib/perf.ts` → `perf_log`). Kullanıcı "yavaş" derse önce bu dosya istenir |
 | `crypto.rs` | S/MIME (openssl komutu) ve OpenPGP (gpg) |
 | `rules.rs` | Yerel kural değerlendirme (IMAP); Exchange kuralları sunucuda (`mail/rule_spec.rs`) |
 | `msgfile.rs`, `mail/tnef.rs`, `ical.rs` | .msg, winmail.dat, .ics/.vcf/CSV |
@@ -210,7 +211,8 @@ hata · `mail://bg` arka plan etkinliği · `mail://older` eski iletiler geldi �
 - Gerçek WebKitGTK'de deneme (derleme ve sudo gerekmez): `scripts/webkit-mock.mjs` sahte arka ucu başlangıç betiğine
   çevirir, `scripts/webkit-dene.py` ön yüzü görünmeyen bir pencerede açıp fare olayı gönderir, betik çalıştırır,
   görüntü alır, tuş gönderir (kullanım dosyanın başında). Yalnızca yazılımla çizimi sınar; GPU ile çizim uygulamanın
-  kendisinde denenir. Görünmez pencerede `setTimeout` kısılır: ölçüm betiklerinde zamanlayıcı yerine mikro görev
+  kendisinde denenir. `WEBKIT_DENE_GIZLI=1` sayfayı hiç gösterilmeyen pencerede açar (açılışta gizli hazırlanan ana
+  pencere gibi), `WEBKIT_DENE_BEKLE=0` ilk adımı hemen çalıştırır. Görünmez pencerede `setTimeout` kısılır: ölçüm betiklerinde zamanlayıcı yerine mikro görev
   kullanın. `mock-backend.ts`'in `list_messages` taklidi satır başına bütün iletileri tarar (binlerce iletide yavaş):
   büyük liste ölçerken taklidi sayfada hızlı bir sürümle değiştirin.
 - Veritabanı ölçümü (gerçek kod, sentetik büyük kutu): `ZARF_PERF_N=150000 cargo test --release --lib perf_tests -- --ignored --nocapture`
@@ -251,6 +253,8 @@ hata · `mail://bg` arka plan etkinliği · `mail://older` eski iletiler geldi �
   kalın görünüyordu (okunmuş/okunmamış ayırt edilemiyordu). Varsayılan gömülü Noto Sans; **değişken yazı tipi gömmeyin**:
   WebKitGTK kalınlık eksenini her çizimde uygulayamıyor (Ubuntu 24.04'te okunmamış satır üzerine gelince kalınlığını
   yitiriyordu). `@fontsource/noto-sans` kalınlık başına ayrı dosya verir (400/500/600/700, `+layout.svelte`).
+  Dosyalar metin dizildikçe iner; pencere `uiFontsReady()` beklenmeden gösterilirse yazılar sonradan Noto Sans'a geçer.
+  Yeni bir kalınlık/biçem kullanılırsa `UI_FONT_FACES`'e ekleyin.
 - EWS ileti listesi alıcıları yalnızca görünen adla verir (`DisplayTo`/`DisplayCc`, adres yok); `to_addr`/`cc` ileti
   açılınca MIME'dan adresli yazılır. Alıcıya bakan arayüz kuralları (`me.ts`) bu yüzden hem adı hem adresi arar.
 - EWS: dahili göndericide `EmailAddress` X.500 olabilir (`@` yok; liste başlığında yalnızca ad saklanır), ileti açılınca

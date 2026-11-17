@@ -370,8 +370,12 @@ impl Ews {
     pub fn call(&mut self, body: &str) -> MailResult<Element> {
         let started = std::time::Instant::now();
         let result = self.call_timed(body);
-        if std::env::var_os("ZARF_PERF").is_some() {
-            eprintln!("zarf perf: ews elapsed_ms={} success={} busy={}", started.elapsed().as_millis(), result.is_ok(), result.as_ref().err().is_some_and(|e| e.is_busy()));
+        let ms = started.elapsed().as_millis();
+        let busy = result.as_ref().err().is_some_and(|e| e.is_busy());
+        if ms >= 1500 || busy || std::env::var_os("ZARF_PERF").is_some() {
+            // İşlem adı (FindItem, GetItem …) SOAP gövdesinden; adres ve içerik yazılmaz
+            let op = body.find("<m:").map(|i| body[i + 3..].split(|c: char| !c.is_alphanumeric()).next().unwrap_or("")).unwrap_or("");
+            crate::perf::log(&format!("ews işlem={op} süre_ms={ms} başarılı={} meşgul={busy}", result.is_ok()));
         }
         result
     }

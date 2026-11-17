@@ -12,13 +12,19 @@
   import { invoke } from "@tauri-apps/api/core";
   import SelectPopup from "$lib/components/common/SelectPopup.svelte";
   import { app } from "$lib/stores/app.svelte";
-  import { applyUiFont } from "$lib/uifont";
+  import { applyUiFont, uiFontsReady } from "$lib/uifont";
+  import { startPerfMonitor } from "$lib/perf";
   import { ACCENT_DEFAULT, applyAccent } from "$lib/accent";
   let { children } = $props();
 
   // Seçilen arayüz yazı tipi ve renk teması her pencerede (ayar başka pencerede değişince de) uygulanır
   $effect(() => applyUiFont(app.setting("ui_font", "")));
   $effect(() => applyAccent(app.setting("accent", ACCENT_DEFAULT)));
+
+  // Gömülü yazı tipi dosyaları hemen istenir (gizli pencerede kendiliğinden inmez; bkz. uifont.ts)
+  if (typeof window !== "undefined") void uiFontsReady();
+  // Yavaş olaylar perf.log'a (src/lib/perf.ts)
+  if (typeof window !== "undefined") startPerfMonitor();
 
   // Yakalanmayan ön yüz hatalarını uygulama günlüğüne aktar
   const log = (level: string, message: unknown) => {

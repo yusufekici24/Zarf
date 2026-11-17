@@ -254,6 +254,9 @@ fn reveal<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>) {
     if win.is_visible().unwrap_or(false) {
         return;
     }
+    if win.label() == "main" {
+        crate::perf::log(&format!("açılış ana_pencere_gösterildi_ms={} (süreç başlangıcından)", crate::perf::since_start()));
+    }
     if win.label() == "main" && START_HIDDEN.load(Ordering::SeqCst) {
         // İleti penceresi açılamadıysa (bozuk dosya vb.) uygulama görünmez kalmasın
         let app = win.app_handle().clone();

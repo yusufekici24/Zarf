@@ -346,6 +346,7 @@ impl Worker {
         // Kilidi beklerken diğer iş parçacığı durumu değiştirmiş olabilir
         let folder = &self.db.folder(folder.id).unwrap_or_else(|| folder.clone());
         let mut new_msgs = Vec::new();
+        let count_before = self.db.total_count(folder.id);
         if !folder.full_sync {
             let first = self.db.total_count(folder.id) == 0;
             let newest = self.db.newest_date(folder.id).unwrap_or(0.0);
@@ -373,6 +374,11 @@ impl Worker {
             }
         }
         let fid = folder.id;
+        // Yeni gelen iletilerin gövdesi hemen (ön kuyrukta) iner: kullanıcı bildirime tıklayınca beklemesin.
+        // Arka plan kuyruğundaki ön yükleme klasör taramaları, takvim ve kişiler bitene kadar bekleyebiliyordu.
+        if self.db.total_count(fid) > count_before {
+            self.defer_fg(format!("prenew:{fid}"), move |w| w.ews_prefetch_new(account_id, fid));
+        }
         self.defer(format!("pre:{fid}"), move |w| w.ews_prefetch(account_id, fid));
         // Sabitlenmiş öğeler sunucuyla eşitlenir (OWA'da daha önce sabitlenenler dahil)
         let due = {
@@ -524,6 +530,29 @@ impl Worker {
             }
         }
         Ok(new_msgs)
+    }
+
+    /// Az önce gelmiş (son 2 gün) en yeni 5 iletinin gövdesini tek istekte indirir. Ön kuyrukta çalışır;
+    /// büyük bir arka plan işini beklemez. Kalanları `ews_prefetch` arka planda indirir.
+    pub fn ews_prefetch_new(&mut self, account_id: i64, folder_id: i64) -> MailResult<()> {
+        let recent = crate::db::now() - 2.0 * 86400.0;
+        let batch: Vec<(i64, String)> = self.db.messages_without_content(folder_id, 5).into_iter().filter(|(id, _)| self.db.message_row(*id).is_some_and(|m| m.date >= recent)).collect();
+        if batch.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<String> = batch.iter().map(|b| b.1.clone()).collect();
+        let items = self.with_ews(account_id, move |e| e.get_messages(&ids))?;
+        for it in items {
+            if let Some((mid, _)) = batch.iter().find(|b| b.1 == it.id) {
+                // Bu arada tıklanıp indirildiyse yeniden yazılmaz
+                if self.db.needs_content(*mid) {
+                    let m = parse::parse(&it.mime).into_message();
+                    self.db.update_message_content(*mid, &m);
+                }
+            }
+        }
+        self.emit_changed(Some(folder_id));
+        Ok(())
     }
 
     /// En yeni iletilerin gövdelerini arka planda indirir (çevrimdışı okuma ve gövdede arama için).
