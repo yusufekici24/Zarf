@@ -1733,8 +1733,10 @@ pub fn save_event(state: State<AppState>, event: Event) -> R<i64> {
     if e.end <= e.start {
         e.end = e.start + if e.all_day { 86400.0 } else { 1800.0 };
     }
+    // Düzenlemeden önceki hal: Exchange'e yalnızca değişen alanlar gönderilir
+    let before = (e.id > 0).then(|| state.db.event(e.id)).flatten();
     // Takvim değiştirilirse sunucu kimliği geçersizdir
-    if let Some(old) = (e.id > 0).then(|| state.db.event(e.id)).flatten() {
+    if let Some(old) = &before {
         if old.calendar_id != e.calendar_id {
             // CalDAV'da eski takvimdeki kaynak silinir; Exchange öğeyi sunucuda kendisi taşır
             if let (Some(acc), Some(href)) = (dav_calendar_account(&state.db, old.calendar_id), &old.remote_id) {
@@ -1747,7 +1749,7 @@ pub fn save_event(state: State<AppState>, event: Event) -> R<i64> {
     }
     let id = state.db.save_event(&e).map_err(err)?;
     if let Some(acc) = calendar_account(&state.db, e.calendar_id) {
-        state.mail.push_event(acc, id);
+        state.mail.push_event(acc, id, before);
     }
     Ok(id)
 }
@@ -1775,7 +1777,7 @@ pub fn delete_event(state: State<AppState>, id: i64, mode: String, occurrence_st
                 e.exdates = ex.join(",");
                 state.db.save_event(&e).map_err(err)?;
                 if let Some(acc) = dav {
-                    state.mail.push_event(acc, id);
+                    state.mail.push_event(acc, id, None);
                 }
                 return Ok(());
             }
@@ -1876,7 +1878,7 @@ pub fn send_invitation(state: State<AppState>, event_id: i64, account_id: i64, c
         moved.remote_id = None;
         moved.master_id = None;
         state.db.save_event(&moved).map_err(err)?;
-        state.mail.push_event(acc.id, moved.id);
+        state.mail.push_event(acc.id, moved.id, None);
         return Ok(());
     }
     let method = if cancel { "CANCEL" } else { "REQUEST" };

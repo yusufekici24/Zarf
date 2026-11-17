@@ -120,6 +120,7 @@
       onchange?.();
     }
     readCaret();
+    if (editor.querySelector(LOCAL_IMG)) void settleImages();
   }
   export function undo() {
     commitTyping();
@@ -154,8 +155,10 @@
   }
   function oninput(e: Event) {
     sync(true);
+    const type = (e as InputEvent).inputType;
+    if ((type === "insertFromPaste" || type === "insertFromDrop") && editor?.querySelector(LOCAL_IMG)) void settleImages();
     if (quiet) return;
-    const kind = inputKind((e as InputEvent).inputType);
+    const kind = inputKind(type);
     if (!kind) {
       cancelTyping();
       record();
@@ -164,6 +167,46 @@
     typing = { kind, at: Date.now() };
     clearTimeout(typingTimer);
     typingTimer = setTimeout(commitTyping, MERGE_MS);
+  }
+
+  // ---------------------------------------------------------------- yapıştırılan resimler
+  // WebKitGTK'de ekran görüntüsü (panoda yalnızca image/png) yapıştırılınca `clipboardData` boş gelir
+  // (tür yok, dosya yok; 2.52'de denendi) ve WebKit resmi kendisi `<img src="blob:…">` olarak ekler. O adres
+  // yalnızca bu pencerede geçerlidir: gönderilen iletide resim boş görünüyordu. Bu adresler hemen `data:`
+  // adresine çevrilir (gönderirken arka uç `cid:` satır içi eki yapar, build.rs extract_data_images).
+  const LOCAL_IMG = 'img[src^="blob:"], img[src^="webkit-fake-url:"]';
+  async function toDataUrl(src: string): Promise<string> {
+    const blob = await (await fetch(src)).blob();
+    if (!blob.size) throw new Error("boş resim");
+    return await new Promise<string>((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result));
+      r.onerror = () => rej(r.error);
+      r.readAsDataURL(blob);
+    });
+  }
+  /** Düzenleyicideki geçici adresli resimleri `data:` adresine çevirir. Döner: çevrilemeyen resim sayısı */
+  export async function settleImages(): Promise<number> {
+    if (!editor) return 0;
+    const imgs = Array.from(editor.querySelectorAll<HTMLImageElement>(LOCAL_IMG));
+    if (!imgs.length) return 0;
+    let failed = 0;
+    for (const img of imgs) {
+      const src = img.getAttribute("src") ?? "";
+      try {
+        const url = await toDataUrl(src);
+        // (bu arada başka bir çağrı çevirdiyse dokunulmaz)
+        if (img.getAttribute("src") === src) img.setAttribute("src", url);
+        history.replaceAll(src, url);
+      } catch {
+        failed++;
+      }
+    }
+    // Odak çıkmış olabilir (imza düzenleyicisi): içerik hemen bağlı değere aktarılır
+    pending = true;
+    flush();
+    onchange?.();
+    return failed;
   }
 
   function flush() {
@@ -623,14 +666,17 @@
       document.execCommand("insertText", false, text);
       return;
     }
-    if (!dt) return;
+    if (!dt) return void setTimeout(() => void settleImages(), 0);
     const paths = clipboardPaths(dt);
     const files = Array.from(dt.files ?? []);
     // Ekran görüntüsü / kopyalanan resim (bitmap)
     const imgItems = Array.from(dt.items ?? []).filter((i) => i.kind === "file" && i.type.startsWith("image/"));
-    if (!paths.length && !files.length && !imgItems.length) return;
+    // Tarayıcıya bırakılan yapıştırmada (WebKitGTK ekran görüntüsünü boş clipboardData ile verir) resim
+    // `blob:` adresiyle eklenir: hemen ardından `data:` adresine çevrilir
+    const later = () => setTimeout(() => void settleImages(), 0);
+    if (!paths.length && !files.length && !imgItems.length) return later();
     // Metin ya da HTML de varsa (ör. web sayfasından kopyalanan içerik) tarayıcıya bırakılır
-    if (!paths.length && !files.length && dt.getData("text/html")) return;
+    if (!paths.length && !files.length && dt.getData("text/html")) return later();
     e.preventDefault();
     saveRange();
     if (paths.length) {

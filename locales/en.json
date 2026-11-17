@@ -1054,6 +1054,8 @@
   "compose.bad_address_text": "These recipients are not valid email addresses: {0}. Please correct them and try again.",
   "compose.empty_body": "The message is empty",
   "compose.empty_body_text": "There is no text or attachment. Send anyway?",
+  "compose.image_lost": "Image could not be added",
+  "compose.image_lost_text": "{0} pasted image(s) could not be read and would appear empty to the recipient. Paste the image again or attach it as a file. Send anyway?",
   "compose.too_large": "Message is too large",
   "compose.too_large_text": "Attachments total about {0} MB. Most servers reject messages over 25 MB. Send anyway?",
   "splash.starting": "Starting…",

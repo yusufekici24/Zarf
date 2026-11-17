@@ -64,6 +64,18 @@ export class EditHistory {
     }
   }
 
+  /** Bütün adımlarda bir metni değiştirir (yapıştırılan resmin geçici `blob:` adresi → `data:` adresi):
+      geri alınınca geçersiz adres geri gelmesin */
+  replaceAll(from: string, to: string) {
+    if (!from) return;
+    for (const s of this.items) {
+      if (!s.html.includes(from)) continue;
+      const html = s.html.split(from).join(to);
+      this.chars += html.length - s.html.length;
+      s.html = html;
+    }
+  }
+
   undo(): Snapshot | null {
     return this.canUndo ? this.items[--this.index] : null;
   }

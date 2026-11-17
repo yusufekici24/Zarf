@@ -2,7 +2,9 @@
 
 use crate::db::Account;
 use mail_builder::headers::address::Address;
+use mail_builder::headers::content_type::ContentType;
 use mail_builder::headers::raw::Raw;
+use mail_builder::mime::MimePart;
 use mail_builder::MessageBuilder;
 use serde::Deserialize;
 
@@ -132,24 +134,64 @@ pub fn build_raw(
             b = b.header("Disposition-Notification-To", Raw::new(addr));
         }
     }
-    b = b.text_body(if m.text.is_empty() { super::html::html_to_text(&m.html) } else { m.text.clone() });
-    if !m.html.trim().is_empty() {
-        // Yapıştırılan/eklenen resimler (data: adresleri) satır içi ek olur (cid): Outlook ve
-        // çoğu istemci HTML içindeki data: resimlerini göstermez
+    b = b.body(body_part(m, attachments));
+    b.write_to_vec().unwrap_or_default()
+}
+
+/// İleti gövdesi. Yapıştırılan/eklenen resimler (data: adresleri) satır içi ek olur (cid): Outlook ve
+/// çoğu istemci HTML içindeki data: resimlerini göstermez. Resimler HTML ile birlikte `multipart/related`
+/// içinde gider (RFC 2387): mail-builder'ın `inline()`'ı onları `multipart/mixed`'e koyuyordu, Outlook/
+/// Exchange'de resim gövdede görünmeyip ad'sız ek (ATT00001) olabiliyordu.
+///
+///   multipart/mixed (yalnızca ek ya da davet varsa)
+///     multipart/alternative
+///       text/plain
+///       multipart/related; type="text/html"   (yalnızca resim varsa)
+///         text/html
+///         image/png; inline; filename=image001.png; Content-ID
+///     ekler
+fn body_part<'a>(m: &ComposedMail, attachments: &[(String, String, Vec<u8>)]) -> MimePart<'a> {
+    let text = MimePart::new("text/plain", if m.text.is_empty() { super::html::html_to_text(&m.html) } else { m.text.clone() });
+    let main = if m.html.trim().is_empty() {
+        text
+    } else {
         let (html, images) = extract_data_images(&m.html);
-        b = b.html_body(html);
-        for (cid, mime, data) in images {
-            b = b.inline(mime, cid, data);
-        }
-    }
+        let html = MimePart::new("text/html", html);
+        let html = if images.is_empty() {
+            html
+        } else {
+            let mut parts = vec![html];
+            for (i, (cid, mime, data)) in images.into_iter().enumerate() {
+                let ext = match mime.as_str() {
+                    "image/jpeg" => "jpg",
+                    "image/svg+xml" => "svg",
+                    m => m.rsplit('/').next().unwrap_or("png"),
+                };
+                let name = format!("image{:03}.{ext}", i + 1);
+                parts.push(
+                    MimePart::new(mime, data)
+                        .header("Content-Disposition", ContentType::new("inline").attribute("filename", name))
+                        .cid(cid),
+                );
+            }
+            MimePart::new(ContentType::new("multipart/related").attribute("type", "text/html"), parts)
+        };
+        MimePart::new("multipart/alternative", vec![text, html])
+    };
+    let mut extra = Vec::new();
     if let Some(ics) = &m.ics {
-        b = b.attachment("text/calendar; method=REQUEST; charset=utf-8", "davet.ics", ics.clone().into_bytes());
+        extra.push(MimePart::new("text/calendar; method=REQUEST; charset=utf-8", ics.clone().into_bytes()).attachment("davet.ics"));
     }
     for (name, mime, data) in attachments {
         let mime = if mime.is_empty() { "application/octet-stream".to_string() } else { mime.clone() };
-        b = b.attachment(mime, name.clone(), data.clone());
+        extra.push(MimePart::new(mime, data.clone()).attachment(name.clone()));
     }
-    b.write_to_vec().unwrap_or_default()
+    if extra.is_empty() {
+        main
+    } else {
+        extra.insert(0, main);
+        MimePart::new("multipart/mixed", extra)
+    }
 }
 
 /// HTML'deki `<img src="data:image/...;base64,...">` resimlerini `cid:` başvurusuna çevirir.
@@ -241,6 +283,34 @@ mod tests {
         assert_eq!(imgs[0].1, "image/png");
         assert!(h.contains(&format!("src=\"cid:{}\"", imgs[0].0)));
         assert!(h.contains("src='cid:x'"));
+    }
+
+    /// Yapıştırılan ekran görüntüsü: HTML ile resim aynı multipart/related içinde, resim adlı ve satır içi;
+    /// yeniden ayrıştırınca gövdede görünür, gerçek ek sayılmaz (Outlook'ta boş görünme hatası)
+    #[test]
+    fn pasted_image_goes_in_related_part() {
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+        let m = ComposedMail {
+            to: "a@b.com".into(),
+            subject: "Yanıt".into(),
+            html: format!(r#"<div>bakın:</div><img src="data:image/png;base64,{png}"><div class="lynora-quote">eski</div>"#),
+            ..Default::default()
+        };
+        for atts in [vec![], vec![("rapor.txt".to_string(), "text/plain".to_string(), b"v".to_vec())]] {
+            let raw = build_raw(None, &m, &atts, false);
+            let s = String::from_utf8_lossy(&raw);
+            let (alt, rel, html, img) = (s.find("multipart/alternative").unwrap(), s.find("multipart/related").unwrap(), s.find("Content-Type: text/html").unwrap(), s.find("Content-Type: image/png").unwrap());
+            assert!(alt < rel && rel < html && html < img, "{s}");
+            assert!(s.contains(r#"type="text/html""#) && s.contains(r#"filename="image001.png""#), "{s}");
+            assert_eq!(s.contains("multipart/mixed"), !atts.is_empty(), "{s}");
+            let p = super::super::parse::parse(&raw);
+            assert!(p.html.contains("src=\"cid:image001."), "{}", p.html);
+            assert_eq!(p.real_attachments().iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), atts.iter().map(|a| a.0.as_str()).collect::<Vec<_>>());
+            assert!(p.html_with_inline_images().contains(&format!("data:image/png;base64,{png}")));
+        }
+        // Resimsiz HTML: related yok
+        let raw = build_raw(None, &ComposedMail { to: "a@b.com".into(), html: "<b>x</b>".into(), ..Default::default() }, &[], false);
+        assert!(!String::from_utf8_lossy(&raw).contains("multipart/related"));
     }
 
     #[test]

@@ -3,6 +3,23 @@
 Bir oturumun sonunda güncellenir: son sürümde ne var, neye güvenilmez, sırada ne var. Yeni oturumda önce bu
 dosya, sonra yalnızca ilgili konu belgesi okunur (`agent.md` → "Konu belgeleri").
 
+## Zarf 2.0.5 (2026-11-17)
+
+İki kullanıcı bildirimi: (1) Zarf'tan gönderilen/düzenlenen toplantının saati alıcılarda yanlış, üç ekipte farklı
+tarihlerde görüldü; (2) yanıta yapıştırılan ekran görüntüsü alıcıya boş gitti.
+
+| Kök neden | Düzeltme | Nerede |
+|---|---|---|
+| Toplantı `StartTimeZone`/`EndTimeZone` olmadan gönderiliyordu: Exchange toplantıyı **UTC diliminde** kaydeder. Davet/güncelleme metninde saat "(UTC)" ile 3 saat geri yazılır; tüm gün etkinlik UTC gece yarısına kayar (Türkiye'de bir gün önce görünür); 03:00'ten önceki haftalık toplantı yanlış güne düşer | Makinenin dilimi (IANA, `/etc/localtime`) Windows kimliğine çevrilip (`Europe/Istanbul` → `Turkey Standard Time`) oluştururken ve saat değişince güncellemede gönderilir. Bilinmeyen dilimde eski davranış | `ews.rs` `meeting_tz`, `windows_tz`, `event_xml` |
+| Düzenleme her kayıtta bütün alanları (`AlwaysOverwrite`) yeniden yazıyordu: açıp kaydetmek bile davetlilere güncelleme gönderiyor, Outlook'ta yazılmış biçimli gövde (Teams bağlantısı) düz metne dönüyordu; gizli/kategori hiç gönderilmiyordu | Kaydetmeden önceki hal (`save_event` → `push_event(.., old)`) ile karşılaştırılır, yalnızca değişen alanlar gider; değişiklik yoksa istek yok. Yinelemenin dilimi serinindir (gönderilmez) | `ews.rs` `update_xml`, `sync.rs` `push_event`, `commands.rs` `save_event` |
+| WebKitGTK'de ekran görüntüsü (panoda yalnızca `image/png`) yapıştırılınca `clipboardData` **boş** gelir; işleyici devreye girmez, WebKit resmi `<img src="blob:…">` olarak ekler. `blob:` yalnızca o pencerede geçerli; gönderirken yalnızca `data:` resimler ek yapıldığı için alıcıya boş resim gidiyordu (yanıt/yeni ileti fark etmez) | `insertFromPaste`/`insertFromDrop` sonrası `blob:` resimler `fetch` ile `data:`'ya çevrilir (geçmişteki adımlar dahil); gönder/taslak öncesi `settleImages()` son kez bakar, okunamayan resim varsa "Resim eklenemedi" sorulur. Şeritteki Yapıştır panoda metin yoksa resmi yapıştırır | `RichEditor.svelte` `settleImages`, `ComposeWindow.svelte`, `editor-history.ts` `replaceAll` |
+| Satır içi resimler `multipart/mixed` içinde ayrı parçaydı (mail-builder `inline()`), `multipart/related` yoktu; Outlook/Exchange resmi gövdede göstermeyip adsız ek yapabilir | Gövde elle kurulur: `alternative(text, related(html, image001.png…))`, ek/davet varsa dışta `mixed` | `build.rs` `body_part` |
+
+Denenmedi: gerçek Exchange sunucusunda (kurum sunucusuna deneme isteği atılmaz; XML örnekleriyle test edildi).
+Panodan yapıştırma davranışı WebKitGTK 2.52'de `wl-copy` ile denendi.
+
+Test: `cargo test --lib` 114 geçti / 6 ignore; `npm run check` 0 hata / 15 uyarı; `npm run test:ui` 65 geçti.
+
 ## Zarf 2.0.4 (2026-11-17)
 
 Kullanıcının 2.0.3 `perf.log`'u (aynı model makine, ekran ölçeği 2): ana pencere 1,4 sn'de görünür, 0,3–0,5 sn'de

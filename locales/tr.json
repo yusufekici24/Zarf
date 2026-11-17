@@ -1054,6 +1054,8 @@
   "compose.bad_address_text": "Şu alıcılar geçerli bir e-posta adresi değil: {0}. Düzeltip yeniden deneyin.",
   "compose.empty_body": "İletinin metni boş",
   "compose.empty_body_text": "İletide yazı ya da ek yok. Yine de gönderilsin mi?",
+  "compose.image_lost": "Resim eklenemedi",
+  "compose.image_lost_text": "Yapıştırılan {0} resim okunamadı; alıcıda boş görünür. Resmi yeniden yapıştırın ya da dosya olarak ekleyin. Yine de gönderilsin mi?",
   "compose.too_large": "İleti çok büyük",
   "compose.too_large_text": "Eklerin toplamı yaklaşık {0} MB. Sunucuların çoğu 25 MB'tan büyük iletileri reddeder. Yine de gönderilsin mi?",
   "splash.starting": "Başlatılıyor…",

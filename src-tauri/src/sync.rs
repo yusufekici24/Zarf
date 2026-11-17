@@ -1025,14 +1025,17 @@ impl MailService {
 
     // ------------------------------------------------------------------ Exchange takvim / toplantı
     /// Exchange takvimindeki etkinliği sunucuya yazar (oluştur/güncelle) ve yeniden eşitler.
-    pub fn push_event(&self, account_id: i64, event_id: i64) {
+    /// `old`: düzenlemeden önceki hali (sunucudaki); verilirse yalnızca değişen alanlar gönderilir.
+    pub fn push_event(&self, account_id: i64, event_id: i64, old: Option<crate::db::Event>) {
         if !self.is_ews(Some(account_id)) {
             return self.dav_push_event(account_id, event_id);
         }
         self.submit(String::new(), move |w| {
             let Some(e) = w.db.event(event_id) else { return Ok(()) };
+            // Eski hal başka bir sunucu öğesine aitse karşılaştırılmaz
+            let old = old.filter(|o| o.remote_id.is_some() && o.remote_id == e.remote_id);
             match e.remote_id.clone() {
-                Some(rid) => w.with_ews(account_id, |c| c.update_event(&rid, &e))?,
+                Some(rid) => w.with_ews(account_id, |c| c.update_event(&rid, &e, old.as_ref()))?,
                 None => {
                     let rid = w.with_ews(account_id, |c| c.create_event(&e))?;
                     // Yerel kaydı sunucudaki öğeye bağla (kimlik değişmesin)

@@ -271,3 +271,46 @@ test("durum çubuğu: sözcük sayısı ve yakınlaştırma", async ({ page }) =
   expect(await editor.evaluate((el) => el.style.zoom)).toBe("1.2");
   await expect.poll(async () => (await calls(page, "set_setting")).some((c) => c.key === "compose_zoom" && c.value === "120")).toBe(true);
 });
+
+// WebKitGTK ekran görüntüsünü boş clipboardData ile verir ve resmi kendisi <img src="blob:…"> olarak ekler
+// (2.52'de denendi). blob: adresi yalnızca bu pencerede geçerlidir: gönderilen iletide resim boş görünüyordu.
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+/** WebKit'in varsayılan yapıştırması gibi: imlece blob: adresli resim eklenir, `insertFromPaste` girdisi gelir */
+const pasteBlobImage = (page: Page, event = true, revoke = false) =>
+  page.evaluate(
+    ({ png, event, revoke }) => {
+      const bytes = Uint8Array.from(atob(png), (c) => c.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+      if (revoke) URL.revokeObjectURL(url);
+      const ed = document.querySelector(".rich-editor") as HTMLElement;
+      const img = document.createElement("img");
+      img.src = url;
+      ed.prepend(img);
+      if (event) ed.dispatchEvent(new InputEvent("input", { inputType: "insertFromPaste", bubbles: true }));
+      return url;
+    },
+    { png: PNG, event, revoke },
+  );
+
+test("yapıştırılan ekran görüntüsü (blob:) gövdeye gömülür ve iletiyle gider", async ({ page }) => {
+  const editor = await compose(page, '<div><br></div><div class="lynora-quote"><div>Önceki ileti</div></div>');
+  await pasteBlobImage(page);
+  await expect(editor.locator("img").first()).toHaveAttribute("src", /^data:image\/png;base64,/);
+  // Olay gelmeden eklenen (geri alma vb.) resim de gönderirken gömülür
+  await pasteBlobImage(page, false);
+  await expect(editor.locator('img[src^="blob:"]')).toHaveCount(1);
+  await page.keyboard.press("Control+Enter");
+  await expect.poll(async () => (await calls(page, "send_mail")).length).toBe(1);
+  const sent = (await calls(page, "send_mail"))[0].mail as { html: string };
+  expect(sent.html).not.toContain("blob:");
+  expect(sent.html.match(new RegExp(`data:image/png;base64,${PNG.replace(/[+/=]/g, "\\$&")}`, "g"))?.length).toBe(2);
+});
+
+test("okunamayan yapıştırılmış resim sessizce boş gönderilmez", async ({ page }) => {
+  await compose(page);
+  await pasteBlobImage(page, false, true);
+  await page.keyboard.press("Control+Enter");
+  await expect(page.getByText("Resim eklenemedi")).toBeVisible();
+  await page.getByRole("button", { name: "Gönderme" }).click();
+  expect((await calls(page, "send_mail")).length).toBe(0);
+});

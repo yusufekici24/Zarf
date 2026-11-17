@@ -246,6 +246,12 @@ hata · `mail://bg` arka plan etkinliği · `mail://older` eski iletiler geldi �
 - **Yeni WebKit penceresi kurmak GTK ana döngüsünü ~250 ms dondurur** (bütün pencereler tıklamaya geç tepki verir;
   perf.log `gtk_kilit`). Yedek pencere `spare_scheduler` ile yalnızca kullanıcı boştayken kurulur; sabit zamanlı
   `ensure_spare` çağrısı eklemeyin. Gizli pencerede WebKit tekrarlanan zamanlayıcıları kısar (1 sn dilimleri).
+- **WebKitGTK ekran görüntüsü yapıştırınca `clipboardData` boştur** (tür/dosya yok) ve resmi `<img src="blob:…">`
+  ekler. Düzenleyiciye yeni içerik yolu eklerken `blob:` resmin `settleImages()`'ten geçtiğinden emin olun; gönderilen
+  HTML'de yalnızca `data:` resimler satır içi ek olur (`build.rs`, `multipart/related`).
+- **EWS toplantısı saat dilimsiz gönderilmez**: `StartTimeZone`/`EndTimeZone` yoksa Exchange UTC sayar (davet
+  metninde saat kayar, tüm gün etkinlik bir gün önceye düşer). Güncelleme yalnızca değişen alanları gönderir
+  (`Ews::update_xml`, `push_event(.., old)`); `AlwaysOverwrite` ile bütün alanları yeniden yazmayın.
 - **WebKitGTK, fare basılıyken `:hover`'ı güncellemez** (basılan öğede kalır). Sürükleme sırasındaki vurgular
   `hover:` sınıfıyla yapılmaz; imlecin altındaki öğe `document.elementFromPoint` ile bulunup duruma yazılır
   (`mail.drag.over`). Chrome'da `:hover` çalıştığı için Playwright bu hatayı göstermez.

@@ -273,6 +273,87 @@ fn ts_to_ews(ts: f64) -> String {
     chrono::DateTime::from_timestamp(ts as i64, 0).map(|d| d.format("%Y-%m-%dT%H:%M:%SZ").to_string()).unwrap_or_default()
 }
 
+/// Makinenin saat dilimi (IANA adı, ör. "Europe/Istanbul"): `TZ`, `/etc/localtime` bağlantısı ya da `/etc/timezone`
+fn local_iana_tz() -> Option<String> {
+    let clean = |s: &str| {
+        let s = s.trim().trim_start_matches(':');
+        let s = s.rsplit_once("zoneinfo/").map(|(_, r)| r).unwrap_or(s);
+        s.trim_start_matches("posix/").trim_start_matches("right/").to_string()
+    };
+    if let Ok(tz) = std::env::var("TZ") {
+        let tz = clean(&tz);
+        if tz.contains('/') || tz == "UTC" {
+            return Some(tz);
+        }
+    }
+    if let Ok(p) = std::fs::read_link("/etc/localtime") {
+        let p = p.to_string_lossy().to_string();
+        if p.contains("zoneinfo/") {
+            return Some(clean(&p));
+        }
+    }
+    std::fs::read_to_string("/etc/timezone").ok().map(|s| clean(&s)).filter(|s| !s.is_empty())
+}
+
+/// IANA saat dilimi → Exchange (Windows) saat dilimi kimliği (CLDR windowsZones)
+fn windows_tz(iana: &str) -> Option<&'static str> {
+    Some(match iana {
+        "Europe/Istanbul" | "Asia/Istanbul" | "Turkey" => "Turkey Standard Time",
+        "UTC" | "Etc/UTC" | "Etc/UCT" | "Etc/Universal" | "Etc/Zulu" | "Universal" | "Zulu" => "UTC",
+        "Etc/GMT" | "GMT" | "Europe/London" | "Europe/Dublin" | "Europe/Lisbon" | "Atlantic/Canary" | "Atlantic/Madeira" => "GMT Standard Time",
+        "Europe/Berlin" | "Europe/Amsterdam" | "Europe/Rome" | "Europe/Vienna" | "Europe/Zurich" | "Europe/Stockholm" | "Europe/Oslo"
+        | "Europe/Luxembourg" | "Europe/Monaco" | "Europe/Malta" | "Europe/Andorra" | "Europe/Vaduz" | "Europe/San_Marino" | "Europe/Vatican"
+        | "Europe/Gibraltar" | "Europe/Busingen" | "Arctic/Longyearbyen" => "W. Europe Standard Time",
+        "Europe/Paris" | "Europe/Brussels" | "Europe/Madrid" | "Europe/Copenhagen" | "Africa/Ceuta" => "Romance Standard Time",
+        "Europe/Warsaw" | "Europe/Sarajevo" | "Europe/Zagreb" | "Europe/Skopje" => "Central European Standard Time",
+        "Europe/Budapest" | "Europe/Prague" | "Europe/Belgrade" | "Europe/Bratislava" | "Europe/Ljubljana" | "Europe/Podgorica" | "Europe/Tirane" => {
+            "Central Europe Standard Time"
+        }
+        "Europe/Athens" | "Europe/Bucharest" | "Asia/Nicosia" | "Europe/Nicosia" | "Asia/Famagusta" => "GTB Standard Time",
+        "Europe/Kiev" | "Europe/Kyiv" | "Europe/Helsinki" | "Europe/Riga" | "Europe/Sofia" | "Europe/Tallinn" | "Europe/Vilnius" | "Europe/Mariehamn"
+        | "Europe/Uzhgorod" | "Europe/Zaporozhye" => "FLE Standard Time",
+        "Europe/Chisinau" => "E. Europe Standard Time",
+        "Europe/Kaliningrad" => "Kaliningrad Standard Time",
+        "Europe/Minsk" => "Belarus Standard Time",
+        "Europe/Moscow" | "Europe/Simferopol" | "Europe/Kirov" => "Russian Standard Time",
+        "Asia/Baku" => "Azerbaijan Standard Time",
+        "Asia/Tbilisi" => "Georgian Standard Time",
+        "Asia/Yerevan" => "Caucasus Standard Time",
+        "Asia/Dubai" | "Asia/Muscat" => "Arabian Standard Time",
+        "Asia/Riyadh" | "Asia/Kuwait" | "Asia/Qatar" | "Asia/Bahrain" | "Asia/Aden" => "Arab Standard Time",
+        "Asia/Baghdad" => "Arabic Standard Time",
+        "Asia/Tehran" => "Iran Standard Time",
+        "Asia/Jerusalem" | "Asia/Tel_Aviv" => "Israel Standard Time",
+        "Asia/Amman" => "Jordan Standard Time",
+        "Asia/Beirut" => "Middle East Standard Time",
+        "Asia/Damascus" => "Syria Standard Time",
+        "Africa/Cairo" => "Egypt Standard Time",
+        "Asia/Karachi" => "Pakistan Standard Time",
+        "Asia/Tashkent" | "Asia/Samarkand" => "West Asia Standard Time",
+        "Asia/Almaty" | "Asia/Bishkek" => "Central Asia Standard Time",
+        "Asia/Kolkata" | "Asia/Calcutta" => "India Standard Time",
+        "Asia/Shanghai" | "Asia/Hong_Kong" | "Asia/Macau" => "China Standard Time",
+        "Asia/Singapore" | "Asia/Kuala_Lumpur" => "Singapore Standard Time",
+        "Asia/Tokyo" => "Tokyo Standard Time",
+        "Asia/Seoul" => "Korea Standard Time",
+        "Australia/Sydney" | "Australia/Melbourne" => "AUS Eastern Standard Time",
+        "America/New_York" | "America/Toronto" | "America/Detroit" => "Eastern Standard Time",
+        "America/Chicago" | "America/Winnipeg" => "Central Standard Time",
+        "America/Denver" | "America/Edmonton" => "Mountain Standard Time",
+        "America/Phoenix" => "US Mountain Standard Time",
+        "America/Los_Angeles" | "America/Vancouver" => "Pacific Standard Time",
+        "America/Sao_Paulo" => "E. South America Standard Time",
+        _ => return None,
+    })
+}
+
+/// Toplantının saat dilimi (Exchange kimliği). Verilmezse Exchange toplantıyı UTC diliminde kaydeder:
+/// davet metninde saat "(UTC)" ile 3 saat geri görünür, tüm gün etkinlik UTC gece yarısına kayar (Türkiye'de
+/// bir gün önce başlar), sabah 03:00'ten önceki yinelenen toplantı yanlış güne düşer.
+fn meeting_tz() -> Option<&'static str> {
+    local_iana_tz().as_deref().and_then(windows_tz)
+}
+
 /// Takvim görünümü parçası (31 gün) ve parça başına en çok öğe (Exchange'in varsayılan 1000'lik
 /// sınırının altında: aşan parça ikiye bölünür)
 const CAL_CHUNK_SECS: f64 = 31.0 * 86400.0;
@@ -1191,7 +1272,7 @@ impl Ews {
         }
     }
 
-    fn event_xml(e: &Event, include_recurrence: bool) -> String {
+    fn event_xml(e: &Event, include_recurrence: bool, tz: Option<&str>) -> String {
         let mut x = format!("<t:Subject>{}</t:Subject>", esc(&e.title));
         if e.is_private {
             x.push_str("<t:Sensitivity>Private</t:Sensitivity>");
@@ -1220,6 +1301,9 @@ impl Ews {
         if include_recurrence && e.recurrence != "none" {
             x.push_str(&recurrence_xml(e));
         }
+        if let Some(tz) = tz {
+            x.push_str(&format!(r#"<t:StartTimeZone Id="{tz}"/><t:EndTimeZone Id="{tz}"/>"#));
+        }
         x
     }
 
@@ -1247,52 +1331,99 @@ impl Ews {
     pub fn create_event(&mut self, e: &Event) -> MailResult<String> {
         let send = if !Self::has_invitees(e) { "SendToNone" } else { "SendToAllAndSaveCopy" };
         let calendar = self.folder("calendar");
-        let doc = self.call(&format!(r#"<m:CreateItem SendMeetingInvitations="{send}"><m:SavedItemFolderId>{calendar}</m:SavedItemFolderId><m:Items><t:CalendarItem>{}</t:CalendarItem></m:Items></m:CreateItem>"#, Self::event_xml(e, true)))?;
+        let doc = self.call(&format!(r#"<m:CreateItem SendMeetingInvitations="{send}"><m:SavedItemFolderId>{calendar}</m:SavedItemFolderId><m:Items><t:CalendarItem>{}</t:CalendarItem></m:Items></m:CreateItem>"#, Self::event_xml(e, true, meeting_tz())))?;
         Ok(doc.find("ItemId").and_then(|i| i.attr("Id")).unwrap_or("").to_string())
     }
 
-    pub fn update_event(&mut self, id: &str, e: &Event) -> MailResult<()> {
-        let send = if !Self::has_invitees(e) { "SendToNone" } else { "SendToChangedAndSaveCopy" };
-        let fields: Vec<(&str, String)> = vec![
-            ("item:Subject", format!("<t:Subject>{}</t:Subject>", esc(&e.title))),
-            ("item:Body", format!(r#"<t:Body BodyType="Text">{}</t:Body>"#, esc(&e.description))),
-            ("calendar:Start", format!("<t:Start>{}</t:Start>", ts_to_ews(e.start))),
-            ("calendar:End", format!("<t:End>{}</t:End>", ts_to_ews(e.end))),
-            ("calendar:IsAllDayEvent", format!("<t:IsAllDayEvent>{}</t:IsAllDayEvent>", e.all_day)),
-            ("calendar:Location", format!("<t:Location>{}</t:Location>", esc(&e.location))),
-            ("item:ReminderIsSet", format!("<t:ReminderIsSet>{}</t:ReminderIsSet>", e.reminder_minutes >= 0)),
-        ];
-        let mut updates: String = fields
-            .iter()
-            .map(|(f, v)| format!(r#"<t:SetItemField><t:FieldURI FieldURI="{f}"/><t:CalendarItem>{v}</t:CalendarItem></t:SetItemField>"#))
-            .collect();
+    /// Exchange'deki toplantıyı günceller. `old`: sunucudan gelen son hali; verilirse yalnızca değişen alanlar
+    /// gönderilir (değişiklik yoksa istek atılmaz). Önceden her kayıtta bütün alanlar yeniden yazılıyordu:
+    /// açıp kaydetmek bile katılımcılara güncelleme gönderiyor, Outlook'ta yazılmış biçimli gövde (Teams
+    /// bağlantısı …) düz metne dönüyordu.
+    pub fn update_event(&mut self, id: &str, e: &Event, old: Option<&Event>) -> MailResult<()> {
+        let Some(body) = Self::update_xml(id, e, old, meeting_tz()) else { return Ok(()) };
+        self.call(&body)?;
+        Ok(())
+    }
+
+    fn update_xml(id: &str, e: &Event, old: Option<&Event>, tz: Option<&str>) -> Option<String> {
+        let changed = |f: &dyn Fn(&Event) -> String| old.map_or(true, |o| f(o) != f(e));
+        let list = |s: &str| {
+            let mut v: Vec<String> = crate::db::split_list(s).into_iter().map(|a| a.to_lowercase()).collect();
+            v.sort();
+            v
+        };
+        let set = |uri: &str, v: String| format!(r#"<t:SetItemField><t:FieldURI FieldURI="{uri}"/><t:CalendarItem>{v}</t:CalendarItem></t:SetItemField>"#);
+        let mut updates = String::new();
+        if changed(&|x| x.title.clone()) {
+            updates.push_str(&set("item:Subject", format!("<t:Subject>{}</t:Subject>", esc(&e.title))));
+        }
+        if changed(&|x| x.is_private.to_string()) {
+            updates.push_str(&set("item:Sensitivity", format!("<t:Sensitivity>{}</t:Sensitivity>", if e.is_private { "Private" } else { "Normal" })));
+        }
+        if changed(&|x| x.description.trim().to_string()) {
+            updates.push_str(&set("item:Body", format!(r#"<t:Body BodyType="Text">{}</t:Body>"#, esc(&e.description))));
+        }
+        if changed(&|x| x.category.clone()) {
+            if e.category.is_empty() {
+                updates.push_str(r#"<t:DeleteItemField><t:FieldURI FieldURI="item:Categories"/></t:DeleteItemField>"#);
+            } else {
+                updates.push_str(&set("item:Categories", format!("<t:Categories><t:String>{}</t:String></t:Categories>", esc(&e.category))));
+            }
+        }
+        if changed(&|x| format!("{} {}", x.reminder_minutes >= 0, x.reminder_minutes)) {
+            updates.push_str(&set("item:ReminderIsSet", format!("<t:ReminderIsSet>{}</t:ReminderIsSet>", e.reminder_minutes >= 0)));
+            if e.reminder_minutes >= 0 {
+                updates.push_str(&set("item:ReminderMinutesBeforeStart", format!("<t:ReminderMinutesBeforeStart>{}</t:ReminderMinutesBeforeStart>", e.reminder_minutes)));
+            }
+        }
+        // Saat: başlangıç, bitiş ve tüm gün birlikte; saat dilimi önce (tek toplantıda; yinelemenin dilimi serinindir)
+        if changed(&|x| format!("{} {} {}", x.start as i64, x.end as i64, x.all_day)) {
+            if let (Some(tz), None) = (tz, &e.master_id) {
+                updates.push_str(&set("calendar:StartTimeZone", format!(r#"<t:StartTimeZone Id="{tz}"/>"#)));
+                updates.push_str(&set("calendar:EndTimeZone", format!(r#"<t:EndTimeZone Id="{tz}"/>"#)));
+            }
+            updates.push_str(&set("calendar:Start", format!("<t:Start>{}</t:Start>", ts_to_ews(e.start))));
+            updates.push_str(&set("calendar:End", format!("<t:End>{}</t:End>", ts_to_ews(e.end))));
+            updates.push_str(&set("calendar:IsAllDayEvent", format!("<t:IsAllDayEvent>{}</t:IsAllDayEvent>", e.all_day)));
+        }
+        if changed(&|x| x.show_as.clone()) {
+            let fb = match e.show_as.as_str() {
+                "free" => "Free",
+                "tentative" => "Tentative",
+                "oof" => "OOF",
+                "elsewhere" => "WorkingElsewhere",
+                _ => "Busy",
+            };
+            updates.push_str(&set("calendar:LegacyFreeBusyStatus", format!("<t:LegacyFreeBusyStatus>{fb}</t:LegacyFreeBusyStatus>")));
+        }
+        if changed(&|x| x.location.clone()) {
+            updates.push_str(&set("calendar:Location", format!("<t:Location>{}</t:Location>", esc(&e.location))));
+        }
         // Katılımcılar / odalar: boşsa alan silinir
-        for (uri, tag, list) in [
-            ("calendar:RequiredAttendees", "RequiredAttendees", &e.attendees),
-            ("calendar:OptionalAttendees", "OptionalAttendees", &e.optional_attendees),
-            ("calendar:Resources", "Resources", &e.resources),
+        for (uri, tag, get) in [
+            ("calendar:RequiredAttendees", "RequiredAttendees", (|x: &Event| x.attendees.clone()) as fn(&Event) -> String),
+            ("calendar:OptionalAttendees", "OptionalAttendees", |x: &Event| x.optional_attendees.clone()),
+            ("calendar:Resources", "Resources", |x: &Event| x.resources.clone()),
         ] {
-            let att = crate::db::split_list(list);
+            if old.is_some_and(|o| list(&get(o)) == list(&get(e))) {
+                continue;
+            }
+            let att = crate::db::split_list(&get(e));
             if att.is_empty() {
                 updates.push_str(&format!(r#"<t:DeleteItemField><t:FieldURI FieldURI="{uri}"/></t:DeleteItemField>"#));
             } else {
                 let inner: String = att.iter().map(|a| format!("<t:Attendee><t:Mailbox><t:EmailAddress>{}</t:EmailAddress></t:Mailbox></t:Attendee>", esc(a))).collect();
-                updates.push_str(&format!(r#"<t:SetItemField><t:FieldURI FieldURI="{uri}"/><t:CalendarItem><t:{tag}>{inner}</t:{tag}></t:CalendarItem></t:SetItemField>"#));
+                updates.push_str(&set(uri, format!("<t:{tag}>{inner}</t:{tag}>")));
             }
         }
-        let fb = match e.show_as.as_str() {
-            "free" => "Free",
-            "tentative" => "Tentative",
-            "oof" => "OOF",
-            "elsewhere" => "WorkingElsewhere",
-            _ => "Busy",
-        };
-        updates.push_str(&format!(r#"<t:SetItemField><t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus"/><t:CalendarItem><t:LegacyFreeBusyStatus>{fb}</t:LegacyFreeBusyStatus></t:CalendarItem></t:SetItemField>"#));
-        if e.reminder_minutes >= 0 {
-            updates.push_str(&format!(r#"<t:SetItemField><t:FieldURI FieldURI="item:ReminderMinutesBeforeStart"/><t:CalendarItem><t:ReminderMinutesBeforeStart>{}</t:ReminderMinutesBeforeStart></t:CalendarItem></t:SetItemField>"#, e.reminder_minutes));
+        if updates.is_empty() {
+            return None;
         }
-        self.call(&format!(r#"<m:UpdateItem ConflictResolution="AlwaysOverwrite" SendMeetingInvitationsOrCancellations="{send}"><m:ItemChanges><t:ItemChange><t:ItemId Id="{}"/><t:Updates>{updates}</t:Updates></t:ItemChange></m:ItemChanges></m:UpdateItem>"#, esc(id)))?;
-        Ok(())
+        let send = if !Self::has_invitees(e) && !old.is_some_and(Self::has_invitees) { "SendToNone" } else { "SendToChangedAndSaveCopy" };
+        Some(format!(
+            r#"<m:UpdateItem ConflictResolution="AlwaysOverwrite" SendMeetingInvitationsOrCancellations="{send}"><m:ItemChanges><t:ItemChange><t:ItemId Id="{}"/><t:Updates>{updates}</t:Updates></t:ItemChange></m:ItemChanges></m:UpdateItem>"#,
+            esc(id)
+        ))
     }
 
     /// `series`: yinelenen serinin tamamını sil
@@ -1793,6 +1924,62 @@ mod tests {
         assert_eq!(got, vec![7]);
         // Ağ hatası olduğu gibi döner
         assert!(fetch_split::<u8>(start, end, CAL_CHUNK_SECS, &mut |_, _| Err(MailError::net("yok"))).unwrap_err().is_net());
+    }
+
+    /// Toplantı saat dilimiyle gönderilir (yoksa Exchange UTC sayıyordu: davette saat 3 saat geri, tüm gün
+    /// etkinlik bir gün önce); dilim şema sırasıyla yinelemeden sonra gelir
+    #[test]
+    fn meeting_carries_time_zone() {
+        assert_eq!(windows_tz("Europe/Istanbul"), Some("Turkey Standard Time"));
+        assert_eq!(windows_tz("Bilinmeyen/Yer"), None);
+        let e = Event { title: "Toplantı".into(), start: 1_795_000_000.0, end: 1_795_003_600.0, attendees: "a@b.com".into(), recurrence: "weekly".into(), recur_interval: 1, ..Event::new_default() };
+        let x = Ews::event_xml(&e, true, Some("Turkey Standard Time"));
+        let (rec, stz, etz) = (x.find("<t:Recurrence>").unwrap(), x.find(r#"<t:StartTimeZone Id="Turkey Standard Time"/>"#).unwrap(), x.find(r#"<t:EndTimeZone Id="Turkey Standard Time"/>"#).unwrap());
+        assert!(x.find("<t:RequiredAttendees>").unwrap() < rec && rec < stz && stz < etz, "{x}");
+        assert!(x.contains("<t:Start>2026-11-18T11:06:40Z</t:Start>"), "{x}");
+        assert!(!Ews::event_xml(&e, true, None).contains("TimeZone"));
+    }
+
+    /// Düzenleme yalnızca değişen alanları gönderir; değişiklik yoksa istek yok, katılımcılara güncelleme gitmez
+    #[test]
+    fn meeting_update_sends_only_changes() {
+        let old = Event {
+            title: "Toplantı".into(),
+            description: "Teams bağlantısı".into(),
+            start: 1_795_000_000.0,
+            end: 1_795_003_600.0,
+            attendees: "Ali@x.com,veli@x.com".into(),
+            reminder_minutes: 15,
+            remote_id: Some("ID1".into()),
+            ..Event::new_default()
+        };
+        assert_eq!(Ews::update_xml("ID1", &old, Some(&old), Some("Turkey Standard Time")), None);
+        // Aynı katılımcılar farklı sırada/büyüklükte: değişmemiş sayılır
+        let same = Event { attendees: "veli@x.com, ali@x.com".into(), ..old.clone() };
+        assert_eq!(Ews::update_xml("ID1", &same, Some(&old), Some("Turkey Standard Time")), None);
+        // Yalnızca saat: dilim + başlangıç/bitiş/tüm gün; gövde, konu ve katılımcılar dokunulmaz
+        let moved = Event { start: old.start + 3600.0, end: old.end + 3600.0, ..old.clone() };
+        let x = Ews::update_xml("ID1", &moved, Some(&old), Some("Turkey Standard Time")).unwrap();
+        assert!(x.find("calendar:StartTimeZone").unwrap() < x.find(r#"FieldURI="calendar:Start""#).unwrap(), "{x}");
+        assert!(x.contains("calendar:EndTimeZone") && x.contains("calendar:End\"") && x.contains("calendar:IsAllDayEvent"), "{x}");
+        assert!(!x.contains("item:Body") && !x.contains("item:Subject") && !x.contains("Attendees") && !x.contains("Location"), "{x}");
+        assert!(x.contains(r#"SendMeetingInvitationsOrCancellations="SendToChangedAndSaveCopy""#), "{x}");
+        // Yinelenen serinin bir yinelemesi: dilim serinindir, gönderilmez
+        let occ = Event { master_id: Some("M".into()), ..moved.clone() };
+        let occ_old = Event { master_id: Some("M".into()), ..old.clone() };
+        let x = Ews::update_xml("ID1", &occ, Some(&occ_old), Some("Turkey Standard Time")).unwrap();
+        assert!(!x.contains("TimeZone") && x.contains(r#"FieldURI="calendar:Start""#), "{x}");
+        // Yalnızca konu
+        let x = Ews::update_xml("ID1", &Event { title: "Yeni".into(), ..old.clone() }, Some(&old), Some("Turkey Standard Time")).unwrap();
+        assert!(x.contains("<t:Subject>Yeni</t:Subject>") && !x.contains("calendar:Start"), "{x}");
+        // Eski hal bilinmiyorsa her şey (dilim dahil) gönderilir
+        let x = Ews::update_xml("ID1", &old, None, Some("Turkey Standard Time")).unwrap();
+        for f in ["item:Subject", "item:Body", "calendar:StartTimeZone", "calendar:Start\"", "calendar:RequiredAttendees", "calendar:OptionalAttendees"] {
+            assert!(x.contains(f), "{f}: {x}");
+        }
+        // Bütün katılımcılar çıkarılınca alan silinir ve iptal gider
+        let x = Ews::update_xml("ID1", &Event { attendees: String::new(), ..old.clone() }, Some(&old), None).unwrap();
+        assert!(x.contains(r#"<t:DeleteItemField><t:FieldURI FieldURI="calendar:RequiredAttendees"/>"#) && x.contains("SendToChangedAndSaveCopy"), "{x}");
     }
 
     /// İstek sınırı: sunucunun istediği bekleme süresi SOAP hatasından okunur; başka hata karışmaz

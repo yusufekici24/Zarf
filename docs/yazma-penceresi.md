@@ -81,3 +81,16 @@ boşluk ekler. Esc önce seçim araç çubuğunu / biçim boyacısını kapatır
 - Birleştirilmiş hücreli tablolarda sütun ekleme/silme hücre sırasına göre yapılır.
 - Sözcük sayısı alıntılanan özgün iletiyi saymaz.
 - Testler Chrome'da çalışır; `execCommand` davranışı WebKitGTK'de farklı olabilir (bkz. `docs/DURUM.md`).
+
+## Yapıştırılan resimler
+
+- Resim gövdede `data:` adresiyle durur; gönderirken arka uç bunu `cid:` satır içi eke çevirir
+  (`build.rs` `extract_data_images`, `body_part`: `multipart/alternative(text, multipart/related(html, resimler))`).
+- `onpaste`: dosya yöneticisinden kopyalanan yollar (resim → gövde, diğerleri → ek), `clipboardData` içindeki resim
+  dosyaları `FileReader` ile `data:`. **WebKitGTK ekran görüntüsünde `clipboardData` boştur** (2.52, `wl-copy
+  --type image/png` ile denendi): işleyici bırakır, WebKit resmi `<img src="blob:…">` ekler ve `insertFromPaste`
+  girdisi gönderir. `oninput` bu resimleri `settleImages()` ile `fetch` → `data:`'ya çevirir; geçmişteki adımlarda da
+  adres değiştirilir (`EditHistory.replaceAll`), geri alınca geçersiz adres geri gelmez.
+- `ComposeWindow.send` ve `saveDraft` önce `settleImages()` bekler; çevrilemeyen resim varsa gönderim sorulur
+  ("Resim eklenemedi"). `navigator.clipboard.read()` WebKitGTK'de betikten izin vermez; şeritteki Yapıştır panoda
+  metin yoksa `execCommand("paste")` kullanır.

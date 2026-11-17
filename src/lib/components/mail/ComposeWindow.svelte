@@ -519,6 +519,10 @@
       return;
     }
     const sendOpts = { ok: t("compose.send_anyway"), cancel: t("compose.dont_send"), safe: true };
+    // Yapıştırılan resim henüz geçici (blob:) adresteyse önce gövdeye gömülür; gömülemeyen resim alıcıda
+    // boş görünürdü
+    const lostImages = (await editor?.settleImages()) ?? 0;
+    if (lostImages && !(await app.confirm(t("compose.image_lost"), t("compose.image_lost_text", lostImages), sendOpts))) return;
     if (!subject.trim() && !(await app.confirm(t("compose.no_subject"), t("compose.no_subject_text"), sendOpts))) return;
     // Yalnızca kullanıcının yazdığı kısım denetlenir (alıntı ve imza hariç)
     const own = currentHtml().split(/<div class="(?:lynora|mailnix)-(?:signature|quote)">/)[0];
@@ -550,6 +554,7 @@
 
   async function saveDraft(silent = false) {
     try {
+      await editor?.settleImages();
       draftId = await api.saveDraft(payload());
       dirty = false;
       lastSaved = Date.now() / 1000;
@@ -716,10 +721,13 @@
     editor?.focus();
     try {
       const text = await navigator.clipboard.readText();
-      if (text) editor?.exec("insertText", text);
+      if (text) return editor?.exec("insertText", text);
     } catch {
-      editor?.exec("paste");
+      /* izin yok: düzenleyicinin kendi yapıştırması */
     }
+    // Panoda metin yoksa (ekran görüntüsü) resim olarak yapıştırılır
+    editor?.exec("paste");
+    await editor?.settleImages();
   }
 
   /** Outlook "Adları Denetle": adres olmayan girdileri kişi/dizin aramasıyla çözer */
